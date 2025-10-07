@@ -16,23 +16,25 @@ El sistema aplica dos algoritmos metaheurísticos y sigue la norma **NTP-ISO/IEC
 
 ## 🏗️ Estructura del Proyecto
 
+<pre>
 src/
-├── main/
-│ ├── java/
-│ │ └── com/morapack/
-│ │ ├── config/
-│ │ ├── controllers/
-│ │ ├── services/
-│ │ ├── repositories/
-│ │ ├── models/
-│ │ ├── exceptions/
-│ │ └── utils/
-│ └── resources/
-│ ├── application.properties
-│ ├── static/
-│ └── templates/
-└── test/
-└── java/com/morapack/
+ ├── main/
+ │   ├── java/
+ │   │   └── com/morapack/
+ │   │       ├── config/
+ │   │       ├── controllers/
+ │   │       ├── services/
+ │   │       ├── repositories/
+ │   │       ├── models/
+ │   │       ├── exceptions/
+ │   │       └── utils/
+ │   └── resources/
+ │       ├── application.properties
+ │       ├── static/
+ │       └── templates/
+ └── test/
+     └── java/com/morapack/
+</pre>
 
 
 ### 📂 Descripción de paquetes
