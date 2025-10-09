@@ -5,13 +5,11 @@ import lombok.Data;
 
 @Data
 @Entity
-@Table(name = "shipment")
-public class Shipment {
+@Table(name = "continente")
+public class Continente {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    private String code;
-    private String origin;
-    private String destination;
+    private String nombre;
 }

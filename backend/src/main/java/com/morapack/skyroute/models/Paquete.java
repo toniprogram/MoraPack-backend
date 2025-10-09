@@ -5,17 +5,13 @@ import lombok.Data;
 
 @Data
 @Entity
-@Table(name = "airports")
-public class Airport {
+@Table(name = "paquete")
+public class Paquete {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
     private String code;
-    private int gmt;
-    private int storageCap;
-    private double lat;
-    private double lon;
-    private String continent;
-    private boolean isExporter;
+    private String origin;
+    private String destination;
 }
