@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Eye, Plus, Trash2, RefreshCw } from "lucide-react";
 import { usePedidos } from "../hooks/usePedidos";
 import type { Pedido } from "../types/pedido";
+import PedidosSummary from "../components/PedidosSummary";
 
 export default function PedidosPage() {
   const { list, create, update, remove } = usePedidos();
@@ -69,7 +70,7 @@ export default function PedidosPage() {
           </button>
         </div>
       </div>
-
+      <PedidosSummary/>
       {/*Formulario*/}
       {showForm && (
         <form
