@@ -1,13 +1,13 @@
-package com.morapack;
+package com.morapack.skyroute;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
-public class MorapackApplication {
+public class SkyRouteApplication {
 
 	public static void main(String[] args) {
-		SpringApplication.run(MorapackApplication.class, args);
+		SpringApplication.run(SkyRouteApplication.class, args);
 	}
 
 }

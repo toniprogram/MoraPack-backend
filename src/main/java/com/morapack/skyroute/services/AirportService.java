@@ -1,7 +1,7 @@
-package com.morapack.services;
+package com.morapack.skyroute.services;
 
-import com.morapack.models.Airport;
-import com.morapack.repositories.AirportRepository;
+import com.morapack.skyroute.models.Airport;
+import com.morapack.skyroute.repositories.AirportRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 

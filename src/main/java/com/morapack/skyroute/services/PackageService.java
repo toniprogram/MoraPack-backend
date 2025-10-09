@@ -1,7 +1,7 @@
-
-import com.morapack.models.Package;
-import com.morapack.models.Package;
-import com.morapack.repositories.PackageRepository;
+package com.morapack.skyroute.services;
+import com.morapack.skyroute.models.Package;
+import com.morapack.skyroute.models.Package;
+import com.morapack.skyroute.repositories.PackageRepository;
 import org.springframework.stereotype.Service;
 
 import java.util.List;

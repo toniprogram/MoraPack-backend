@@ -1,4 +1,5 @@
-import com.morapack.models.Package;
+package com.morapack;
+import com.morapack.skyroute.models.Package;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;

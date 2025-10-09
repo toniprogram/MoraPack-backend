@@ -1,4 +1,4 @@
-package com.morapack.models;
+package com.morapack.skyroute.models;
 
 import jakarta.persistence.*;
 import lombok.Data;
