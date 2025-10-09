@@ -1,4 +1,4 @@
-package main.java.com.morapack.models;
+package com.morapack.models;
 
 import jakarta.persistence.*;
 import lombok.Data;
