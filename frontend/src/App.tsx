@@ -1,5 +1,7 @@
 import React from "react";
-import PackagesPage from "./pages/PackagesPages";
+import { Routes, Route } from "react-router-dom";
+import PackagesPage from "./pages/PackagesPage";
+import FlightsPage from "./pages/FlightsPage";
 import Navbar from "./components/Navbar";
 
 export default function App() {
@@ -7,7 +9,11 @@ export default function App() {
     <div className="min-h-screen">
       <Navbar />
       <div className="p-8">
-        <PackagesPage />
+        <Routes>
+          <Route path="/" element={<PackagesPage />} />
+          <Route path="/packages" element={<PackagesPage />} />
+          <Route path="/flights" element={<FlightsPage />} />
+        </Routes>
       </div>
     </div>
   );
