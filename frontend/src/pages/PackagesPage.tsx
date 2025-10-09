@@ -1,14 +1,20 @@
-import React, { useEffect, useState } from "react";
-import { getPackages, createPackage} from "../api/packageService";
-import type { Shipment } from "../api/packageService";
+import React, { useState } from "react";
+import type { Shipment } from "../services/packageService";
+import { usePackages } from "../hooks/usePackages";
 
 export default function PackagesPage() {
-  const [packages, setPackages] = useState<Shipment[]>([]);
-  const [form, setForm] = useState<Shipment>({ code: "", origin: "", destination: "" });
-
-  useEffect(() => {
-    getPackages().then(setPackages).catch(console.error);
-  }, []);
+  const [form, setForm] = useState<Shipment>({
+    code: "",
+    origin: "",
+    destination: "",
+  });
+  const {
+    packages,
+    loading,
+    creating,
+    error,
+    createPackage,
+  } = usePackages();
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setForm({ ...form, [e.target.name]: e.target.value });
@@ -16,9 +22,12 @@ export default function PackagesPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const newPkg = await createPackage(form);
-    setPackages([...packages, newPkg]);
-    setForm({ code: "", origin: "", destination: "" });
+    try {
+      await createPackage(form);
+      setForm({ code: "", origin: "", destination: "" });
+    } catch (err) {
+      console.error("Error al crear paquete:", err);
+    }
   };
 
   return (
@@ -47,11 +56,15 @@ export default function PackagesPage() {
           value={form.destination}
           onChange={handleChange}
         />
-        <button className="btn btn-primary w-full">Guardar</button>
+        <button className="btn btn-primary w-full" disabled={creating}>
+          {creating ? "Guardando..." : "Guardar"}
+        </button>
       </form>
 
       <div className="w-full max-w-lg">
         <h2 className="text-xl font-semibold mb-3">Lista de Paquetes</h2>
+        {loading && <p>Cargando paquetes...</p>}
+        {error && <p className="text-error">{error}</p>}
         <ul className="space-y-2">
           {packages.map((p) => (
             <li key={p.id} className="card bg-base-100 p-4 shadow-sm">

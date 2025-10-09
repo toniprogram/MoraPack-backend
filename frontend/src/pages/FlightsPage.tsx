@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { getFlights, createFlight } from "../api/flightService";
-import type { Flight } from "../api/flightService";
+import { getFlights, createFlight } from "../services/flightService";
+import type { Flight } from "../hooks/flightService";
 
 const parseHHMM = (time: string): number => {
   if (!time.includes(":")) return 0;
