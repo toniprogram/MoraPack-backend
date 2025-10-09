@@ -1,7 +1,7 @@
 import dayjs from "dayjs";
 import "dayjs/locale/es";
 import { useEffect, useState } from "react";
-import { Link, NavLink } from "react-router-dom";
+import { NavLink } from "react-router-dom";
 
 export default function Navbar() {
   const [status, setStatus] = useState(true);
@@ -9,11 +9,9 @@ export default function Navbar() {
 
   useEffect(() => {
     dayjs.locale("es");
-
     const updateTime = () => {
       setTime(dayjs().format("DD MMM YYYY, HH:mm"));
     };
-
     updateTime();
     const interval = setInterval(updateTime, 60000);
     return () => clearInterval(interval);
@@ -33,22 +31,22 @@ export default function Navbar() {
             <span className="text-sm opacity-80">SkyRoute System</span>
           </div>
       </div>
-      {/* Centro: Botones de Navegación */}
+
       <div className="navbar-center">
         <ul className="menu menu-horizontal px-1 gap-2">
           <li>
             <NavLink
-              to="/rutas"
+              to="/packages"
               className={({ isActive }) =>
                 `btn btn-ghost ${isActive ? "btn-active" : ""}`
-              } 
+              }
             >
               Pedidos
             </NavLink>
           </li>
           <li>
             <NavLink
-              to="/paquetes"
+              to="/flights"
               className={({ isActive }) =>
                 `btn btn-ghost ${isActive ? "btn-active" : ""}`
               }
@@ -58,7 +56,7 @@ export default function Navbar() {
           </li>
           <li>
             <NavLink
-              to="/reportes"
+              to="/reports"
               className={({ isActive }) =>
                 `btn btn-ghost ${isActive ? "btn-active" : ""}`
               }
@@ -69,9 +67,7 @@ export default function Navbar() {
         </ul>
       </div>
 
-      {/* Derecha: Estado del sistema y usuario */}
       <div className="navbar-end">
-        {/* 🟢 Estado del sistema + fecha */}
         <div className="flex flex-col items-end mr-4 text-right leading-tight">
           <span className={`text-sm font-semibold ${status ? "text-success" : "text-error"}`}>
             ● {status ? "Conectado" : "Desconectado"}
@@ -87,8 +83,7 @@ export default function Navbar() {
             />
           </button>
           <ul className="dropdown-content menu bg-base-100 rounded-box z-10 mt-3 w-30 shadow">
-          {/*Luego hay que modificar esto para que redirija a las páginas correspondientes*/}
-            <li><a>Profile</a></li> 
+            <li><a>Profile</a></li>
             <li><a>Logout</a></li>
           </ul>
         </div>
