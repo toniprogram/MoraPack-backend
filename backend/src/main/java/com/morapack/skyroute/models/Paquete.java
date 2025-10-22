@@ -11,7 +11,7 @@ public class Paquete {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    private String code;
-    private String origin;
-    private String destination;
+    private String codigo;
+    private String origen;
+    private String destino;
 }

@@ -11,11 +11,11 @@ public class Aeropuerto {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    private String code;
+    private String codigo;
     private int gmt;
-    private int storageCap;
-    private double lat;
-    private double lon;
-    private String continent;
-    private boolean isExporter;
+    private int alamcenCapacidad;
+    private double latitud;
+    private double longitud;
+    private String continente;
+    private boolean esExportador;
 }
