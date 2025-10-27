@@ -12,10 +12,12 @@ public class Aeropuerto {
     private Long id;
 
     private String codigo;
+    private String nombre;
     private int gmt;
-    private int alamcenCapacidad;
+    private int almacenCapacidad;
     private double latitud;
     private double longitud;
     private String continente;
     private boolean esExportador;
+    private boolean flg_activo;
 }
