@@ -13,7 +13,7 @@ const planeIcon = new L.Icon({
 
 const hubIcon = new L.Icon({
   iconUrl: '/images/hub-icon.png',
-  iconSize: [20, 20],
+  iconSize: [30, 40],
   iconAnchor: [10, 10],
 });
 
