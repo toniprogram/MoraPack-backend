@@ -1,61 +1,29 @@
-import { useCallback } from "react";
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
-import {
-  createFlight as createFlightRequest,
-  getFlights,
-  type Flight,
-} from "../services/flightService";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { flightService } from "../services/flightService";
+import type { Vuelo } from "../types/vuelo";
 
-interface FlightFormData extends Omit<Flight, "id"> {}
+// 1. Claves de caché para gestionar los datos de vuelos
+const flightKeys = {
+  all: ["flights"] as const,
+};
 
-const flightsListKey = ["flights", "list"] as const;
-const flightDetailKey = (id: number | string) =>
-  ["flights", "detail", id] as const;
-
+// 2. Hook principal para gestionar la lista y la creación de vuelos
 export function useFlights() {
   const queryClient = useQueryClient();
 
-  const { data, isLoading, isFetching, refetch, error } = useQuery({
-    queryKey: flightsListKey,
-    queryFn: getFlights,
+  // Obtener todos los vuelos
+  const list = useQuery({
+    queryKey: flightKeys.all,
+    queryFn: flightService.getAll,
   });
 
-  const createFlightMutation = useMutation({
-    mutationFn: createFlightRequest,
-    onSuccess: (created) => {
-      queryClient.setQueryData<Flight[]>(
-        flightsListKey,
-        (prev = []) => [...prev, created]
-      );
-      if (created.id !== undefined) {
-        queryClient.setQueryData(flightDetailKey(created.id), created);
-      }
+  // Crear un nuevo vuelo
+  const create = useMutation({
+    mutationFn: flightService.create,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: flightKeys.all });
     },
   });
 
-  const createFlight = useCallback(
-    (flight: FlightFormData) => createFlightMutation.mutateAsync(flight),
-    [createFlightMutation]
-  );
-
-  const friendlyError =
-    error || createFlightMutation.error
-      ? "No se pudieron cargar o actualizar los vuelos"
-      : null;
-
-  return {
-    flights: data ?? [],
-    loading: isLoading,
-    fetching: isFetching,
-    error: friendlyError,
-    queryError: error,
-    mutationError: createFlightMutation.error,
-    fetchFlights: refetch,
-    createFlight,
-    creating: createFlightMutation.isPending,
-  };
+  return { list, create };
 }

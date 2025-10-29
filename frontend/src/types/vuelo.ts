@@ -1,5 +1,5 @@
 export interface Vuelo {
-  id?: number;
+  id: number;
   origen: string;
   destino: string;
   salidaLocalMin: number;
