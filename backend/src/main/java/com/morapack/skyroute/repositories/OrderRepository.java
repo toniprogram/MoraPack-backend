@@ -1,8 +1,8 @@
 package com.morapack.skyroute.repositories;
 
-import com.morapack.skyroute.models.Pedido;
+import com.morapack.skyroute.models.Order;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 @Repository
-public interface PedidoRepository extends JpaRepository<Pedido, Long> {}
+public interface OrderRepository extends JpaRepository<Order, String> {}

@@ -1,33 +1,33 @@
 package com.morapack.skyroute.controllers;
 
-import com.morapack.skyroute.models.Pedido;
-import com.morapack.skyroute.services.PedidoService;
+import com.morapack.skyroute.models.Order;
+import com.morapack.skyroute.services.OrderService;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
 @RestController
 @RequestMapping("/api/pedidos")
-public class PedidoController {
+public class OrderController {
 
-    private final PedidoService service;
+    private final OrderService service;
 
-    public PedidoController(PedidoService service) {
+    public OrderController(OrderService service) {
         this.service = service;
     }
 
     @GetMapping
-    public List<Pedido> getAll() {
+    public List<Order> getAll() {
         return service.getAll();
     }
 
     @PostMapping
-    public Pedido create(@RequestBody Pedido pedido) {
+    public Order create(@RequestBody Order pedido) {
         return service.create(pedido);
     }
 
     @PutMapping("/{id}")
-    public Pedido update(@PathVariable Long id, @RequestBody Pedido pedido) {
+    public Order update(@PathVariable String id, @RequestBody Order pedido) {
         return service.update(id, pedido);
     }
 }

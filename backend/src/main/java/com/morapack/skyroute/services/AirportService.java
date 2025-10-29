@@ -1,7 +1,7 @@
 package com.morapack.skyroute.services;
 
-import com.morapack.skyroute.models.Aeropuerto;
-import com.morapack.skyroute.repositories.AeropuertoRepository;
+import com.morapack.skyroute.models.Airport;
+import com.morapack.skyroute.repositories.AirportRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -9,24 +9,24 @@ import java.util.List;
 import java.util.Optional;
 
 @Service
-public class AeropuertoService {
+public class AirportService {
     
     @Autowired
-    private AeropuertoRepository aeropuertoRepository;
+    private AirportRepository aeropuertoRepository;
     
-    public List<Aeropuerto> getAll() {
+    public List<Airport> getAll() {
         return aeropuertoRepository.findAll();
     }
     
-    public Optional<Aeropuerto> findById(Long id) {
+    public Optional<Airport> findById(String id) {
         return aeropuertoRepository.findById(id);
     }
     
-    public Aeropuerto create(Aeropuerto aeropuerto) {
+    public Airport create(Airport aeropuerto) {
         return aeropuertoRepository.save(aeropuerto);
     }
     
-    public void deleteById(Long id) {
+    public void deleteById(String id) {
         aeropuertoRepository.deleteById(id);
     }
 }

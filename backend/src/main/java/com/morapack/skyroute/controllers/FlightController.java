@@ -1,7 +1,7 @@
 package com.morapack.skyroute.controllers;
 
-import com.morapack.skyroute.models.Vuelo;
-import com.morapack.skyroute.services.VueloService;
+import com.morapack.skyroute.models.Flight;
+import com.morapack.skyroute.services.FlightService;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -10,19 +10,19 @@ import java.util.List;
 @RequestMapping("/api/vuelos")
 public class VueloController {
 
-    private final VueloService service;
+    private final FlightService service;
 
-    public VueloController(VueloService service) {
+    public VueloController(FlightService service) {
         this.service = service;
     }
 
     @GetMapping
-    public List<Vuelo> getAll() {
+    public List<Flight> getAll() {
         return service.getAll();
     }
 
     @PostMapping
-    public Vuelo create(@RequestBody Vuelo vuelo) {
+    public Flight create(@RequestBody Flight vuelo) {
         return service.create(vuelo);
     }
 }
