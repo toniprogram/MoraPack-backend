@@ -1,7 +1,7 @@
 package com.morapack.skyroute.controllers;
 
-import com.morapack.skyroute.models.Aeropuerto;
-import com.morapack.skyroute.services.AeropuertoService;
+import com.morapack.skyroute.models.Airport;
+import com.morapack.skyroute.services.AirportService;
 
 
 import org.springframework.web.bind.annotation.*;
@@ -12,21 +12,21 @@ import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/aeropuertos")
-public class AeropuertoController {
+public class AirportController {
 
-    private final AeropuertoService service;
+    private final AirportService service;
 
-    public AeropuertoController(AeropuertoService service) {
+    public AirportController(AirportService service) {
         this.service = service;
     }
 
     @GetMapping
-    public List<Aeropuerto> getAll() {
+    public List<Airport> getAll() {
         return service.getAll();
     }
 
     @PostMapping
-    public Aeropuerto create(@RequestBody Aeropuerto aeropuerto) {
+    public Airport create(@RequestBody Airport aeropuerto) {
         return service.create(aeropuerto);
     }
 }

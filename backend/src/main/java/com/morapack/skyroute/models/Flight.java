@@ -17,7 +17,6 @@ public class Flight {
     private static final int CANCELLED_SENTINEL = -1;
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
     private String id;
 
     @ManyToOne

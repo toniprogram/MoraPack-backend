@@ -30,17 +30,17 @@ public class OrderPlanController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    @GetMapping("/status/{status}")
+  /*   @GetMapping("/status/{status}")
     public ResponseEntity<List<OrderPlan>> getOrderPlansByStatus(@PathVariable String status) {
         return ResponseEntity.ok(orderPlanService.findByStatus(status));
-    }
+    } */
 
-    @GetMapping("/date-range")
+  /*  @GetMapping("/date-range")
     public ResponseEntity<List<OrderPlan>> getOrderPlansByDateRange(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startDate,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime endDate) {
         return ResponseEntity.ok(orderPlanService.findByCreatedAtBetween(startDate, endDate));
-    }
+    } */
 
     @GetMapping("/with-routes")
     public ResponseEntity<List<OrderPlan>> getOrderPlansWithRoutes() {

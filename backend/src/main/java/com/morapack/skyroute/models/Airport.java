@@ -8,20 +8,18 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 @Data
-@NoArgsConstructor 
+@NoArgsConstructor
 @Entity
 @Table(name = "airport")
 public class Airport {
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-
-    public final String code;
-    public final String name;
-    public final int gmtOffsetHours;
-    private final int storageCapacity;
-    private final String continent;
-    private final String latitude;
-    private final String longitude;
+    public String code;
+    public String name;
+    public int gmtOffsetHours;
+    private int storageCapacity;
+    private String continent;
+    private String latitude;
+    private String longitude;
 
         public Airport(String code,
                    String name,

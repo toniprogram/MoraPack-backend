@@ -24,13 +24,6 @@ public class OrderPlanService {
         return orderPlanRepository.findById(id);
     }
 
-    public List<OrderPlan> findByStatus(String status) {
-        return orderPlanRepository.findByStatus(status);
-    }
-
-    public List<OrderPlan> findByCreatedAtBetween(LocalDateTime startDate, LocalDateTime endDate) {
-        return orderPlanRepository.findByCreatedAtBetween(startDate, endDate);
-    }
 
     public List<OrderPlan> findOrderPlansWithRoutes() {
         return orderPlanRepository.findOrderPlansWithRoutes();

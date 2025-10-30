@@ -8,11 +8,11 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/vuelos")
-public class VueloController {
+public class FlightController {
 
     private final FlightService service;
 
-    public VueloController(FlightService service) {
+    public FlightController(FlightService service) {
         this.service = service;
     }
 
