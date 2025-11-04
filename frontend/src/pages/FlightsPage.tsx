@@ -1,9 +1,10 @@
-import { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { Eye, Plus, Trash2, RefreshCw, Plane } from "lucide-react";
 import { useFlights } from "../hooks/useFlights";
-import type { Vuelo } from "../types/vuelo";
+import type { Vuelo, EstadoVuelo } from "../types/vuelo";
+import VuelosSummary from "../components/VuelosSummary";
 
-// Función Helper para convertir minutos a formato HH:MM
+// --- FUNCIONES AUXILIARES ---
 const formatMinutes = (minutes: number) => {
   if (isNaN(minutes)) return '00:00';
   const h = Math.floor(minutes / 60).toString().padStart(2, "0");
@@ -11,10 +12,28 @@ const formatMinutes = (minutes: number) => {
   return `${h}:${m}`;
 };
 
+const formatDuration = (startMin: number, endMin: number) => {
+  const duration = endMin - startMin;
+  if (isNaN(duration) || duration < 0) return 'N/A';
+  const h = Math.floor(duration / 60);
+  const m = duration % 60;
+  return `${h}h ${m}m`;
+};
+
+const getStatusBadgeClass = (status: EstadoVuelo) => {
+  const statusClasses: Record<EstadoVuelo, string> = {
+    "en vuelo": "badge-info",
+    "programado": "badge-success",
+    "completado": "badge-ghost",
+    "retrasado": "badge-error"
+  };
+  return statusClasses[status] || "badge-ghost";
+};
+
 export default function FlightsPage() {
   const { list, create } = useFlights();
-
   const [showForm, setShowForm] = useState(false);
+
   const [form, setForm] = useState<Omit<Vuelo, "id">>({
     origen: "",
     destino: "",
@@ -23,25 +42,46 @@ export default function FlightsPage() {
     capacidad: 250,
   });
 
-  // 🟢 Crear nuevo vuelo
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState<EstadoVuelo | "todos">("todos");
+
+  // --- MANEJADORES DE LÓGICA ---
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     create.mutate(form, {
       onSuccess: () => {
-        // Resetea el formulario al estado inicial
         setForm({
-          origen: "",
-          destino: "",
-          salidaLocalMin: 0,
-          llegadaLocalMin: 0,
-          capacidad: 250,
+          origen: "", destino: "", salidaLocalMin: 0, llegadaLocalMin: 0, capacidad: 250,
         });
         setShowForm(false);
       },
     });
   };
 
-  // 🟠 Estados de Carga y Error
+  const handleClearFilters = () => {
+    setSearchTerm("");
+    setStatusFilter("todos");
+  };
+
+  // Filtrado
+  const filteredFlights = useMemo(() => {
+    if (!list.data) return [];
+    return list.data.filter((flight) => {
+      if (statusFilter !== "todos" && flight.estado !== statusFilter) return false;
+      if (searchTerm) {
+        const lowerSearchTerm = searchTerm.toLowerCase();
+        // Se asume que el tipo 'Vuelo' tiene 'codigoVuelo'
+        return (
+          flight.codigoVuelo.toLowerCase().includes(lowerSearchTerm) ||
+          flight.origen.toLowerCase().includes(lowerSearchTerm) ||
+          flight.destino.toLowerCase().includes(lowerSearchTerm)
+        );
+      }
+      return true;
+    });
+  }, [list.data, searchTerm, statusFilter]);
+
+  // --- ESTADOS DE CARGA ---
   if (list.isLoading)
     return <div className="p-6 text-center">Cargando vuelos...</div>;
 
@@ -57,12 +97,16 @@ export default function FlightsPage() {
 
   return (
     <div className="p-6 space-y-4">
-      {/*Encabezado*/}
+      {/* Encabezado */}
       <div className="flex justify-between items-center">
         <h1 className="text-xl font-semibold">Gestión de Vuelos</h1>
         <div className="flex gap-2">
-          <button className="btn btn-outline btn-sm" onClick={() => list.refetch()}>
-            <RefreshCw size={16} />
+          <button
+            className="btn btn-outline btn-sm"
+            onClick={() => list.refetch()}
+            disabled={list.isFetching}
+          >
+            <RefreshCw size={16} className={list.isFetching ? 'animate-spin' : ''} />
             Actualizar
           </button>
           <button
@@ -74,23 +118,8 @@ export default function FlightsPage() {
           </button>
         </div>
       </div>
-
-      {/* Resumen de Vuelos (integrado) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="card border border-base-300 bg-base-100 shadow-sm">
-          <div className="card-body flex flex-row items-center justify-between p-4">
-            <div className="flex flex-col">
-              <span className="text-sm opacity-70">Total Vuelos</span>
-              <span className="text-2xl font-bold">{list.data?.length ?? 0}</span>
-            </div>
-            <div className="flex items-center">
-              <Plane className="text-primary" size={22} />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/*Formulario para Nuevo Vuelo*/}
+      <VuelosSummary />
+      {/* Formulario */}
       {showForm && (
         <form
           onSubmit={handleSubmit}
@@ -114,33 +143,76 @@ export default function FlightsPage() {
         </form>
       )}
 
-      {/* 🔹 Tabla de Vuelos */}
+      {/* Barra de filtros */}
+      <div className="card bg-base-200 p-4 shadow-md border border-base-300">
+        <div className="flex flex-wrap items-center gap-4">
+          <input
+            type="text"
+            placeholder="Buscar por código, origen, destino..."
+            className="input input-bordered input-sm w-full max-w-xs"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+          <select
+            className="select select-bordered select-sm"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as any)}
+          >
+            <option value="todos">Todos los estados</option>
+            <option value="en vuelo">En vuelo</option>
+            <option value="programado">Programado</option>
+            <option value="completado">Completado</option>
+            <option value="retrasado">Retrasado</option>
+          </select>
+          <button className="btn btn-ghost btn-sm" onClick={handleClearFilters}>
+              Limpiar filtros
+          </button>
+        </div>
+      </div>
+
+      {/* Tabla Vuelos */}
       <div className="overflow-x-auto">
         <table className="table table-zebra text-sm">
           <thead>
             <tr>
-              <th>ID</th>
+              <th>Vuelo</th>
               <th>Ruta</th>
-              <th>Horario</th>
-              <th>Capacidad</th>
+              <th>Aeronave</th>
+              <th>Horarios</th>
+              <th>Ocupación</th>
+              <th>Estado</th>
               <th>Acciones</th>
             </tr>
           </thead>
           <tbody>
-            {list.data?.length === 0 ? (
-              <tr><td colSpan={5} className="text-center opacity-60 py-4">No hay vuelos registrados</td></tr>
+            {!list.data || filteredFlights.length === 0 ? (
+              <tr><td colSpan={7} className="text-center opacity-60 py-4">No se encontraron vuelos.</td></tr>
             ) : (
-              list.data?.map((vuelo) => (
-                <tr key={vuelo.id}>
-                  <td>{vuelo.id}</td>
-                  <td><strong>{vuelo.origen} → {vuelo.destino}</strong></td>
-                  <td>{formatMinutes(vuelo.salidaLocalMin)} - {formatMinutes(vuelo.llegadaLocalMin)}</td>
-                  <td>{vuelo.capacidad} paquetes</td>
-                  <td className="flex gap-2">
-                    <button className="btn btn-ghost btn-xs" title="Ver detalle"><Eye size={16} /></button>
-                  </td>
-                </tr>
-              ))
+              filteredFlights.map((flight) => {
+                const ocupacionPct = Math.round((flight.ocupacionActual / flight.capacidad) * 100);
+                return (
+                  <tr key={flight.id}>
+                    <td><strong>{flight.codigoVuelo}</strong></td>
+                    <td><div>{flight.origen} ✈️ {flight.destino}</div><div className="text-xs opacity-60">{flight.distanciaKm} km</div></td>
+                    <td>{flight.aeronave}</td>
+                    <td>
+                      <div>{formatMinutes(flight.salidaLocalMin)} - {formatMinutes(flight.llegadaLocalMin)}</div>
+                      <div className="text-xs opacity-60">{formatDuration(flight.salidaLocalMin, flight.llegadaLocalMin)}</div>
+                    </td>
+                    <td>
+                      <div className="flex items-center gap-2">
+                        <span>{flight.ocupacionActual}/{flight.capacidad}</span>
+                        <progress className={`progress ${ocupacionPct > 90 ? 'progress-error' : 'progress-success'}`} value={ocupacionPct} max="100"></progress>
+                      </div>
+                    </td>
+                    <td><span className={`badge ${getStatusBadgeClass(flight.estado)} capitalize`}>{flight.estado}</span></td>
+                    <td className="flex gap-2">
+                      <button className="btn btn-ghost btn-xs" title="Ver detalle"><Eye size={16} /></button>
+                      {/* botones de Editar/Eliminar */}
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
