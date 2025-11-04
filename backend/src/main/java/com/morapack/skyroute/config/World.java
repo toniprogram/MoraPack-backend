@@ -25,7 +25,7 @@ public class World implements Orders.Observer {
         return instance;
     }
 
-    private World() {
+    public World() {
         try{
             this.airports = Airports.load(Config.PATH_AEROPUERTOS);
         } catch (IOException e) {

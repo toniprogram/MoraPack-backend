@@ -1,4 +1,4 @@
-package com.morapack.skyroute.GA;
+package com.morapack.skyroute.algorithm;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -220,7 +220,7 @@ public class Individual {
         return fitness;
     }
 
-    List<OrderPlan> getPlans() {
+    public List<OrderPlan> getPlans() {
         return plans;
     }
 
@@ -347,4 +347,5 @@ public class Individual {
         }
         return Duration.ofHours(Config.INTERCONTINENTAL_SLA_HOURS);
     }
+
 }

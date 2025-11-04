@@ -18,15 +18,12 @@ public class Flight {
 
     @Id
     private String id;
-
     @ManyToOne
     @JoinColumn(name = "origin_code", referencedColumnName = "code")
     private Airport origin;
-
     @ManyToOne
     @JoinColumn(name = "destination_code", referencedColumnName = "code")
     private Airport destination;
-
     private LocalTime depLocal;
     private LocalTime arrLocal;
     private int dailyCapacity;
