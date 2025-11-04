@@ -1,0 +1,531 @@
+# 🌐 Especificación de Endpoints REST
+
+### Integración Frontend ↔ Backend ↔ Algoritmo
+
+**Proyecto:** Planificador logístico de vuelos y pedidos
+**Autor:** Ariel Guerra
+**Objetivo:** Documentar todos los endpoints necesarios para la comunicación entre el frontend y el backend, incluyendo estructura de payloads, propósito funcional y uso esperado desde el frontend.
+
+---
+
+## 🧭 1. Estructura general de módulos
+
+
+| Módulo     | Descripción                                                                      |
+| ----------- | --------------------------------------------------------------------------------- |
+| `/orders`   | Gestión de pedidos (crear, listar, eliminar).                                    |
+| `/plan`     | Ejecución del algoritmo genético y visualización de la planificación vigente. |
+| `/capacity` | Consulta de capacidades actuales (vuelos y aeropuertos).                          |
+| `/simulate` | Modo simulación semanal (archivo proyectado, ejecución, resultados temporales). |
+| `/base`     | Acceso a datos estructurales (aeropuertos, vuelos, clientes).                     |
+
+---
+
+## 📦 2. Módulo `/base`
+
+### `GET /base/airports`
+
+**Devuelve** todos los aeropuertos registrados.
+
+**Response**
+
+```json
+[
+  {
+    "id": "LIM",
+    "name": "Lima Intl",
+    "latitude": -12.021,
+    "longitude": -77.114
+  },
+  {
+    "id": "CUZ",
+    "name": "Cusco Intl",
+    "latitude": -13.535,
+    "longitude": -71.938
+  }
+]
+```
+
+**Frontend usa para:**
+
+* Dibujar nodos del grafo de vuelos.
+* Mostrar lista desplegable de aeropuertos origen/destino.
+
+---
+
+### `GET /base/flights`
+
+**Devuelve** todos los vuelos base (plantillas repetitivas).
+
+**Response**
+
+```json
+[
+  {
+    "id": "F001",
+    "origin": "LIM",
+    "destination": "CUZ",
+    "capacity": 500,
+    "durationMinutes": 90
+  },
+  ...
+]
+```
+
+**Frontend usa para:**
+
+* Mostrar aristas del grafo (vuelos posibles).
+* Calcular rutas y capacidades visualmente.
+
+---
+
+### `GET /base/clients`
+
+**Devuelve lista de clientes registrados.**
+
+**Response**
+
+```json
+[
+  { "id": "C001" },
+  { "id": "C002" }
+]
+```
+
+**Frontend usa para:**
+
+* Asignar pedidos nuevos a clientes.
+* Mostrar pedidos agrupados por cliente.
+
+---
+
+## 📦 3. Módulo `/orders`
+
+### `GET /orders`
+
+**Lista** todos los pedidos activos en BD.
+
+**Response**
+
+```json
+[
+  {
+    "id": 1,
+    "clientId": "C001",
+    "destination": "CUZ",
+    "quantity": 50,
+    "status": "IN_TRANSIT"
+  },
+  {
+    "id": 2,
+    "clientId": "C002",
+    "destination": "ARE",
+    "quantity": 20,
+    "status": "PENDING"
+  }
+]
+```
+
+**Frontend usa para:**
+
+* Mostrar pedidos actuales en un panel lateral o tabla.
+* Identificar cuáles requieren planificación.
+
+---
+
+### `POST /orders`
+
+**Crea** un nuevo pedido.
+
+**Request**
+
+```json
+{
+  "clientId": "C001",
+  "destination": "CUZ",
+  "quantity": 40
+}
+```
+
+**Response**
+
+```json
+{
+  "id": 12,
+  "createdAt": "2025-11-03T12:32:00Z",
+  "status": "PENDING"
+}
+```
+
+**Frontend usa para:**
+
+* Registrar un pedido desde el panel de control.
+* Desencadenar una actualización del plan.
+
+---
+
+### `DELETE /orders/{id}`
+
+Elimina un pedido (solo si no ha sido enviado).
+
+**Frontend usa para:**
+
+* Borrar pedidos erróneos o cancelados.
+* Actualizar la vista del tablero.
+
+---
+
+## 📦 4. Módulo `/plan`
+
+### `POST /plan/run`
+
+Ejecuta el algoritmo genético usando los pedidos activos.
+
+**Request**
+
+```json
+{ "recalculate": true }
+```
+
+**Response**
+
+```json
+{
+  "status": "SUCCESS",
+  "generatedAt": "2025-11-03T13:00:00Z",
+  "fitness": 0.978,
+  "message": "Planificación actualizada correctamente."
+}
+```
+
+**Frontend usa para:**
+
+* Botón “Recalcular rutas”.
+* Mostrar spinner de ejecución y luego actualizar grafo.
+
+---
+
+### `GET /plan/current`
+
+Devuelve la planificación vigente (último plan guardado).
+
+**Response**
+
+```json
+{
+  "generatedAt": "2025-11-03T13:00:00Z",
+  "fitness": 0.978,
+  "orderPlans": [
+    {
+      "orderId": 1,
+      "routes": [
+        {
+          "routeId": "R01",
+          "quantity": 30,
+          "segments": [
+            {
+              "from": "LIM",
+              "to": "CUZ",
+              "departure": "2025-11-04T09:00:00Z",
+              "arrival": "2025-11-04T10:30:00Z"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Frontend usa para:**
+
+* Dibujar el grafo de vuelos con las rutas activas.
+* Mostrar tooltips con cantidades, tiempos y fitness.
+* Actualizar la línea temporal de operaciones.
+
+---
+
+### `DELETE /plan/current`
+
+Reinicia el plan (deja sin planificación vigente).
+
+**Frontend usa para:**
+
+* Botón de “reset” del planificador.
+* Modo debug o limpieza de entorno operativo.
+
+---
+
+## 📦 5. Módulo `/capacity`
+
+### `GET /capacity/flights`
+
+Muestra la capacidad utilizada por vuelo y fecha.
+
+**Response**
+
+```json
+[
+  {
+    "flightId": "F001",
+    "date": "2025-11-04",
+    "usedCapacity": 320,
+    "totalCapacity": 500
+  },
+  {
+    "flightId": "F002",
+    "date": "2025-11-04",
+    "usedCapacity": 450,
+    "totalCapacity": 500
+  }
+]
+```
+
+**Frontend usa para:**
+
+* Mostrar indicadores de llenado en el grafo (colores o porcentajes).
+* Filtrar vuelos saturados.
+
+---
+
+### `GET /capacity/airports`
+
+Devuelve la capacidad usada por aeropuerto en intervalos de simulación (por ejemplo, cada 5 min o según configuración).
+
+**Query params**
+
+intervalMinutes=5   // opcional, default=10
+
+Response
+
+```json[
+{
+"airportId": "LIM",
+"timestamp": "2025-11-04T09:05:00Z",
+"balance": 100
+},
+{
+"airportId": "LIM",
+"timestamp": "2025-11-04T09:10:00Z",
+"balance": 120
+},
+{
+"airportId": "CUZ",
+"timestamp": "2025-11-04T09:10:00Z",
+"balance": 85
+}
+]
+
+```
+
+**Frontend usa para:**
+
+* Graficar la **evolución temporal de carga/descarga** por aeropuerto durante la simulación o el día operativo.
+* Mostrar animaciones en el grafo sincronizadas con la línea temporal.
+* Permitir “scrubbing” (mover el tiempo de simulación y ver el estado en ese minuto).
+
+---
+
+### `POST /capacity/recalculate`
+
+Recalcula la capacidad desde la BD o la planificación actual.
+
+**Frontend usa para:**
+
+* Botón de sincronización rápida tras modificar el plan.
+
+---
+
+## 📦 6. Módulo `/simulate`
+
+### `POST /simulate/upload`
+
+Sube archivo de pedidos proyectados (CSV o JSON).
+
+**Request**
+
+```
+multipart/form-data
+file=orders_proyectados.csv
+```
+
+**Response**
+
+```json
+{ "status": "UPLOADED", "orders": 245 }
+```
+
+**Frontend usa para:**
+
+* Paso 1 del flujo de simulación: cargar dataset semanal.
+
+---
+
+### `POST /simulate/start`
+
+Inicia la simulación con los pedidos cargados.
+
+**Response**
+
+```json
+{
+  "status": "RUNNING",
+  "startedAt": "2025-11-03T15:00:00Z"
+}
+```
+
+**Frontend usa para:**
+
+* Mostrar barra de progreso o estado de simulación.
+* Bloquear edición hasta que termine.
+
+---
+
+### `GET /simulate/status`
+
+Consulta el estado actual de la simulación.
+
+**Response**
+
+```json
+{
+  "status": "IN_PROGRESS",
+  "currentOrderIndex": 58,
+  "totalOrders": 245,
+  "currentFitness": 0.85
+}
+```
+
+**Frontend usa para:**
+
+* Mostrar progreso visual (porcentaje completado).
+* Actualizar métricas de fitness o capacidad.
+
+---
+
+### `GET /simulate/plan`
+
+Devuelve el plan actual dentro de la simulación.
+
+**Response**
+(igual formato que `/plan/current`)
+
+```json
+{
+  "generatedAt": "2025-11-03T15:10:00Z",
+  "fitness": 0.912,
+  "orderPlans": [ ... ]
+}
+```
+
+**Frontend usa para:**
+
+* Visualizar resultados parciales mientras la simulación avanza.
+* Animar el grafo de vuelos a medida que se asignan pedidos.
+
+---
+
+### `POST /simulate/stop`
+
+Detiene manualmente la simulación.
+
+**Frontend usa para:**
+
+* Botón “Detener simulación”.
+
+---
+
+## 📦 7. Módulo `/admin` (opcional)
+
+### `GET /admin/stats`
+
+Estadísticas globales del algoritmo y del sistema.
+
+**Response**
+
+```json
+{
+  "totalOrders": 312,
+  "totalFlights": 27,
+  "avgFitness": 0.91,
+  "executionTimeMs": 12345
+}
+```
+
+**Frontend usa para:**
+
+* Dashboard de métricas y rendimiento.
+
+---
+
+## 🧠 8. Qué hará el frontend con estos endpoints
+
+
+| Sección del frontend                 | Endpoint principal                                                       | Comportamiento                                                             |
+| ------------------------------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
+| **Dashboard**                         | `/plan/current`,`/capacity/flights`,`/capacity/airports`                 | Visualizar grafo de vuelos, indicadores de carga y rutas activas.          |
+| **Gestión de pedidos**               | `/orders`(GET/POST/DELETE)                                               | Listar, crear y eliminar pedidos.                                          |
+| **Panel de control del planificador** | `/plan/run`,`/plan/current`,`/capacity/recalculate`                      | Ejecutar el GA y actualizar resultados.                                    |
+| **Simulación semanal**               | `/simulate/upload`,`/simulate/start`,`/simulate/status`,`/simulate/plan` | Cargar dataset proyectado, iniciar simulación, ver progreso y resultados. |
+| **Administración / estadísticas**   | `/admin/stats`                                                           | Mostrar rendimiento del algoritmo, tiempos y fitness promedio.             |
+
+---
+
+## 💡 9. Recomendaciones para el frontend
+
+* Implementar un **modo doble** (🟢 Operativo / 🧪 Simulación) visible en la interfaz.
+* Mantener una **polling interval** de 5–10 s para `/plan/current` o `/simulate/status`.
+* Usar **colores dinámicos**:
+  * Verde → capacidad libre.
+  * Naranja → en riesgo.
+  * Rojo → saturado.
+* Usar WebSocket opcional para actualizaciones en tiempo real del plan.
+* Cachear datos estáticos (aeropuertos, vuelos) para reducir llamadas.
+
+---
+
+## ✅ 10. Resumen visual de endpoints
+
+```
+/base
+ ├── GET /airports
+ ├── GET /flights
+ └── GET /clients
+
+/orders
+ ├── GET /orders
+ ├── POST /orders
+ └── DELETE /orders/{id}
+
+/plan
+ ├── POST /run
+ ├── GET /current
+ └── DELETE /current
+
+/capacity
+ ├── GET /flights
+ ├── GET /airports
+ └── POST /recalculate
+
+/simulate
+ ├── POST /upload
+ ├── POST /start
+ ├── GET /status
+ ├── GET /plan
+ └── POST /stop
+
+/admin
+ └── GET /stats
+```
+
+---
+
+## 📘 11. Frase resumen para documentación
+
+> “El frontend se comunica con el backend mediante endpoints REST organizados por dominio funcional.
+> Los endpoints de `/plan` y `/capacity` permiten visualizar el estado operativo del sistema, mientras que los de `/simulate` habilitan la ejecución y monitoreo de simulaciones semanales sin alterar los datos reales.
+> Toda la información estructural (vuelos, aeropuertos, clientes) se obtiene desde `/base`, garantizando consistencia entre el grafo visual y la lógica de planificación.”
+
+---
+
+**Fin del documento.**

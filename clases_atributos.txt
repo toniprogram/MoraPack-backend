@@ -1,0 +1,217 @@
+backend/src/main/java/com/morapack/skyroute/GA/GeneticAlgorithm.java
+  Clase GeneticAlgorithm
+    - private final World world;
+    - private final List<Order> demand;
+    - private final Random rnd = new Random();
+    - private final List<Individual> population = new ArrayList<>();
+    - private static final int TOURNAMENT_K = 3;
+
+backend/src/main/java/com/morapack/skyroute/GA/Individual.java
+  Clase Individual
+    - private final List<OrderPlan> plans;
+    - private final FlightSchedule flightSchedule;
+    - private final AirportSchedule airportSchedule;
+    - private double fitness;
+
+backend/src/main/java/com/morapack/skyroute/GA/RouteBuilder.java
+  Clase RouteBuilder
+    - private static final List<String> PRODUCTION_HUBS = List.of("SPIM", "EBCI", "UBBB");
+    - private static final int MAX_HOPS = 8;
+    - private static final int MAX_DAY_LOOKAHEAD = 7;
+    - private final Flights flights;
+    - private final Airports airports;
+    - private final FlightSchedule flightSchedule;
+    - private final AirportSchedule airportSchedule;
+    - private final Map<String, List<String>> reverseGraph;
+    - private final Random rnd;
+    - private final SelectionMode mode;
+
+backend/src/main/java/com/morapack/skyroute/SkyRouteApplication.java
+  Clase SkyRouteApplication
+    - (Sin atributos declarados)
+
+backend/src/main/java/com/morapack/skyroute/config/Config.java
+  Clase Config
+    - public static final YearMonth BASE_DATE = YearMonth.of(2025, 1);
+    - public static final int CONTINENTAL_SLA_HOURS = 48;
+    - public static final int INTERCONTINENTAL_SLA_HOURS = 72;
+    - public static final Duration TRANSFER_BUFFER = Duration.ofMinutes(30);
+    - public static final Duration WAREHOUSE_DWELL = Duration.ofHours(2);
+    - public static final Path PATH_AEROPUERTOS = Paths.get("src/com/morapack/config/data/aeropuertos.txt");
+    - public static final Path PATH_VUELOS = Paths.get("src/com/morapack/config/data/vuelos.txt");
+    - public static final Path PATH_ORDENES = Paths.get("src/com/morapack/config/data/pedidos.txt");
+    - public static final Path DIR_LOGS = Paths.get("logs");
+    - public static final Path DIR_EXPORTS = Paths.get("exports");
+    - public static final int POP_SIZE = 40;
+    - public static final int MAX_GEN = 80;
+    - public static final double P_CROSS = 0.75;
+    - public static final double P_MUT = 0.35;
+
+backend/src/main/java/com/morapack/skyroute/config/WebConfig.java
+  Clase WebConfig
+    - (Sin atributos declarados)
+
+backend/src/main/java/com/morapack/skyroute/config/World.java
+  Clase World
+    - private static World instance;
+    - private final Airports airports;
+    - private final Flights flights;
+    - private final Orders orders;
+    - private final AirportSchedule airportSchedule;
+    - private Instant currentInstant = Instant.EPOCH;
+
+backend/src/main/java/com/morapack/skyroute/controllers/AirportController.java
+  Clase AirportController
+    - private final AirportService service;
+
+backend/src/main/java/com/morapack/skyroute/controllers/FlightController.java
+  Clase FlightController
+    - private final FlightService service;
+
+backend/src/main/java/com/morapack/skyroute/controllers/OrderController.java
+  Clase OrderController
+    - private final OrderService service;
+
+backend/src/main/java/com/morapack/skyroute/controllers/OrderPlanController.java
+  Clase OrderPlanController
+    - private final OrderPlanService orderPlanService;
+
+backend/src/main/java/com/morapack/skyroute/controllers/RouteController.java
+  Clase RouteController
+    - private final RouteService routeService;
+
+backend/src/main/java/com/morapack/skyroute/controllers/RouteSegmentController.java
+  Clase RouteSegmentController
+    - private final RouteSegmentService routeSegmentService;
+
+backend/src/main/java/com/morapack/skyroute/io/Airports.java
+  Clase Airports
+    - private static final String LATITUDE_TOKEN = "Latitude:";
+    - private final Map<String, Airport> byCode = new HashMap<>();
+
+backend/src/main/java/com/morapack/skyroute/io/Flights.java
+  Clase Flights
+    - private final Airports airportsIndex;
+    - private final List<Flight> all = new ArrayList<>();
+    - private final Map<Airport, List<Flight>> byOrigin = new HashMap<>();
+    - private final Map<String, Flight> byId = new HashMap<>();
+    - private final FlightSchedule schedule = new FlightSchedule();
+
+backend/src/main/java/com/morapack/skyroute/io/OrderLoader.java
+  Clase OrderLoader
+    - private final Orders delegate;
+
+backend/src/main/java/com/morapack/skyroute/io/Orders.java
+  Clase Orders
+    - private final BufferedReader reader;
+    - private final Airports airports;
+    - private final List<Order> activeOrders = new ArrayList<>();
+    - private final Map<String, Order> byId = new HashMap<>();
+    - private Observer observer;
+    - private YearMonth currentMonth = Config.BASE_DATE;
+    - private LocalDateTime lastCreationLocal;
+
+backend/src/main/java/com/morapack/skyroute/models/Airport.java
+  Clase Airport
+    - public String code;
+    - public String name;
+    - public int gmtOffsetHours;
+    - private int storageCapacity;
+    - private String continent;
+    - private String latitude;
+    - private String longitude;
+
+backend/src/main/java/com/morapack/skyroute/models/AirportSchedule.java
+  Clase AirportSchedule
+    - private final Map<String, Integer> capacityByAirport;
+    - private final NavigableMap<Key, Integer> transitDeltas = new TreeMap<>();
+    - private final NavigableMap<Key, Integer> finalDeltas = new TreeMap<>();
+    - private final LocalDateTime instant;
+    - private final String airportId;
+
+backend/src/main/java/com/morapack/skyroute/models/Flight.java
+  Clase Flight
+    - private static final int CANCELLED_SENTINEL = -1;
+    - private String id;
+    - private Airport origin;
+    - private Airport destination;
+    - private LocalTime depLocal;
+    - private LocalTime arrLocal;
+    - private int dailyCapacity;
+    - private Map<LocalDate, Integer> delays;
+
+backend/src/main/java/com/morapack/skyroute/models/FlightSchedule.java
+  Clase FlightSchedule
+    - private final Map<Key, Integer> remainingCapacity = new HashMap<>();
+
+backend/src/main/java/com/morapack/skyroute/models/Network.java
+  Clase Network
+    - private final Airports airports;
+    - private final Flights flights;
+
+backend/src/main/java/com/morapack/skyroute/models/Order.java
+  Clase Order
+    - private String id;
+    - private String customerReference;
+    - private Airport destinationAirport;
+    - private int quantity;
+    - private Instant creationUtc;
+    - private Instant dueUtc;
+
+backend/src/main/java/com/morapack/skyroute/models/OrderPlan.java
+  Clase OrderPlan
+    - private Long id;
+    - private String orderId;
+    - private List<Route> routes = new ArrayList<>();
+    - private Duration slack = Duration.ZERO;
+
+backend/src/main/java/com/morapack/skyroute/models/Route.java
+  Clase Route
+    - private Long id;
+    - private int quantity;
+    - private Duration slack = Duration.ZERO;
+    - private List<RouteSegment> segments = new ArrayList<>();
+
+backend/src/main/java/com/morapack/skyroute/models/RouteSegment.java
+  Clase RouteSegment
+    - private Long id;
+    - private Flight flight;
+    - private LocalDate date;
+    - private int routeQuantity;
+    - private boolean departed;
+    - private boolean arrived;
+    - private boolean receivedByNext = false;
+    - private boolean finalLeg;
+    - private Duration slack = Duration.ZERO;
+
+backend/src/main/java/com/morapack/skyroute/models/Shipment.java
+  Clase Shipment
+    - private final int quantity;
+    - private Route route;
+    - private boolean delivered = false;
+    - private ShipmentStatus status = ShipmentStatus.PLANNED;
+
+backend/src/main/java/com/morapack/skyroute/services/AirportService.java
+  Clase AirportService
+    - private AirportRepository aeropuertoRepository;
+
+backend/src/main/java/com/morapack/skyroute/services/FlightService.java
+  Clase FlightService
+    - private final FlightRepository repo;
+
+backend/src/main/java/com/morapack/skyroute/services/OrderPlanService.java
+  Clase OrderPlanService
+    - private final OrderPlanRepository orderPlanRepository;
+
+backend/src/main/java/com/morapack/skyroute/services/OrderService.java
+  Clase OrderService
+    - private final OrderRepository repo;
+
+backend/src/main/java/com/morapack/skyroute/services/RouteSegmentService.java
+  Clase RouteSegmentService
+    - private final RouteSegmentRepository routeSegmentRepository;
+
+backend/src/main/java/com/morapack/skyroute/services/RouteService.java
+  Clase RouteService
+    - private final RouteRepository routeRepository;
+
