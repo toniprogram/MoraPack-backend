@@ -18,15 +18,15 @@ public class AirportService {
         return aeropuertoRepository.findAll();
     }
     
-    public Optional<Airport> findById(String id) {
-        return aeropuertoRepository.findById(id);
+    public Optional<Airport> findById(String code) {
+        return aeropuertoRepository.findById(code);
     }
     
     public Airport create(Airport aeropuerto) {
         return aeropuertoRepository.save(aeropuerto);
     }
     
-    public void deleteById(String id) {
-        aeropuertoRepository.deleteById(id);
+    public void deleteById(String code) {
+        aeropuertoRepository.deleteById(code);
     }
 }
