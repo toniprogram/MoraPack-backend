@@ -26,6 +26,10 @@ public class OrderPlan {
 
     private Duration slack = Duration.ZERO;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "current_plan_id")
+    private CurrentPlan plan;
+
     // Constructor adicional (para uso de lógica)
     public OrderPlan(String orderId) {
         this.orderId = orderId;

@@ -1,4 +1,4 @@
-package com.morapack.skyroute.GA;
+package com.morapack.skyroute.algorithm;
 
 import java.time.Duration;
 import java.time.Instant;

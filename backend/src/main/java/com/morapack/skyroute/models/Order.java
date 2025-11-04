@@ -13,15 +13,11 @@ public class Order {
 
     @Id
     private String id;
-
     private String customerReference;
-
     @ManyToOne
     @JoinColumn(name = "destination_airport_code", referencedColumnName = "code")
     private Airport destinationAirport;
-
     private int quantity;
-
     private Instant creationUtc;
     private Instant dueUtc;
 
