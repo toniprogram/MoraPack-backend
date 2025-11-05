@@ -26,7 +26,8 @@ public class Orders implements AutoCloseable {
     private final List<Order> activeOrders = new ArrayList<>();
     private final Map<String, Order> byId = new HashMap<>();
     private Observer observer;
-    private Orders(BufferedReader reader, Airports airports) {
+
+    public Orders(BufferedReader reader, Airports airports) {
         this.reader = reader;
         this.airports = airports;
     }
@@ -118,7 +119,7 @@ public class Orders implements AutoCloseable {
         reader.close();
     }
 
-    private void register(Order order) {
+    void register(Order order) {
         activeOrders.add(order);
         byId.put(order.getId(), order);
         if (observer != null) {
