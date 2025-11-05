@@ -29,7 +29,7 @@ public class Orders implements AutoCloseable {
     private YearMonth currentMonth = Config.BASE_DATE;
     private LocalDateTime lastCreationLocal;
 
-    private Orders(BufferedReader reader, Airports airports) {
+    public Orders(BufferedReader reader, Airports airports) {
         this.reader = reader;
         this.airports = airports;
     }
@@ -115,7 +115,7 @@ public class Orders implements AutoCloseable {
         reader.close();
     }
 
-    private void register(Order order) {
+    void register(Order order) {
         activeOrders.add(order);
         byId.put(order.getId(), order);
         if (observer != null) {
