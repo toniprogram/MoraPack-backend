@@ -18,16 +18,16 @@ public class Airport {
     public int gmtOffsetHours;
     private int storageCapacity;
     private String continent;
-    private String latitude;
-    private String longitude;
+    private Double latitude;
+    private Double longitude;
 
         public Airport(String code,
                    String name,
                    int gmtOffsetHours,
                    int storageCapacity,
                    String continent,
-                   String latitude,
-                   String longitude) {
+                   Double latitude,
+                   Double longitude) {
         this.code = Objects.requireNonNull(code, "code");
         this.name = Objects.requireNonNull(name, "name");
         this.gmtOffsetHours = gmtOffsetHours;
