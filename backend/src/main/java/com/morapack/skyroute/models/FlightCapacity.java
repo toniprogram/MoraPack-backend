@@ -1,6 +1,13 @@
 package com.morapack.skyroute.models;
 
-import jakarta.persistence.*;
+import jakarta.persistence.Column;
+import jakarta.persistence.Embeddable;
+import jakarta.persistence.EmbeddedId;
+import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Table;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
@@ -15,32 +22,35 @@ import java.util.Objects;
 public class FlightCapacity {
 
     @EmbeddedId
-    private FlightCapacityKey id; // (flight_id, date)
+    private FlightCapacityKey id;
 
-
+    @ManyToOne(optional = false, fetch = FetchType.LAZY)
+    @JoinColumn(name = "flight_id", referencedColumnName = "id", insertable = false, updatable = false)
+    private Flight flight;
 
     @Column(name = "used_capacity", nullable = false)
     private int usedCapacity;
 
-    public FlightCapacity(FlightCapacityKey id, int usedCapacity) {
-        this.id = Objects.requireNonNull(id, "id");
+    public FlightCapacity(Flight flight, LocalDate date, int usedCapacity) {
+        this.id = new FlightCapacityKey(flight.getId(), date);
+        this.flight = flight;
         this.usedCapacity = usedCapacity;
     }
 
     @Embeddable
-    public class FlightCapacityKey implements Serializable {
-    private String flightId;
-    private LocalDate date; // día de ejecución
-    public void setFlightId(String flightId2) {
-        // TODO Auto-generated method stub
-        throw new UnsupportedOperationException("Unimplemented method 'setFlightId'");
-    }
-    public void setDate(LocalDate localDate) {
-        // TODO Auto-generated method stub
-        throw new UnsupportedOperationException("Unimplemented method 'setDate'");
-    }
+    @Data
+    @NoArgsConstructor
+    public static class FlightCapacityKey implements Serializable {
+
+        @Column(name = "flight_id", nullable = false)
+        private String flightId;
+
+        @Column(name = "date", nullable = false)
+        private LocalDate date;
+
+        public FlightCapacityKey(String flightId, LocalDate date) {
+            this.flightId = flightId;
+            this.date = date;
+        }
     }
 }
-
-
-

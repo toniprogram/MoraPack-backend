@@ -37,7 +37,7 @@ public class Mapper {
     }
 
     private com.morapack.skyroute.models.OrderPlan mapOrderPlan(
-            com.morapack.skyroute.algorithm.OrderPlan original,
+            com.morapack.skyroute.models.OrderPlan original,
             CurrentPlan parentPlan) {
         com.morapack.skyroute.models.OrderPlan copy = new com.morapack.skyroute.models.OrderPlan();
         copy.setOrderId(original.getOrderId());
@@ -53,7 +53,7 @@ public class Mapper {
         return copy;
     }
 
-    private Route mapRoute(com.morapack.skyroute.algorithm.Route original) {
+    private Route mapRoute(com.morapack.skyroute.models.Route original) {
         Route copy = new Route();
         copy.setQuantity(original.getQuantity());
         copy.setSlack(original.getSlack());
@@ -67,7 +67,7 @@ public class Mapper {
         return copy;
     }
 
-    private RouteSegment mapRouteSegment(com.morapack.skyroute.algorithm.RouteSegment original) {
+    private RouteSegment mapRouteSegment(com.morapack.skyroute.models.RouteSegment original) {
         RouteSegment copy = new RouteSegment();
         String flightId = original.getFlight().getId();
         var persistedFlight = flightRepository.findById(flightId)
