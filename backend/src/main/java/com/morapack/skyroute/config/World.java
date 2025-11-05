@@ -8,8 +8,13 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Objects;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.morapack.skyroute.base.repository.AirportRepository;
+import com.morapack.skyroute.base.repository.FlightRepository;
 import com.morapack.skyroute.io.*;
 import com.morapack.skyroute.models.*;
+import com.morapack.skyroute.orders.repository.OrderRepository;
 
 public class World implements Orders.Observer {
     private static World instance;
@@ -29,6 +34,14 @@ public class World implements Orders.Observer {
     public World() {
         this(loadAirportsFromFiles(), null, null, null, null);
     }
+
+    public static void setRepositories(AirportRepository airportRepo,
+                                   FlightRepository flightRepo,
+                                   OrderRepository orderRepo) {
+    airportRepository = airportRepo;
+    flightRepository = flightRepo;
+    orderRepository = orderRepo;
+}
 
     private World(Airports airports,
                   Flights flights,
@@ -112,27 +125,43 @@ public class World implements Orders.Observer {
                 currentInstant);
     }
 
+    @Autowired
+    private static AirportRepository airportRepository;
+
     private static Airports loadAirportsFromFiles() {
-        try {
+        /*try {
             return Airports.load(Config.PATH_AIRPORTS);
         } catch (IOException e) {
             throw new RuntimeException("Error loading airports", e);
-        }
+        }*/
+        List<Airport> airportList = airportRepository.findAll();
+        return Airports.fromEntities(airportList);
     }
 
+    @Autowired
+    private static FlightRepository flightRepository;
+
     private static Flights createFlightsFromFiles(Airports airports) {
-        try {
+        /*try {
             return Flights.load(Config.PATH_FLIGHTS, airports);
         } catch (IOException e) {
             throw new RuntimeException("Error loading flights", e);
-        }
+        }*/
+        List<Flight> flightList = flightRepository.findAll();
+        return  Flights.fromEntities(flightList, airports);
     }
 
+
+    @Autowired
+    private static OrderRepository orderRepository;
     private static Orders createOrdersFromFiles(Airports airports) {
-        try {
+        /*try {
             return Orders.open(Config.PATH_ORDERS, airports);
         } catch (IOException e) {
             throw new RuntimeException("Error loading orders", e);
-        }
+        }*/
+
+        List<Order> orderList = orderRepository.findAll();
+        return OrderLoader.loadFromDatabase(orderList, airports);
     }
 }
