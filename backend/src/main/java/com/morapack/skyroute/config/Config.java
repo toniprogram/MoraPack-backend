@@ -14,9 +14,9 @@ public class Config {
     public static final Duration TRANSFER_BUFFER = Duration.ofMinutes(30); // Nota: Revisar si duration es necesario
     public static final Duration WAREHOUSE_DWELL = Duration.ofHours(2); // Nota: Revisar si duration es necesario
 
-    public static final Path PATH_AEROPUERTOS = Paths.get("src/com/morapack/config/data/aeropuertos.txt");
-    public static final Path PATH_VUELOS = Paths.get("src/com/morapack/config/data/vuelos.txt");
-    public static final Path PATH_ORDENES = Paths.get("src/com/morapack/config/data/pedidos.txt");
+    public static final Path PATH_AIRPORTS = Paths.get("src/com/morapack/config/data/aeropuertos.txt");
+    public static final Path PATH_FLIGHTS = Paths.get("src/com/morapack/config/data/vuelos.txt");
+    public static final Path PATH_ORDERS = Paths.get("src/com/morapack/config/data/pedidos.txt");
     public static final Path DIR_LOGS = Paths.get("logs");
     public static final Path DIR_EXPORTS = Paths.get("exports");
 

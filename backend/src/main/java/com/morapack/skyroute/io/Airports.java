@@ -113,4 +113,30 @@ public class Airports {
     }
 
     
+
+    public static Airports fromEntities(List<Airport> entities) {
+        Airports airports = new Airports();
+        if (entities == null) {
+            return airports;
+        }
+        for (Airport entity : entities) {
+            if (entity == null || entity.getCode() == null) {
+                continue;
+            }
+            airports.byCode.put(entity.getCode(), cloneAirport(entity));
+        }
+        return airports;
+    }
+
+    private static Airport cloneAirport(Airport source) {
+        return new Airport(
+                source.getCode(),
+                source.getName(),
+                source.getGmtOffsetHours(),
+                source.getStorageCapacity(),
+                source.getContinent(),
+                source.getLatitude(),
+                source.getLongitude()
+        );
+    }
 }

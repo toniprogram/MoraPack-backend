@@ -18,15 +18,15 @@ public class OrderService {
         return repo.findAll();
     }
 
-    public Order create(Order pedido) {
-        return repo.save(pedido);
+    public Order create(Order order) {
+        return repo.save(order);
     }
 
-    public Order update(String id, Order nuevo) {
-        Order existente = repo.findById(id)
-            .orElseThrow(() -> new IllegalArgumentException("Pedido no encontrado"));
-        existente.setDestinationAirport(nuevo.getDestinationAirport());
-        existente.setQuantity(nuevo.getQuantity());
-        return repo.save(existente);
+    public Order update(String id, Order updated) {
+        Order existing = repo.findById(id)
+            .orElseThrow(() -> new IllegalArgumentException("Order not found"));
+        existing.setDestinationAirport(updated.getDestinationAirport());
+        existing.setQuantity(updated.getQuantity());
+        return repo.save(existing);
     }
 }

@@ -22,12 +22,12 @@ public class OrderController {
     }
 
     @PostMapping
-    public Order create(@RequestBody Order pedido) {
-        return service.create(pedido);
+    public Order create(@RequestBody Order order) {
+        return service.create(order);
     }
 
     @PutMapping("/{id}")
-    public Order update(@PathVariable String id, @RequestBody Order pedido) {
-        return service.update(id, pedido);
+    public Order update(@PathVariable String id, @RequestBody Order order) {
+        return service.update(id, order);
     }
 }
