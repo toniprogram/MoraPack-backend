@@ -11,5 +11,9 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
 
+logging:
+  level:
+    com.morapack.skyroute.simulation: TRACE #si quieres todo
+
 server:
   port: 8080

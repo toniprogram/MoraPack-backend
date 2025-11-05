@@ -13,11 +13,11 @@
 
 | Módulo     | Descripción                                                                      |
 | ----------- | --------------------------------------------------------------------------------- |
-| `/orders`   | Gestión de pedidos (crear, listar, eliminar).                                    |
-| `/plan`     | Ejecución del algoritmo genético y visualización de la planificación vigente. |
-| `/capacity` | Consulta de capacidades actuales (vuelos y aeropuertos).                          |
-| `/simulate` | Modo simulación semanal (archivo proyectado, ejecución, resultados temporales). |
-| `/base`     | Acceso a datos estructurales (aeropuertos, vuelos, clientes).                     |
+| `/orders`      | Gestión de pedidos (crear, listar, eliminar).                                    |
+| `/plan`        | Ejecución del algoritmo genético y visualización de la planificación vigente. |
+| `/capacity`    | Consulta de capacidades actuales (vuelos y aeropuertos).                          |
+| `/simulations` | Modo simulación semanal (carga de órdenes, snapshots en tiempo real).            |
+| `/base`        | Acceso a datos estructurales (aeropuertos, vuelos).                              |
 
 ---
 
@@ -362,102 +362,105 @@ Recalcula la capacidad desde la BD o la planificación actual.
 
 ---
 
-## 📦 6. Módulo `/simulate`
+## 📦 6. Módulo `/simulations`
 
-### `POST /simulate/upload`
+### `POST /api/simulations`
 
-Sube archivo de pedidos proyectados (CSV o JSON).
+Inicia una simulación semanal en memoria. El body contiene la lista de órdenes proyectadas.
 
 **Request**
 
-```
-multipart/form-data
-file=orders_proyectados.csv
-```
-
-**Response**
-
-```json
-{ "status": "UPLOADED", "orders": 245 }
-```
-
-**Frontend usa para:**
-
-* Paso 1 del flujo de simulación: cargar dataset semanal.
-
----
-
-### `POST /simulate/start`
-
-Inicia la simulación con los pedidos cargados.
-
-**Response**
-
 ```json
 {
-  "status": "RUNNING",
-  "startedAt": "2025-11-03T15:00:00Z"
+  "orders": [
+    {
+      "id": "000000001",
+      "customerReference": "0007729",
+      "destinationAirportCode": "EBCI",
+      "quantity": 6,
+      "creationLocal": "2025-01-02T01:38:00"
+    }
+  ]
 }
 ```
 
-**Frontend usa para:**
+**Response** `202 Accepted`
 
-* Mostrar barra de progreso o estado de simulación.
-* Bloquear edición hasta que termine.
+```json
+{ "simulationId": "d4d9fbaa-9c0f-4f28-8b41-1d36d8aca3c1" }
+```
+
+El backend empieza a procesar las órdenes en segundo plano y a publicar snapshots parciales.
 
 ---
 
-### `GET /simulate/status`
+### `GET /api/simulations/{id}/status`
 
-Consulta el estado actual de la simulación.
-
-**Response**
+Devuelve el estado actual.
 
 ```json
 {
-  "status": "IN_PROGRESS",
-  "currentOrderIndex": 58,
-  "totalOrders": 245,
-  "currentFitness": 0.85
+  "simulationId": "d4d9fbaa-9c0f-4f28-8b41-1d36d8aca3c1",
+  "processedOrders": 3,
+  "totalOrders": 10,
+  "completed": false,
+  "cancelled": false,
+  "error": null,
+  "lastSnapshot": {
+    "simulationId": "d4d9fbaa-9c0f-4f28-8b41-1d36d8aca3c1",
+    "processedOrders": 3,
+    "totalOrders": 10,
+    "fitness": 0.912,
+    "generatedAt": "2025-01-02T04:15:20.418Z",
+    "orderPlans": [
+      {
+        "orderId": "000000001",
+        "slackMinutes": 90,
+        "routes": [
+          {
+            "quantity": 6,
+            "slackMinutes": 45,
+            "segments": [
+              {
+                "flightId": "SPIM-EBCI-01:00",
+                "origin": "SPIM",
+                "destination": "EBCI",
+                "date": "2025-01-02",
+                "quantity": 6,
+                "departureUtc": "2025-01-02T06:00:00Z",
+                "arrivalUtc": "2025-01-02T14:00:00Z"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
 }
 ```
 
-**Frontend usa para:**
+---
 
-* Mostrar progreso visual (porcentaje completado).
-* Actualizar métricas de fitness o capacidad.
+### `DELETE /api/simulations/{id}`
+
+Cancela una simulación en curso (`204 No Content`).
 
 ---
 
-### `GET /simulate/plan`
+### WebSocket `/ws`
 
-Devuelve el plan actual dentro de la simulación.
-
-**Response**
-(igual formato que `/plan/current`)
+Los clientes se conectan al endpoint STOMP `/ws` y se suscriben a `/topic/simulations/{simulationId}`. El backend envía mensajes:
 
 ```json
 {
-  "generatedAt": "2025-11-03T15:10:00Z",
-  "fitness": 0.912,
-  "orderPlans": [ ... ]
+  "simulationId": "d4d9fbaa-9c0f-4f28-8b41-1d36d8aca3c1",
+  "type": "PROGRESS",
+  "snapshot": { ... },
+  "error": null
 }
 ```
 
-**Frontend usa para:**
-
-* Visualizar resultados parciales mientras la simulación avanza.
-* Animar el grafo de vuelos a medida que se asignan pedidos.
-
----
-
-### `POST /simulate/stop`
-
-Detiene manualmente la simulación.
-
-**Frontend usa para:**
-
-* Botón “Detener simulación”.
+`type` puede ser `PROGRESS`, `COMPLETED` o `ERROR`. Todos los dispositivos conectados reciben exactamente los mismos snapshots en tiempo real.
 
 ---
 

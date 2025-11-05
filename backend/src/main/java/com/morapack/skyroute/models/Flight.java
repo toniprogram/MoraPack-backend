@@ -58,6 +58,22 @@ public class Flight {
         setCancelledDates(cancelledDates);
     }
 
+    public String getId() {
+        return id;
+    }
+
+    public Airport getOrigin() {
+        return origin;
+    }
+
+    public Airport getDestination() {
+        return destination;
+    }
+
+    public int getDailyCapacity() {
+        return dailyCapacity;
+    }
+
     public static String buildId(Airport origin, Airport destination, LocalTime depLocal) {
         return origin.code + "-" + destination.code + "-" + depLocal;
     }
