@@ -13,11 +13,11 @@
 
 | Módulo     | Descripción                                                                      |
 | ----------- | --------------------------------------------------------------------------------- |
-| `/orders`   | Gestión de pedidos (crear, listar, eliminar).                                    |
-| `/plan`     | Ejecución del algoritmo genético y visualización de la planificación vigente. |
-| `/capacity` | Consulta de capacidades actuales (vuelos y aeropuertos).                          |
-| `/simulate` | Modo simulación semanal (archivo proyectado, ejecución, resultados temporales). |
-| `/base`     | Acceso a datos estructurales (aeropuertos, vuelos, clientes).                     |
+| `/orders`      | Gestión de pedidos (crear, listar, eliminar).                                    |
+| `/plan`        | Ejecución del algoritmo genético y visualización de la planificación vigente. |
+| `/capacity`    | Consulta de capacidades actuales (vuelos y aeropuertos).                          |
+| `/simulations` | Modo simulación semanal (carga de órdenes, snapshots en tiempo real).            |
+| `/base`        | Acceso a datos estructurales (aeropuertos, vuelos).                              |
 
 ---
 
@@ -101,39 +101,41 @@
 
 ## 📦 3. Módulo `/orders`
 
-### `GET /orders`
+### `GET /api/orders`
 
-**Lista** todos los pedidos activos en BD.
+**Lista** todos los pedidos persistidos.
 
 **Response**
 
 ```json
 [
   {
-    "id": 1,
-    "clientId": "C001",
-    "destination": "CUZ",
-    "quantity": 50,
-    "status": "IN_TRANSIT"
-  },
-  {
-    "id": 2,
-    "clientId": "C002",
-    "destination": "ARE",
-    "quantity": 20,
-    "status": "PENDING"
+    "id": "000000001",
+    "customerReference": "0007729",
+    "destinationAirport": {
+      "code": "EBCI",
+      "name": "Brussels South Charleroi",
+      "gmtOffsetHours": 1,
+      "storageCapacity": 3200,
+      "continent": "EUROPE",
+      "latitude": 50.4592,
+      "longitude": 4.4538
+    },
+    "quantity": 6,
+    "creationUtc": "2025-01-02T01:38:00Z",
+    "dueUtc": "2025-01-03T19:38:00Z"
   }
 ]
 ```
 
 **Frontend usa para:**
 
-* Mostrar pedidos actuales en un panel lateral o tabla.
-* Identificar cuáles requieren planificación.
+* Mostrar la cola de pedidos activos.
+* Sincronizar la vista antes/después de recalcular el plan.
 
 ---
 
-### `POST /orders`
+### `POST /api/orders`
 
 **Crea** un nuevo pedido.
 
@@ -141,37 +143,61 @@
 
 ```json
 {
-  "clientId": "C001",
-  "destination": "CUZ",
-  "quantity": 40
+  "id": "000000001",
+  "customerReference": "0007729",
+  "destinationAirportCode": "EBCI",
+  "quantity": 6,
+  "creationLocal": "2025-01-02T01:38:00"
 }
 ```
 
-**Response**
+> 💡 El identificador completo del archivo (`000000001-20250102-01-38-EBCI-006-0007729`) se descompone así:
+> `id` = `000000001`, `creationLocal` = `2025-01-02T01:38` (hora local del destino), `destinationAirportCode` = `EBCI`, `quantity` = `006` → `6` y `customerReference` = `0007729`.
+> El backend convierte `creationLocal` a UTC usando el huso del aeropuerto destino y, por ahora, fija `dueUtc` internamente; el GA podrá ajustar el vencimiento según el origen final.
+
+**Response** `201 Created`
 
 ```json
 {
-  "id": 12,
-  "createdAt": "2025-11-03T12:32:00Z",
-  "status": "PENDING"
+  "id": "000000001",
+  "customerReference": "0007729",
+  "destinationAirport": {
+    "code": "EBCI",
+    "name": "Brussels South Charleroi",
+    "gmtOffsetHours": 1,
+    "storageCapacity": 3200,
+    "continent": "EUROPE",
+    "latitude": 50.4592,
+    "longitude": 4.4538
+  },
+  "quantity": 6,
+  "creationUtc": "2025-01-02T01:38:00Z",
+  "dueUtc": "2025-01-03T19:38:00Z"
 }
 ```
 
-**Frontend usa para:**
+**Validaciones clave**
 
-* Registrar un pedido desde el panel de control.
-* Desencadenar una actualización del plan.
+* `destinationAirportCode` debe existir en BD (de lo contrario responde 400).
+* `quantity` > 0.
+* `creationUtc` y `dueUtc` son obligatorios y `dueUtc` ≥ `creationUtc`.
+* Si el `id` ya existe, responde 409.
 
 ---
 
-### `DELETE /orders/{id}`
+### `DELETE /api/orders/{id}`
 
-Elimina un pedido (solo si no ha sido enviado).
+Elimina un pedido existente.
+
+**Response**
+
+* `204 No Content` si se elimina.
+* `404 Not Found` si el pedido no existe.
 
 **Frontend usa para:**
 
-* Borrar pedidos erróneos o cancelados.
-* Actualizar la vista del tablero.
+* Borrar pedidos cargados por error.
+* Resetear el escenario antes de recalcular.
 
 ---
 
@@ -336,102 +362,105 @@ Recalcula la capacidad desde la BD o la planificación actual.
 
 ---
 
-## 📦 6. Módulo `/simulate`
+## 📦 6. Módulo `/simulations`
 
-### `POST /simulate/upload`
+### `POST /api/simulations`
 
-Sube archivo de pedidos proyectados (CSV o JSON).
+Inicia una simulación semanal en memoria. El body contiene la lista de órdenes proyectadas.
 
 **Request**
 
-```
-multipart/form-data
-file=orders_proyectados.csv
-```
-
-**Response**
-
-```json
-{ "status": "UPLOADED", "orders": 245 }
-```
-
-**Frontend usa para:**
-
-* Paso 1 del flujo de simulación: cargar dataset semanal.
-
----
-
-### `POST /simulate/start`
-
-Inicia la simulación con los pedidos cargados.
-
-**Response**
-
 ```json
 {
-  "status": "RUNNING",
-  "startedAt": "2025-11-03T15:00:00Z"
+  "orders": [
+    {
+      "id": "000000001",
+      "customerReference": "0007729",
+      "destinationAirportCode": "EBCI",
+      "quantity": 6,
+      "creationLocal": "2025-01-02T01:38:00"
+    }
+  ]
 }
 ```
 
-**Frontend usa para:**
+**Response** `202 Accepted`
 
-* Mostrar barra de progreso o estado de simulación.
-* Bloquear edición hasta que termine.
+```json
+{ "simulationId": "d4d9fbaa-9c0f-4f28-8b41-1d36d8aca3c1" }
+```
+
+El backend empieza a procesar las órdenes en segundo plano y a publicar snapshots parciales.
 
 ---
 
-### `GET /simulate/status`
+### `GET /api/simulations/{id}/status`
 
-Consulta el estado actual de la simulación.
-
-**Response**
+Devuelve el estado actual.
 
 ```json
 {
-  "status": "IN_PROGRESS",
-  "currentOrderIndex": 58,
-  "totalOrders": 245,
-  "currentFitness": 0.85
+  "simulationId": "d4d9fbaa-9c0f-4f28-8b41-1d36d8aca3c1",
+  "processedOrders": 3,
+  "totalOrders": 10,
+  "completed": false,
+  "cancelled": false,
+  "error": null,
+  "lastSnapshot": {
+    "simulationId": "d4d9fbaa-9c0f-4f28-8b41-1d36d8aca3c1",
+    "processedOrders": 3,
+    "totalOrders": 10,
+    "fitness": 0.912,
+    "generatedAt": "2025-01-02T04:15:20.418Z",
+    "orderPlans": [
+      {
+        "orderId": "000000001",
+        "slackMinutes": 90,
+        "routes": [
+          {
+            "quantity": 6,
+            "slackMinutes": 45,
+            "segments": [
+              {
+                "flightId": "SPIM-EBCI-01:00",
+                "origin": "SPIM",
+                "destination": "EBCI",
+                "date": "2025-01-02",
+                "quantity": 6,
+                "departureUtc": "2025-01-02T06:00:00Z",
+                "arrivalUtc": "2025-01-02T14:00:00Z"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
 }
 ```
 
-**Frontend usa para:**
+---
 
-* Mostrar progreso visual (porcentaje completado).
-* Actualizar métricas de fitness o capacidad.
+### `DELETE /api/simulations/{id}`
+
+Cancela una simulación en curso (`204 No Content`).
 
 ---
 
-### `GET /simulate/plan`
+### WebSocket `/ws`
 
-Devuelve el plan actual dentro de la simulación.
-
-**Response**
-(igual formato que `/plan/current`)
+Los clientes se conectan al endpoint STOMP `/ws` y se suscriben a `/topic/simulations/{simulationId}`. El backend envía mensajes:
 
 ```json
 {
-  "generatedAt": "2025-11-03T15:10:00Z",
-  "fitness": 0.912,
-  "orderPlans": [ ... ]
+  "simulationId": "d4d9fbaa-9c0f-4f28-8b41-1d36d8aca3c1",
+  "type": "PROGRESS",
+  "snapshot": { ... },
+  "error": null
 }
 ```
 
-**Frontend usa para:**
-
-* Visualizar resultados parciales mientras la simulación avanza.
-* Animar el grafo de vuelos a medida que se asignan pedidos.
-
----
-
-### `POST /simulate/stop`
-
-Detiene manualmente la simulación.
-
-**Frontend usa para:**
-
-* Botón “Detener simulación”.
+`type` puede ser `PROGRESS`, `COMPLETED` o `ERROR`. Todos los dispositivos conectados reciben exactamente los mismos snapshots en tiempo real.
 
 ---
 
