@@ -5,11 +5,14 @@ import com.morapack.skyroute.models.Airport;
 import com.morapack.skyroute.models.Order;
 import com.morapack.skyroute.orders.dto.OrderRequest;
 import com.morapack.skyroute.orders.repository.OrderRepository;
+import com.morapack.skyroute.config.Config;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 
 @Service
@@ -44,11 +47,14 @@ public class OrderService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "Destination airport not found: " + request.destinationAirportCode()));
 
+        Instant creationUtc = toUtc(request.creationLocal(), destination);
+        Instant dueUtc = creationUtc.plus(Config.INTERCONTINENTAL_SLA_HOURS, ChronoUnit.HOURS);
+
         existing.setCustomerReference(request.customerReference());
         existing.setDestinationAirport(destination);
         existing.setQuantity(request.quantity());
-        existing.setCreationUtc(request.creationUtc());
-        existing.setDueUtc(request.dueUtc());
+        existing.setCreationUtc(creationUtc);
+        existing.setDueUtc(dueUtc);
         return orderRepository.save(existing);
     }
 
@@ -63,13 +69,15 @@ public class OrderService {
         Airport destination = airportRepository.findById(request.destinationAirportCode())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "Destination airport not found: " + request.destinationAirportCode()));
+        Instant creationUtc = toUtc(request.creationLocal(), destination);
+        Instant dueUtc = creationUtc.plus(Config.INTERCONTINENTAL_SLA_HOURS, ChronoUnit.HOURS);
         return new Order(
                 request.id(),
                 request.customerReference(),
                 destination,
                 request.quantity(),
-                request.creationUtc(),
-                request.dueUtc()
+                creationUtc,
+                dueUtc
         );
     }
 
@@ -89,17 +97,17 @@ public class OrderService {
         if (request.quantity() == null || request.quantity() <= 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "quantity must be greater than zero");
         }
-        Instant creation = request.creationUtc();
-        Instant due = request.dueUtc();
-        if (creation == null || due == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "creationUtc and dueUtc are required");
-        }
-        if (due.isBefore(creation)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "dueUtc must be after creationUtc");
+        if (request.creationLocal() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "creationLocal is required");
         }
     }
 
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
+    }
+
+    private Instant toUtc(java.time.LocalDateTime creationLocal, Airport destination) {
+        ZoneOffset offset = destination.getZoneOffset();
+        return creationLocal.atOffset(offset).toInstant();
     }
 }
