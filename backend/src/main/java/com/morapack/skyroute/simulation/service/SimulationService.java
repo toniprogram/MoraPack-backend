@@ -104,9 +104,13 @@ public class SimulationService {
 
                 World world = worldBuilder.buildBaseWorld();
                 GeneticAlgorithm ga = new GeneticAlgorithm(world, List.copyOf(demand));
+                
+                log.info("[SIM:{}] === Order {} of {} ===", session.id, index + 1, orders.size());
                 long start = System.nanoTime();
                 Individual best = ga.run(Config.POP_SIZE, Config.MAX_GEN);
                 long duration = System.nanoTime() - start;
+                log.info("[SIM:{}] GA done for {} (took {} ms)", session.id, request.id(), duration / 1_000_000);
+
                 log.debug("[SIM:{}] GA completed for order {} (fitness={}, time={} ms)",
                         session.id,
                         request.id(),
