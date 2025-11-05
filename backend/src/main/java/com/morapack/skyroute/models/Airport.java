@@ -42,4 +42,16 @@ public class Airport {
         return ZoneOffset.ofHours(gmtOffsetHours);
     }
 
+    public int getStorageCapacity() {
+        return storageCapacity;
+    }
+
+    public Double getLatitude() {
+        return latitude;
+    }
+
+    public Double getLongitude() {
+        return longitude;
+    }
+
 }

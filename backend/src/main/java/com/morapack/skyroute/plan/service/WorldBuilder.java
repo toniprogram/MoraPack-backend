@@ -45,12 +45,7 @@ public class WorldBuilder {
     @Transactional(readOnly = true)
     public Snapshot buildOperationalSnapshot() {
         Airports airports = Airports.fromEntities(airportRepository.findAll());
-        Map<String, Set<LocalDate>> cancellationsByFlight = cancellationRepository.findAll()
-                .stream()
-                .collect(Collectors.groupingBy(
-                        cancellation -> cancellation.getId().getFlightId(),
-                        Collectors.mapping(FlightCancellation::getDate, Collectors.toSet())
-                ));
+        Map<String, Set<LocalDate>> cancellationsByFlight = loadCancellations();
 
         Flights flights = Flights.fromEntities(flightRepository.findAll(), airports, cancellationsByFlight);
         AirportSchedule airportSchedule = new AirportSchedule(airports.asMap());
@@ -62,6 +57,15 @@ public class WorldBuilder {
                 .toList();
 
         return new Snapshot(world, clonedOrders);
+    }
+
+    @Transactional(readOnly = true)
+    public World buildBaseWorld() {
+        Airports airports = Airports.fromEntities(airportRepository.findAll());
+        Map<String, Set<LocalDate>> cancellationsByFlight = loadCancellations();
+        Flights flights = Flights.fromEntities(flightRepository.findAll(), airports, cancellationsByFlight);
+        AirportSchedule airportSchedule = new AirportSchedule(airports.asMap());
+        return World.fromData(airports, flights, airportSchedule, Instant.now());
     }
 
     private static Order cloneOrder(Order source, Airports airports) {
@@ -80,5 +84,14 @@ public class WorldBuilder {
                 source.getCreationUtc(),
                 source.getDueUtc()
         );
+    }
+
+    private Map<String, Set<LocalDate>> loadCancellations() {
+        return cancellationRepository.findAll()
+                .stream()
+                .collect(Collectors.groupingBy(
+                        cancellation -> cancellation.getId().getFlightId(),
+                        Collectors.mapping(FlightCancellation::getDate, Collectors.toSet())
+                ));
     }
 }
