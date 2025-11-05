@@ -1,6 +1,6 @@
 package com.morapack.skyroute.models;
 
-public enum Continente {
+public enum Continent {
     SOUTH_AMERICA,
     EUROPE,
     ASIA,
