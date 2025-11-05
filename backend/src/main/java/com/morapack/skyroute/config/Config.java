@@ -17,8 +17,8 @@ public class Config {
     public static final Path DIR_EXPORTS = Paths.get("exports");
 
     // GA
-    public static final int POP_SIZE = 40;
-    public static final int MAX_GEN = 80;
+    public static final int POP_SIZE = 16;
+    public static final int MAX_GEN = 30;
     public static final double P_CROSS = 0.75;
     public static final double P_MUT = 0.35;
 }
