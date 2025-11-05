@@ -6,6 +6,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Objects;
 
 import com.morapack.skyroute.io.*;
 import com.morapack.skyroute.models.*;
@@ -26,25 +27,24 @@ public class World implements Orders.Observer {
     }
 
     public World() {
-        try{
-            this.airports = Airports.load(Config.PATH_AEROPUERTOS);
-        } catch (IOException e) {
-            throw new RuntimeException("Error loading airports", e);
+        this(loadAirportsFromFiles(), null, null, null, null);
+    }
+
+    private World(Airports airports,
+                  Flights flights,
+                  Orders orders,
+                  AirportSchedule airportSchedule,
+                  Instant currentInstant) {
+        this.airports = Objects.requireNonNull(airports, "airports");
+        this.flights = flights != null ? flights : createFlightsFromFiles(this.airports);
+        this.orders = orders != null ? orders : createOrdersFromFiles(this.airports);
+        this.airportSchedule = airportSchedule != null
+                ? airportSchedule
+                : new AirportSchedule(this.airports.asMap());
+        this.currentInstant = currentInstant != null ? currentInstant : Instant.EPOCH;
+        if (this.orders != null) {
+            this.orders.setObserver(this);
         }
-        try{
-            this.flights = Flights.load(Config.PATH_VUELOS, airports);
-        } catch (IOException e) {
-            throw new RuntimeException("Error loading flights", e);
-        }
-        
-        try{
-            this.orders = Orders.open(Config.PATH_ORDENES, airports);
-        } catch (IOException e) {
-            throw new RuntimeException("Error loading orders", e);
-        }
-        
-        this.orders.setObserver(this);
-        this.airportSchedule = new AirportSchedule(this.airports.asMap());
     }
 
     public Airports getAirports() {
@@ -98,6 +98,41 @@ public class World implements Orders.Observer {
             ZoneOffset offset = flight.getOrigin().getZoneOffset();
             LocalDate currentDate = LocalDateTime.ofInstant(now, offset).toLocalDate();
             schedule.purgeBefore(flight, currentDate);
+        }
+    }
+
+    public static World fromData(Airports airports,
+                                 Flights flights,
+                                 AirportSchedule airportSchedule,
+                                 Instant currentInstant) {
+        return new World(airports,
+                flights,
+                null,
+                airportSchedule,
+                currentInstant);
+    }
+
+    private static Airports loadAirportsFromFiles() {
+        try {
+            return Airports.load(Config.PATH_AIRPORTS);
+        } catch (IOException e) {
+            throw new RuntimeException("Error loading airports", e);
+        }
+    }
+
+    private static Flights createFlightsFromFiles(Airports airports) {
+        try {
+            return Flights.load(Config.PATH_FLIGHTS, airports);
+        } catch (IOException e) {
+            throw new RuntimeException("Error loading flights", e);
+        }
+    }
+
+    private static Orders createOrdersFromFiles(Airports airports) {
+        try {
+            return Orders.open(Config.PATH_ORDERS, airports);
+        } catch (IOException e) {
+            throw new RuntimeException("Error loading orders", e);
         }
     }
 }

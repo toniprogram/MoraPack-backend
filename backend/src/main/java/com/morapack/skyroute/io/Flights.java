@@ -3,6 +3,7 @@ package com.morapack.skyroute.io;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
@@ -10,6 +11,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import com.morapack.skyroute.models.*;
 
@@ -85,14 +87,56 @@ public class Flights {
                 }
 
                 String id = Flight.buildId(origin, destination, departure);
-                Flight flight = new Flight(id, origin, destination, departure, arrival, capacity, Map.of());
-                flights.all.add(flight);
-                flights.byOrigin.computeIfAbsent(origin, key -> new ArrayList<>()).add(flight);
-                flights.byId.put(id, flight);
+                Flight flight = new Flight(id, origin, destination, departure, arrival, capacity, Set.of());
+                flights.register(flight);
             } catch (DateTimeParseException | NumberFormatException ignored) {
                 // Ignorar líneas inválidas; se puede registrar si se necesita depuración
             }
         }
         return flights;
+    }
+
+    public static Flights fromEntities(List<Flight> entities,
+                                       Airports airports,
+                                       Map<String, Set<LocalDate>> cancellations) {
+        Flights flights = new Flights(airports);
+        if (entities == null) {
+            return flights;
+        }
+        for (Flight entity : entities) {
+            if (entity == null) {
+                continue;
+            }
+            Airport origin = airports.get(entity.getOriginCode());
+            Airport destination = airports.get(entity.getDestinationCode());
+            if (origin == null || destination == null) {
+                continue;
+            }
+            Set<LocalDate> cancelledDates = cancellations == null
+                    ? Set.of()
+                    : cancellations.getOrDefault(entity.getId(), Set.of());
+
+            Flight flightCopy = new Flight(
+                    entity.getId(),
+                    origin,
+                    destination,
+                    entity.getDepLocal(),
+                    entity.getArrLocal(),
+                    entity.getDailyCapacity(),
+                    cancelledDates
+            );
+            flights.register(flightCopy);
+        }
+        return flights;
+    }
+
+    public static Flights fromEntities(List<Flight> entities, Airports airports) {
+        return fromEntities(entities, airports, Map.of());
+    }
+
+    private void register(Flight flight) {
+        all.add(flight);
+        byOrigin.computeIfAbsent(flight.getOrigin(), key -> new ArrayList<>()).add(flight);
+        byId.put(flight.getId(), flight);
     }
 }

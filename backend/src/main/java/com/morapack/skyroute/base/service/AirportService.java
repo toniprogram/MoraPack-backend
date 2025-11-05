@@ -10,23 +10,23 @@ import java.util.Optional;
 
 @Service
 public class AirportService {
-    
+
     @Autowired
-    private AirportRepository aeropuertoRepository;
+    private AirportRepository airportRepository;
 
     public List<Airport> getAll() {
-        return aeropuertoRepository.findAll();
+        return airportRepository.findAll();
     }
 
     public Optional<Airport> findById(String code) {
-        return aeropuertoRepository.findById(code);
+        return airportRepository.findById(code);
     }
 
-    public Airport create(Airport aeropuerto) {
-        return aeropuertoRepository.save(aeropuerto);
+    public Airport create(Airport airport) {
+        return airportRepository.save(airport);
     }
 
     public void deleteById(String code) {
-        aeropuertoRepository.deleteById(code);
+        airportRepository.deleteById(code);
     }
 }
