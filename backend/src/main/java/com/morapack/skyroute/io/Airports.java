@@ -55,10 +55,10 @@ public class Airports {
                 continue;
             }
 
-            String latitude = latitudeIndex >= 0 && longitudeIndex > latitudeIndex
+            String latitudeText = latitudeIndex >= 0 && longitudeIndex > latitudeIndex
                     ? joinTokens(tokens, latitudeIndex + 1, longitudeIndex)
                     : "";
-            String longitude = longitudeIndex >= 0
+            String longitudeText = longitudeIndex >= 0
                     ? joinTokens(tokens, longitudeIndex + 1, tokens.length)
                     : "";
 
@@ -68,8 +68,8 @@ public class Airports {
                     gmt,
                     capacity,
                     currentRegion,
-                    latitude,
-                    longitude));
+                    parseCoordinate(latitudeText),
+                    parseCoordinate(longitudeText)));
         }
         return airports;
     }
@@ -112,7 +112,19 @@ public class Airports {
         return joiner.toString().trim();
     }
 
-    
+
+
+    private static Double parseCoordinate(String text) {
+        if (text == null) {
+            return null;
+        }
+        try {
+            return Double.parseDouble(text.trim());
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
 
     public static Airports fromEntities(List<Airport> entities) {
         Airports airports = new Airports();

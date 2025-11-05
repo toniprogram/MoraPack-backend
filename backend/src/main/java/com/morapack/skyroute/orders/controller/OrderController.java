@@ -1,7 +1,10 @@
 package com.morapack.skyroute.orders.controller;
 
 import com.morapack.skyroute.models.Order;
+import com.morapack.skyroute.orders.dto.OrderRequest;
 import com.morapack.skyroute.orders.service.OrderService;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -22,12 +25,13 @@ public class OrderController {
     }
 
     @PostMapping
-    public Order create(@RequestBody Order order) {
-        return service.create(order);
+    public ResponseEntity<Order> create(@RequestBody OrderRequest request) {
+        Order created = service.create(request);
+        return ResponseEntity.status(HttpStatus.CREATED).body(created);
     }
 
     @PutMapping("/{id}")
-    public Order update(@PathVariable String id, @RequestBody Order order) {
-        return service.update(id, order);
+    public Order update(@PathVariable String id, @RequestBody OrderRequest request) {
+        return service.update(id, request);
     }
 }
