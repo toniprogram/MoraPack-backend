@@ -34,4 +34,10 @@ public class OrderController {
     public Order update(@PathVariable String id, @RequestBody OrderRequest request) {
         return service.update(id, request);
     }
+
+    @DeleteMapping("/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(@PathVariable String id) {
+        service.delete(id);
+    }
 }

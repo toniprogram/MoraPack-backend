@@ -52,6 +52,13 @@ public class OrderService {
         return orderRepository.save(existing);
     }
 
+    public void delete(String id) {
+        if (!orderRepository.existsById(id)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Order " + id + " not found");
+        }
+        orderRepository.deleteById(id);
+    }
+
     private Order buildOrderFromRequest(OrderRequest request) {
         Airport destination = airportRepository.findById(request.destinationAirportCode())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST,
