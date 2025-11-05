@@ -101,39 +101,41 @@
 
 ## 📦 3. Módulo `/orders`
 
-### `GET /orders`
+### `GET /api/orders`
 
-**Lista** todos los pedidos activos en BD.
+**Lista** todos los pedidos persistidos.
 
 **Response**
 
 ```json
 [
   {
-    "id": 1,
-    "clientId": "C001",
-    "destination": "CUZ",
-    "quantity": 50,
-    "status": "IN_TRANSIT"
-  },
-  {
-    "id": 2,
-    "clientId": "C002",
-    "destination": "ARE",
-    "quantity": 20,
-    "status": "PENDING"
+    "id": "000000001",
+    "customerReference": "0007729",
+    "destinationAirport": {
+      "code": "EBCI",
+      "name": "Brussels South Charleroi",
+      "gmtOffsetHours": 1,
+      "storageCapacity": 3200,
+      "continent": "EUROPE",
+      "latitude": 50.4592,
+      "longitude": 4.4538
+    },
+    "quantity": 6,
+    "creationUtc": "2025-01-02T01:38:00Z",
+    "dueUtc": "2025-01-03T19:38:00Z"
   }
 ]
 ```
 
 **Frontend usa para:**
 
-* Mostrar pedidos actuales en un panel lateral o tabla.
-* Identificar cuáles requieren planificación.
+* Mostrar la cola de pedidos activos.
+* Sincronizar la vista antes/después de recalcular el plan.
 
 ---
 
-### `POST /orders`
+### `POST /api/orders`
 
 **Crea** un nuevo pedido.
 
@@ -141,37 +143,61 @@
 
 ```json
 {
-  "clientId": "C001",
-  "destination": "CUZ",
-  "quantity": 40
+  "id": "000000001",
+  "customerReference": "0007729",
+  "destinationAirportCode": "EBCI",
+  "quantity": 6,
+  "creationLocal": "2025-01-02T01:38:00"
 }
 ```
 
-**Response**
+> 💡 El identificador completo del archivo (`000000001-20250102-01-38-EBCI-006-0007729`) se descompone así:
+> `id` = `000000001`, `creationLocal` = `2025-01-02T01:38` (hora local del destino), `destinationAirportCode` = `EBCI`, `quantity` = `006` → `6` y `customerReference` = `0007729`.
+> El backend convierte `creationLocal` a UTC usando el huso del aeropuerto destino y, por ahora, fija `dueUtc` internamente; el GA podrá ajustar el vencimiento según el origen final.
+
+**Response** `201 Created`
 
 ```json
 {
-  "id": 12,
-  "createdAt": "2025-11-03T12:32:00Z",
-  "status": "PENDING"
+  "id": "000000001",
+  "customerReference": "0007729",
+  "destinationAirport": {
+    "code": "EBCI",
+    "name": "Brussels South Charleroi",
+    "gmtOffsetHours": 1,
+    "storageCapacity": 3200,
+    "continent": "EUROPE",
+    "latitude": 50.4592,
+    "longitude": 4.4538
+  },
+  "quantity": 6,
+  "creationUtc": "2025-01-02T01:38:00Z",
+  "dueUtc": "2025-01-03T19:38:00Z"
 }
 ```
 
-**Frontend usa para:**
+**Validaciones clave**
 
-* Registrar un pedido desde el panel de control.
-* Desencadenar una actualización del plan.
+* `destinationAirportCode` debe existir en BD (de lo contrario responde 400).
+* `quantity` > 0.
+* `creationUtc` y `dueUtc` son obligatorios y `dueUtc` ≥ `creationUtc`.
+* Si el `id` ya existe, responde 409.
 
 ---
 
-### `DELETE /orders/{id}`
+### `DELETE /api/orders/{id}`
 
-Elimina un pedido (solo si no ha sido enviado).
+Elimina un pedido existente.
+
+**Response**
+
+* `204 No Content` si se elimina.
+* `404 Not Found` si el pedido no existe.
 
 **Frontend usa para:**
 
-* Borrar pedidos erróneos o cancelados.
-* Actualizar la vista del tablero.
+* Borrar pedidos cargados por error.
+* Resetear el escenario antes de recalcular.
 
 ---
 

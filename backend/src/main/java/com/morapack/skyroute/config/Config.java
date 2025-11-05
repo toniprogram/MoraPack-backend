@@ -3,12 +3,8 @@ package com.morapack.skyroute.config;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Duration;
-import java.time.YearMonth;
 
 public class Config {
-    // Mes y Año base para interpretar "dd-hh-mm" de las órdenes
-    public static final YearMonth BASE_DATE = YearMonth.of(2025, 1);
-
     public static final int CONTINENTAL_SLA_HOURS = 48;
     public static final int INTERCONTINENTAL_SLA_HOURS = 72;
     public static final Duration TRANSFER_BUFFER = Duration.ofMinutes(30); // Nota: Revisar si duration es necesario
