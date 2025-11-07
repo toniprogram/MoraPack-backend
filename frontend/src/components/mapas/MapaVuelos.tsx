@@ -39,7 +39,7 @@ interface MapaVuelosProps {
 }
 
 export function MapaVuelos({ orderPlans, aeropuertos, isLoading, vuelosEnMovimiento }: MapaVuelosProps) {
-  const initialPosition: LatLngExpression = [-12.02, -77.11];
+  const initialPosition: LatLngExpression = [20, 0];
 
   console.log('🗺️ OrderPlans recibidos:', orderPlans);
   console.log('🗺️ Aeropuertos recibidos:', aeropuertos);
@@ -139,17 +139,6 @@ export function MapaVuelos({ orderPlans, aeropuertos, isLoading, vuelosEnMovimie
         const origenCoords = coordsAeropuertos.get(vuelo.origen);
         const destinoCoords = coordsAeropuertos.get(vuelo.destino);
 
-        console.log(`✈️ Procesando vuelo ${index + 1}/${vuelosEnMovimiento.length}:`, {
-          id: vuelo.id,
-          flightId: vuelo.flightId,
-          origen: vuelo.origen,
-          destino: vuelo.destino,
-          origenCoords,
-          destinoCoords,
-          posicion: [vuelo.latActual, vuelo.lonActual],
-          progreso: vuelo.progreso
-        });
-
         if (!origenCoords || !destinoCoords) {
           console.error(`VUELO ${vuelo.id} IGNORADO: No se encontraron coordenadas para ${vuelo.origen} → ${vuelo.destino}`);
           return null;
@@ -172,10 +161,18 @@ export function MapaVuelos({ orderPlans, aeropuertos, isLoading, vuelosEnMovimie
                 <strong>Vuelo: {vuelo.flightId}</strong><br/>
                 Ruta: {vuelo.origen} → {vuelo.destino}<br/>
                 {vuelo.departureTime && (
-                  <>Salida: {new Date(vuelo.departureTime).toLocaleTimeString('es-PE')}<br/></>
+                  <>Salida: {new Date(vuelo.departureTime).toLocaleTimeString('es-PE', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    timeZone: 'UTC'
+                  })}<br/></>
                 )}
                 {vuelo.arrivalTime && (
-                  <>Llegada: {new Date(vuelo.arrivalTime).toLocaleTimeString('es-PE')}<br/></>
+                  <>Llegada: {new Date(vuelo.arrivalTime).toLocaleTimeString('es-PE', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    timeZone: 'UTC'
+                  })}<br/></>
                 )}
                 Progreso: {Math.round(vuelo.progreso)}%<br/>
                 Estado: {vuelo.estadoVisual === 'completado' ? '✅ Completado' :
