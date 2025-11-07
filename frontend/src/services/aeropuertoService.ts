@@ -1,6 +1,6 @@
 import { API } from "../api/api";
-import type { Aeropuerto } from "../types/aeropuerto";
+import type { Airport } from "../types/airport";
 
 export const aeropuertoService = {
-  getAll: () => API.get<Aeropuerto[]>("/aeropuertos").then(res => res.data),
+  getAll: () => API.get<Airport[]>("/base/airports").then(res => res.data),
 };

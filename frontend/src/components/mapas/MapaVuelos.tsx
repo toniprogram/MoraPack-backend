@@ -1,52 +1,70 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
-import L, { LatLngBoundsExpression } from 'leaflet';
+import L, { LatLngExpression } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import type { Aeropuerto } from '../../types/aeropuerto';
-import type { VueloSimulacion } from '../../hooks/useSimulacion';
+import type { Airport } from '../../types/airport';
+import type { SimulationOrderPlan } from '../../hooks/useSimulacion';
+import type { VueloEnMovimiento } from '../../hooks/useSimulacion';
 import MapResizer from './MapResizer';
 
-// --- Iconos ---
-const planeIcon = new L.Icon({
-  iconUrl: '/images/plane-icon.png',
+const hubIcon = new L.Icon({
+  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+});
+
+const greenPlaneIcon = new L.Icon({
+  iconUrl: '/images/plane-icon-green.png',
   iconSize: [25, 25],
   iconAnchor: [12, 12],
 });
 
-const hubIcon = new L.Icon({
-  iconUrl: '/images/hub-icon.png',
-  iconSize: [30, 40],
-  iconAnchor: [10, 10],
+const redPlaneIcon = new L.Icon({
+  iconUrl: '/images/plane-icon-red.png',
+  iconSize: [25, 25],
+  iconAnchor: [12, 12],
 });
 
-// --- Props ---
+const bluePlaneIcon = new L.Icon({
+  iconUrl: '/images/plane-icon-blue.png',
+  iconSize: [25, 25],
+  iconAnchor: [12, 12],
+});
+
 interface MapaVuelosProps {
-  vuelos: VueloSimulacion[];
-  aeropuertos: Aeropuerto[];
+  orderPlans: SimulationOrderPlan[];
+  aeropuertos: Airport[];
   isLoading: boolean;
+  vuelosEnMovimiento: VueloEnMovimiento[];
 }
 
-// límites del mundo
-const worldBounds: LatLngBoundsExpression = [
-  [-90, -180],
-  [90, 180]
-];
+export function MapaVuelos({ orderPlans, aeropuertos, isLoading, vuelosEnMovimiento }: MapaVuelosProps) {
+  const initialPosition: LatLngExpression = [-12.02, -77.11];
 
-export function MapaVuelos({ vuelos, aeropuertos, isLoading }: MapaVuelosProps) {
-  const initialPosition: L.LatLngExpression = [-12.02, -77.11];
+  console.log('🗺️ OrderPlans recibidos:', orderPlans);
+  console.log('🗺️ Aeropuertos recibidos:', aeropuertos);
+  console.log('🗺️ Vuelos en movimiento recibidos:', vuelosEnMovimiento);
+  console.log('🗺️ CANTIDAD de vuelos en movimiento:', vuelosEnMovimiento.length);
 
+  // Crea el directorio de coordenadas
   const coordsAeropuertos = new Map(
-    aeropuertos.map(a => [a.codigo, [a.latitud, a.longitud] as L.LatLngExpression])
+    aeropuertos.map(a => [a.id, [a.latitude, a.longitude] as LatLngExpression])
   );
+
+  // Determina el icono según el estado
+  const getIconForStatus = (status: VueloEnMovimiento['estadoVisual']) => {
+    switch (status) {
+      case 'completado': return greenPlaneIcon;
+      case 'retrasado': return redPlaneIcon;
+      default: return bluePlaneIcon;
+    }
+  };
 
   return (
     <MapContainer
       center={initialPosition}
       zoom={3}
       className="w-full h-full z-0"
-      // Añade estas propiedades para limitar el mapa
-      minZoom={2}
-      maxBounds={worldBounds}
     >
       <TileLayer
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -54,15 +72,14 @@ export function MapaVuelos({ vuelos, aeropuertos, isLoading }: MapaVuelosProps) 
         noWrap={true}
       />
 
-      {/* Componente que arregla el tamaño */}
       <MapResizer isLoading={isLoading} />
 
-      {/* LEYENDA (Completa) */}
+      {/* LEYENDA */}
       <div className="absolute bottom-4 left-4 z-[1000] card bg-base-100 p-2 shadow-lg">
         <h4 className="font-bold mb-1">Leyenda</h4>
         <ul className="text-sm space-y-1">
           <li className="flex items-center gap-2">
-            <img src="/images/plane-icon.png" alt="avión azul" className="w-4 h-4" /> En curso
+            <img src="/images/plane-icon-blue.png" alt="avión azul" className="w-4 h-4" /> En curso
           </li>
           <li className="flex items-center gap-2">
             <img src="/images/plane-icon-green.png" alt="avión verde" className="w-4 h-4" /> Finalizado
@@ -73,46 +90,106 @@ export function MapaVuelos({ vuelos, aeropuertos, isLoading }: MapaVuelosProps) 
         </ul>
       </div>
 
-      {/* Dibuja solo las sedes principales */}
+      {/* Dibuja las sedes principales */}
       {aeropuertos
-        .filter(aeropuerto => aeropuerto.esExportador)
+        .slice(0, 30)
         .map(aeropuerto => (
           <Marker
-            key={aeropuerto.codigo}
-            position={[aeropuerto.latitud, aeropuerto.longitud]}
+            key={aeropuerto.id}
+            position={[aeropuerto.latitude, aeropuerto.longitude]}
             icon={hubIcon}
           >
-            <Popup><strong>{aeropuerto.codigo}</strong><br />Sede Principal</Popup>
+            <Popup>
+              <strong>{aeropuerto.id}</strong><br />
+              {aeropuerto.name}<br />
+              Sede Principal
+            </Popup>
           </Marker>
+        ))}
+
+      {/* 1. Dibuja las RUTAS ESTÁTICAS */}
+      {orderPlans.map(plan => (
+        <React.Fragment key={plan.orderId}>
+          {plan.routes.map((ruta, rutaIndex) => (
+            ruta.segments.map((segmento, segIndex) => {
+              const origenCoords = coordsAeropuertos.get(segmento.origin);
+              const destinoCoords = coordsAeropuertos.get(segmento.destination);
+
+              if (!origenCoords || !destinoCoords) return null;
+
+              const color = plan.slackMinutes <= 0 ? "#FF0000" : "#3b82f6";
+
+              return (
+                <Polyline
+                  key={`${plan.orderId}-route-${rutaIndex}-${segIndex}`}
+                  positions={[origenCoords, destinoCoords]}
+                  color={color}
+                  weight={2}
+                  opacity={0.7}
+                  dashArray="5, 10"
+                />
+              );
+            })
+          ))}
+        </React.Fragment>
       ))}
 
-      {/* Dibuja los aviones y sus trayectorias */}
-      {vuelos.map(vuelo => {
+      {/* Dibuja los AVIONES en movimiento usando ID ÚNICO */}
+      {vuelosEnMovimiento?.map((vuelo, index) => {
         const origenCoords = coordsAeropuertos.get(vuelo.origen);
         const destinoCoords = coordsAeropuertos.get(vuelo.destino);
 
-        if (!origenCoords || !destinoCoords) return null;
+        console.log(`✈️ Procesando vuelo ${index + 1}/${vuelosEnMovimiento.length}:`, {
+          id: vuelo.id,
+          flightId: vuelo.flightId,
+          origen: vuelo.origen,
+          destino: vuelo.destino,
+          origenCoords,
+          destinoCoords,
+          posicion: [vuelo.latActual, vuelo.lonActual],
+          progreso: vuelo.progreso
+        });
 
+        if (!origenCoords || !destinoCoords) {
+          console.error(`VUELO ${vuelo.id} IGNORADO: No se encontraron coordenadas para ${vuelo.origen} → ${vuelo.destino}`);
+          return null;
+        }
+
+        if (isNaN(vuelo.latActual) || isNaN(vuelo.lonActual)) {
+          console.error(`VUELO ${vuelo.id} IGNORADO: Coordenadas calculadas son NaN`);
+          return null;
+        }
+
+        console.log(`VUELO ${vuelo.id} RENDERIZADO en posición [${vuelo.latActual}, ${vuelo.lonActual}]`);
         return (
-          <React.Fragment key={vuelo.id}>
-            <Polyline
-              positions={[origenCoords, destinoCoords]}
-              color="#3b82f6"
-              weight={2}
-              opacity={0.5}
-              dashArray="5, 10"
-            />
-            <Marker
-              position={[vuelo.latActual, vuelo.lonActual]}
-              icon={planeIcon}
-            >
-              <Popup>
-                Vuelo #{vuelo.id}<br />
-                {vuelo.origen} → {vuelo.destino}<br />
-                Progreso: {Math.round(vuelo.progreso)}%
-              </Popup>
-            </Marker>
-          </React.Fragment>
+          <Marker
+            key={vuelo.id}
+            position={[vuelo.latActual, vuelo.lonActual]}
+            icon={getIconForStatus(vuelo.estadoVisual)}
+          >
+            <Popup>
+              <div className="text-sm">
+                <strong>Vuelo: {vuelo.flightId}</strong><br/>
+                Ruta: {vuelo.origen} → {vuelo.destino}<br/>
+                {vuelo.departureTime && (
+                  <>Salida: {new Date(vuelo.departureTime).toLocaleTimeString('es-PE')}<br/></>
+                )}
+                {vuelo.arrivalTime && (
+                  <>Llegada: {new Date(vuelo.arrivalTime).toLocaleTimeString('es-PE')}<br/></>
+                )}
+                Progreso: {Math.round(vuelo.progreso)}%<br/>
+                Estado: {vuelo.estadoVisual === 'completado' ? '✅ Completado' :
+                         vuelo.estadoVisual === 'retrasado' ? '🔴 Retrasado' : '🔵 En curso'}<br/>
+                <br/>
+                <strong>Pedidos transportados ({vuelo.orderId.split(',').length}):</strong><br/>
+                <div className="text-xs max-h-20 overflow-y-auto">
+                  {vuelo.orderId.split(',').map(pedido => (
+                    <div key={pedido}>• {pedido}</div>
+                  ))}
+                </div>
+              </div>
+            </Popup>
+          </Marker>
         );
       })}
     </MapContainer>
