@@ -1,101 +1,551 @@
-import { useState } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { useSimulacion } from '../hooks/useSimulacion';
 import { MapaVuelos } from '../components/mapas/MapaVuelos';
-import { Check, Package, AlertTriangle, Play, Pause, XCircle } from 'lucide-react';
+import { Check, AlertTriangle, Play, Pause, XCircle, Upload, Package, Plane } from 'lucide-react';
+import type { OrderRequest } from '../types/orderRequest';
+
+// Interfaz extendida para mantener fechas originales del archivo TXT
+interface OrderRequestExtended extends OrderRequest {
+  fechaOriginal: string;
+}
 
 export default function SimulacionPage() {
-  // 1. Llama al hook
   const {
-    vuelos,
-    aeropuertos,
-    kpis,
-    reloj,
-    isLoading,
-    isError,
-    estaActivo,
-    iniciar,
-    pausar,
-    terminar,
+      aeropuertos,
+      kpis,
+      reloj,
+      isLoading,
+      isStarting,
+      isError,
+      estaActivo,
+      estaVisualizando,
+      iniciar,
+      pausar,
+      terminar,
+      snapshotFinal,
+      snapshotProgreso,
+      vuelosEnMovimiento,
+      tiempoSimulado
   } = useSimulacion();
 
-  // Estado para los selectores de escenario
-  const [escenario, setEscenario] = useState('diario');
+  const [ordenesParaSimular, setOrdenesParaSimular] = useState<OrderRequestExtended[]>([]);
+  const [vistaPanel, setVistaPanel] = useState<'envios' | 'vuelos' | 'aeropuertos'>('envios');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // 2. Manejo de estados de carga (sin cambios)
-  if (isLoading) { /* ... */ }
-  if (isError) { /* ... */ }
+  const fechasOriginalesPorOrden = useMemo(() => {
+    const mapa = new Map<string, { fecha: Date; fechaStr: string }>();
+    ordenesParaSimular.forEach(orden => {
+      mapa.set(orden.id, {
+        fecha: new Date(orden.fechaOriginal),
+        fechaStr: orden.fechaOriginal
+      });
+    });
+    return mapa;
+  }, [ordenesParaSimular]);
 
-  // 3. Renderizado
+  const panelSnapshot = snapshotFinal || snapshotProgreso;
+  // Agrupa pedidos por vuelo, mostrando horas UTC
+  const vuelosPorFlightId = useMemo(() => {
+    if (!panelSnapshot) return new Map();
+    const mapa = new Map<string, {
+      flightId: string;
+      origen: string;
+      destino: string;
+      pedidos: string[];
+      hora: string;
+      fecha: string;
+      departureUtc: string;
+      arrivalUtc: string;
+      horaLlegada: string;
+    }>();
+
+    panelSnapshot.orderPlans.forEach(plan => {
+      plan.routes.forEach(ruta => {
+        ruta.segments.forEach(segmento => {
+          if (!segmento.departureUtc || !segmento.arrivalUtc) return;
+          const uniqueFlightId = segmento.departureUtc;
+          const diaVuelo = new Date(segmento.departureUtc).toLocaleDateString('es-PE', {
+                day: '2-digit',
+                month: 'short',
+                year: 'numeric',
+                timeZone: 'UTC'
+              });
+          const horaSalida = new Date(segmento.departureUtc).toLocaleTimeString('es-PE', {
+                hour: '2-digit',
+                minute: '2-digit',
+                timeZone: 'UTC'
+              });
+          const horaLlegada = new Date(segmento.arrivalUtc).toLocaleTimeString('es-PE', {
+                hour: '2-digit',
+                minute: '2-digit',
+                timeZone: 'UTC'
+              });
+          if (!mapa.has(uniqueFlightId)) {
+            mapa.set(uniqueFlightId, {
+              flightId: segmento.flightId,
+              origen: segmento.origin,
+              destino: segmento.destination,
+              pedidos: [],
+              hora: horaSalida,
+              fecha: diaVuelo,
+              departureUtc: segmento.departureUtc,
+              arrivalUtc: segmento.arrivalUtc,
+              horaLlegada: horaLlegada
+            });
+          }
+          const vueloData = mapa.get(uniqueFlightId)!;
+          if (!vueloData.pedidos.includes(plan.orderId)) {
+            vueloData.pedidos.push(plan.orderId);
+          }
+        });
+      });
+    });
+    return mapa;
+  }, [panelSnapshot]);
+
+  // Lógica de carga de archivo
+  const handleArchivoCargado = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const text = await file.text();
+    const lines = text.split('\n').filter(line => line.trim() !== '');
+
+    try {
+      const ordenesParseadas: OrderRequestExtended[] = lines.map(line => {
+        const parts = line.split('-');
+
+        if (parts.length < 7) throw new Error(`Línea inválida: "${line}"`);
+
+        const id = parts[0].trim();
+        const datePart = parts[1].trim();
+        const hourPart = parts[2].trim();
+        const minutePart = parts[3].trim();
+        const dest = parts[4].trim();
+        const qty = parts[5].trim();
+        const ref = parts[6].trim();
+
+        const year = datePart.substring(0, 4);
+        const month = datePart.substring(4, 6);
+        const day = datePart.substring(6, 8);
+
+        const isoDate = `${year}-${month}-${day}`;
+        const isoTime = `${hourPart.padStart(2, '0')}:${minutePart.padStart(2, '0')}:00`;
+        const creationLocal = `${isoDate}T${isoTime}`;
+
+        const quantity = parseInt(qty, 10);
+        if (isNaN(quantity)) throw new Error(`Cantidad inválida: "${qty}"`);
+
+        return {
+          id: id,
+          customerReference: ref,
+          destinationAirportCode: dest,
+          quantity: quantity,
+          creationLocal: creationLocal,
+          fechaOriginal: creationLocal
+        };
+      });
+      setOrdenesParaSimular(ordenesParseadas);
+      alert(`Se cargaron ${ordenesParseadas.length} órdenes correctamente`);
+
+    } catch (e: any) {
+      console.error('❌ Error al parsear archivo:', e);
+      alert(`❌ Error: ${e.message}`);
+      setOrdenesParaSimular([]);
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const handleIniciarSimulacion = () => {
+    if (ordenesParaSimular.length === 0) {
+      alert('No hay órdenes cargadas');
+      return;
+    }
+    console.log('Iniciando simulación con', ordenesParaSimular.length, 'órdenes');
+    iniciar(ordenesParaSimular);
+  };
+
+  if (isLoading) {
+    return <div className="p-6 text-center">Cargando datos base...</div>;
+  }
+  if (isError) {
+    return <div className="p-6 text-center text-red-500">Error al cargar datos.</div>;
+  }
   return (
-    <div className="flex flex-col h-screen w-full bg-base-300">
+    <div className="flex h-screen w-full bg-gray-100">
 
-      {/* --- 1. BARRA SUPERIOR --- */}
-      <div className="flex flex-wrap justify-between items-center bg-base-100 p-2 shadow-md z-20">
+      {/* ========== PANEL LATERAL IZQUIERDO ========== */}
+      <div className="w-80 bg-gray-900 shadow-lg flex flex-col border-r border-gray-700">
 
-        {/* Opciones de Escenario */}
-        <div className="flex gap-2 items-center">
-          <span className="font-semibold">Escenario:</span>
-          <div className="form-control">
-            <label className="label cursor-pointer gap-1">
-              <input type="radio" name="escenario" className="radio radio-xs" checked={escenario === 'diario'} onChange={() => setEscenario('diario')} /> Diario
-            </label>
-          </div>
-          <div className="form-control">
-            <label className="label cursor-pointer gap-1">
-              <input type="radio" name="escenario" className="radio radio-xs" checked={escenario === 'semanal'} onChange={() => setEscenario('semanal')} /> Semanal
-            </label>
-          </div>
-          <div className="form-control">
-            <label className="label cursor-pointer gap-1">
-              <input type="radio" name="escenario" className="radio radio-xs" checked={escenario === 'colapso'} onChange={() => setEscenario('colapso')} /> Colapso
-            </label>
+        {/* Header del Panel */}
+        <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white p-4">
+          <h1 className="text-xl font-bold mb-2">Simulación Semanal</h1>
+          {/* Controles */}
+          <div className="space-y-2">
+            <button
+              className="btn btn-sm btn-success w-full"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={estaActivo || estaVisualizando}
+            >
+              <Upload size={16} /> Cargar Órdenes
+            </button>
+            <input type="file" ref={fileInputRef} onChange={handleArchivoCargado} className="hidden" accept=".txt" />
+
+            {ordenesParaSimular.length > 0 && (
+              <div className="text-xs text-green-300 text-center">
+                 {ordenesParaSimular.length} órdenes listas
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                className="btn btn-sm btn-primary flex-1"
+                onClick={handleIniciarSimulacion}
+                disabled={estaActivo || estaVisualizando || ordenesParaSimular.length === 0}
+              >
+                <Play size={16} /> Iniciar
+              </button>
+              <button
+                className="btn btn-sm btn-warning flex-1"
+                onClick={pausar}
+                disabled={!estaActivo && !estaVisualizando}
+              >
+                <Pause size={16} /> Pausar
+              </button>
+            </div>
+
+            <button className="btn btn-sm btn-error w-full" onClick={terminar}>
+              <XCircle size={16} /> Terminar
+            </button>
           </div>
         </div>
 
-       {/* KPIs Globales */}
-       <div className="flex gap-4 text-sm">
-         <div className="flex items-center gap-1"><Check size={16} className="text-success" /> Entregas a tiempo: <strong>{kpis.entregas}%</strong></div>
-         <div className="flex items-center gap-1"><AlertTriangle size={16} className="text-error" /> Pedidos retrasados: <strong>{kpis.retrasados}%</strong></div>
-       </div>
-
-        {/* Botones de Simulación */}
-        <div className="flex gap-2">
+        {/* Tabs del Panel */}
+        <div className="flex border-b border-gray-700 bg-gray-800">
           <button
-            className="btn btn-sm btn-success"
-            onClick={iniciar}
-            disabled={estaActivo}
+            className={`flex-1 py-2 text-sm font-medium transition-colors ${
+              vistaPanel === 'envios'
+                ? 'border-b-2 border-blue-500 text-blue-400 bg-gray-900'
+                : 'text-gray-400 hover:text-blue-400 hover:bg-gray-750'
+            }`}
+            onClick={() => setVistaPanel('envios')}
           >
-            <Play size={16} /> Iniciar
+            <Package size={16} className="inline mr-1" />
+            Envíos
           </button>
           <button
-            className="btn btn-sm btn-warning"
-            onClick={pausar}
-            disabled={!estaActivo}
+            className={`flex-1 py-2 text-sm font-medium transition-colors ${
+              vistaPanel === 'vuelos'
+                ? 'border-b-2 border-blue-500 text-blue-400 bg-gray-900'
+                : 'text-gray-400 hover:text-blue-400 hover:bg-gray-750'
+            }`}
+            onClick={() => setVistaPanel('vuelos')}
           >
-            <Pause size={16} /> Pausar
+            <Plane size={16} className="inline mr-1" />
+            Vuelos
           </button>
           <button
-            className="btn btn-sm btn-error"
-            onClick={terminar}
+            className={`flex-1 py-2 text-sm font-medium transition-colors ${
+              vistaPanel === 'aeropuertos'
+                ? 'border-b-2 border-blue-500 text-blue-400 bg-gray-900'
+                : 'text-gray-400 hover:text-blue-400 hover:bg-gray-750'
+            }`}
+            onClick={() => setVistaPanel('aeropuertos')}
           >
-            <XCircle size={16} /> Terminar
+            Aeropuertos
           </button>
         </div>
 
-        {/* Reloj de Simulación */}
-        <div className="flex flex-col items-end">
-          <span className="font-semibold">Tiempo transcurrido</span>
-          <span className="text-sm font-mono">{reloj}</span>
+        {/* Contenido del Panel */}
+        <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-gray-900">
+
+          {/* ===== VISTA: ENVÍOS ===== */}
+          {vistaPanel === 'envios' && (
+            <>
+              {!panelSnapshot || panelSnapshot.orderPlans.length === 0 ? (
+                <div className="text-center text-gray-400 py-8">
+                  {ordenesParaSimular.length > 0
+                    ? 'Presiona "Iniciar" para comenzar la simulación'
+                    : 'Carga un archivo para comenzar'}
+                </div>
+              ) : (
+                panelSnapshot.orderPlans.map((plan) => {
+                  const primerSegmento = plan.routes[0]?.segments[0];
+                  const ultimoSegmento = plan.routes[plan.routes.length - 1]?.segments[
+                    plan.routes[plan.routes.length - 1].segments.length - 1
+                  ];
+
+                  const esRetrasado = plan.slackMinutes <= 0;
+                  const estado = esRetrasado ? 'error' : 'success';
+                  const estadoTexto = esRetrasado ? 'Retrasado' : 'A tiempo';
+
+                  const fechaOriginalData = fechasOriginalesPorOrden.get(plan.orderId);
+
+                  let fechaRegistro = 'N/A';
+                  let horaRegistro = 'N/A';
+
+                  if (fechaOriginalData) {
+                    fechaRegistro = fechaOriginalData.fecha.toLocaleDateString('es-PE', {
+                      day: '2-digit',
+                      month: 'short',
+                      year: 'numeric'
+                    });
+                    horaRegistro = fechaOriginalData.fecha.toLocaleTimeString('es-PE', {
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    });
+                  }
+
+                  return (
+                    <div
+                      key={plan.orderId}
+                      className={`card bg-gray-800 border-l-4 ${
+                        estado === 'success' ? 'border-green-500' : 'border-red-500'
+                      } shadow-sm hover:shadow-md transition-shadow`}
+                    >
+                      <div className="card-body p-3 text-white">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <h3 className="font-bold text-sm text-blue-400">
+                              Pedido {plan.orderId}
+                            </h3>
+                            <p className="text-xs text-gray-400">
+                              Cantidad: {primerSegmento?.quantity || 'N/A'}
+                            </p>
+                          </div>
+                          <span className={`badge badge-sm ${
+                            estado === 'success' ? 'badge-success' : 'badge-error'
+                          }`}>
+                            {estadoTexto}
+                          </span>
+                        </div>
+
+                        {/* Fecha y hora de REGISTRO */}
+                        <div className="mt-2 pt-2 border-t border-gray-700">
+                          <p className="text-[10px] text-gray-500 mb-1">Fecha de Registro:</p>
+                          <div className="flex gap-3 text-xs">
+                            <div>
+                              <span className="text-gray-400">📅</span> {fechaRegistro}
+                            </div>
+                            <div>
+                              <span className="text-gray-400">🕒</span> {horaRegistro}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="text-xs mt-2 space-y-1">
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Origen:</span>
+                            <span className="font-semibold text-white">{primerSegmento?.origin || 'N/A'}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Destino:</span>
+                            <span className="font-semibold text-white">
+                              {ultimoSegmento?.destination || 'N/A'}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Holgura:</span>
+                            <span className={`font-semibold ${
+                              estado === 'success' ? 'text-green-400' : 'text-red-400'
+                            }`}>
+                              {plan.slackMinutes} min
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Ruta detallada */}
+                        <div className="mt-2 pt-2 border-t border-gray-700">
+                          <p className="text-xs font-semibold text-gray-300 mb-1">
+                            Ruta ({plan.routes.reduce((acc, r) => acc + r.segments.length, 0)} tramos):
+                          </p>
+                          {plan.routes.map((ruta, rutaIdx) => (
+                            <div key={rutaIdx}>
+                              {ruta.segments.map((seg, segIdx) => (
+                                <div key={segIdx} className="text-xs text-gray-400 ml-2 mb-1">
+                                  • {seg.origin} → {seg.destination}
+                                  {seg.departureUtc && seg.arrivalUtc && (
+                                    <span className="text-[10px] text-gray-500 ml-2">
+                                      ({new Date(seg.departureUtc).toLocaleTimeString('es-PE', {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        timeZone: 'UTC'
+                                      })} - {new Date(seg.arrivalUtc).toLocaleTimeString('es-PE', {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        timeZone: 'UTC'
+                                      })})
+                                    </span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </>
+          )}
+
+          {/* ===== VISTA: VUELOS ===== */}
+          {vistaPanel === 'vuelos' && (
+            <>
+              {vuelosPorFlightId.size === 0 && (
+                <div className="text-center text-gray-400 py-8">
+                  No hay vuelos activos
+                </div>
+              )}
+
+              {Array.from(vuelosPorFlightId.values())
+                .sort((a, b) => {
+                  const dateA = a.departureUtc ? new Date(a.departureUtc).getTime() : 0;
+                  const dateB = b.departureUtc ? new Date(b.departureUtc).getTime() : 0;
+                  return dateA - dateB;
+                })
+                .map(vuelo => {
+                  // Buscamos el vuelo en movimiento usando su ID único
+                  const vueloEnCurso = vuelosEnMovimiento.find(v => v.id === vuelo.departureUtc);
+
+                  return (
+                    // El key debe ser único (departureUtc)
+                    <div key={vuelo.departureUtc} className="card bg-gray-800 shadow-sm hover:shadow-md transition-shadow">
+                      <div className="card-body p-3 text-white">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <Plane size={16} className="text-blue-400" />
+                            <span className="font-bold text-sm text-blue-300">
+                              {vuelo.origen} → {vuelo.destino}
+                            </span>
+                          </div>
+                          {vueloEnCurso && (
+                            <span className="badge badge-xs badge-success">En vuelo</span>
+                          )}
+                        </div>
+
+                        <div className="text-xs text-gray-300 font-semibold mb-1">
+                          📅 {vuelo.fecha}
+                        </div>
+
+                        <div className="flex justify-between text-xs text-gray-400 mb-2">
+                          <div>
+                            <span className="text-gray-500">Salida:</span> {vuelo.hora}
+                          </div>
+                          <div>
+                            <span className="text-gray-500">Llegada:</span> {vuelo.horaLlegada}
+                          </div>
+                        </div>
+
+                        <div className="mt-2 pt-2 border-t border-gray-700">
+                          <p className="text-xs text-gray-400 font-semibold mb-1">
+                            Pedidos ({vuelo.pedidos.length}):
+                          </p>
+                          <div className="flex flex-wrap gap-1">
+                            {vuelo.pedidos.map(pedido => (
+                              <span key={pedido} className="badge badge-xs bg-gray-700 text-gray-300 border-gray-600">
+                                {pedido}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+
+                        {vueloEnCurso && (
+                          <div className="mt-3">
+                            <div className="w-full bg-gray-700 rounded-full h-2">
+                              <div
+                                className="bg-green-500 h-2 rounded-full transition-all"
+                                style={{ width: `${Math.min(vueloEnCurso.progreso, 100)}%` }}
+                              />
+                            </div>
+                            <p className="text-xs text-gray-400 mt-1 text-center">
+                              {Math.round(vueloEnCurso.progreso)}%
+                              {vueloEnCurso.progreso >= 100 && ' - Completado'}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+            </>
+          )}
+
+          {/* ===== VISTA: AEROPUERTOS ===== */}
+          {vistaPanel === 'aeropuertos' && (
+            <>
+              {aeropuertos.map(aeropuerto => (
+                <div key={aeropuerto.id} className="card bg-gray-800 shadow-sm hover:shadow-md transition-shadow">
+                  <div className="card-body p-3 text-white">
+                    <h3 className="font-bold text-sm text-blue-400">{aeropuerto.id}</h3>
+                    <p className="text-xs text-gray-300">{aeropuerto.name}</p>
+                    <div className="text-xs text-gray-400 mt-1">
+                      <div>Lat: {aeropuerto.latitude?.toFixed(4) ?? 'N/A'}</div>
+                      <div>Lon: {aeropuerto.longitude?.toFixed(4) ?? 'N/A'}</div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
         </div>
       </div>
 
-      {/* --- 2. CONTENIDO PRINCIPAL --- */}
-      <div className="flex-1 relative overflow-hidden">
-        <MapaVuelos
-            vuelos={vuelos}
+      {/* ========== ÁREA DEL MAPA ========== */}
+      <div className="flex-1 flex flex-col">
+
+        {/* Barra superior con KPIs y Reloj */}
+        <div className="bg-white shadow-md p-3 flex justify-between items-center z-10">
+          <div className="flex gap-6 text-sm">
+            <div className="flex items-center gap-2">
+              <Check size={18} className="text-green-600" />
+              <span>A tiempo: <strong>{kpis.entregas}</strong></span>
+            </div>
+            <div className="flex items-center gap-2">
+              <AlertTriangle size={18} className="text-red-600" />
+              <span>Retrasados: <strong>{kpis.retrasados}</strong></span>
+            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="text-sm">
+              <span className="text-gray-600">Progreso: </span>
+              <span className="font-mono font-semibold">{reloj}</span>
+            </div>
+
+            {/* Reloj Mundial UTC */}
+            {tiempoSimulado && (
+              <div className="flex gap-2">
+                <div className="badge badge-info">
+                  📅 {tiempoSimulado.toLocaleDateString('es-PE', {
+                    day: '2-digit',
+                    month: 'short',
+                    year: 'numeric',
+                    timeZone: 'UTC'
+                  })}
+                </div>
+                <div className="badge badge-success">
+                  🕒 {tiempoSimulado.toLocaleTimeString('es-PE', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      timeZone: 'UTC'
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Mapa */}
+        <div className="flex-1 relative">
+          <MapaVuelos
             aeropuertos={aeropuertos}
-            isLoading={isLoading}
+            orderPlans={snapshotFinal?.orderPlans ?? []} // El mapa solo usa la solución final
+            isLoading={isLoading || isStarting}
+            vuelosEnMovimiento={vuelosEnMovimiento} // Los aviones solo se mueven con la solución final
           />
+        </div>
       </div>
     </div>
   );
