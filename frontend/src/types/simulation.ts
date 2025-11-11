@@ -1,5 +1,3 @@
-import type { OrderRequest } from './orderRequest'; // El DTO que se envía
-
 // Corresponde a SimulationSegment.java
 export interface SimulationSegment {
   flightId: string;
@@ -48,7 +46,8 @@ export interface SimulationMessage {
 
 // Corresponde a SimulationStartRequest.java
 export interface SimulationStartRequest {
-  orders: OrderRequest[];
+  startDate?: string; // ISO 8601 sin zona
+  endDate?: string;
 }
 
 // Corresponde a SimulationStartResponse.java

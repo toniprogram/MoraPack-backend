@@ -1,11 +1,10 @@
  import { useState, useEffect, useCallback, useMemo } from 'react';
- import { useQuery, useMutation } from '@tanstack/react-query';
- import { Client } from '@stomp/stompjs';
- import { aeropuertoService } from '../services/aeropuertoService';
- import { simulacionService } from '../services/simulacionService';
- import type { Airport } from '../types/airport';
- import type { OrderRequest } from '../types/orderRequest';
- import type { SimulationSnapshot, SimulationMessage } from '../types/simulacion';
+import { useQuery, useMutation } from '@tanstack/react-query';
+import { Client } from '@stomp/stompjs';
+import { aeropuertoService } from '../services/aeropuertoService';
+import { simulacionService } from '../services/simulacionService';
+import type { Airport } from '../types/airport';
+import type { SimulationSnapshot, SimulationMessage, SimulationStartRequest } from '../types/simulacion';
 
  export interface VueloEnMovimiento {
    id: string;
@@ -231,8 +230,8 @@
    }, [finalSnapshot, tiempoSimulado, aeropuertos]);
 
    // ===== MUTACIÓN PARA INICIAR SIMULACIÓN =====
-   const { mutate: iniciar, isPending: estaIniciando } = useMutation({
-     mutationFn: (orders: OrderRequest[]) => simulacionService.startSimulation({ orders }),
+  const { mutate: iniciar, isPending: estaIniciando } = useMutation({
+    mutationFn: (payload: SimulationStartRequest) => simulacionService.startSimulation(payload),
      onSuccess: (response) => {
        console.log('Simulación iniciada:', response.simulationId);
        setLatestProgress(null);

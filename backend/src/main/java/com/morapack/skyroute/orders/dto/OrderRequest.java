@@ -7,5 +7,6 @@ public record OrderRequest(
         String customerReference,
         String destinationAirportCode,
         Integer quantity,
-        LocalDateTime creationLocal
+        LocalDateTime creationLocal,
+        Boolean projected
 ) {}

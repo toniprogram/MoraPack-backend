@@ -105,33 +105,46 @@
 
 **Lista** todos los pedidos persistidos.
 
-**Response**
+**Response (paginado)**
 
 ```json
-[
-  {
-    "id": "000000001",
-    "customerReference": "0007729",
-    "destinationAirport": {
-      "code": "EBCI",
-      "name": "Brussels South Charleroi",
-      "gmtOffsetHours": 1,
-      "storageCapacity": 3200,
-      "continent": "EUROPE",
-      "latitude": 50.4592,
-      "longitude": 4.4538
-    },
-    "quantity": 6,
-    "creationUtc": "2025-01-02T01:38:00Z",
-    "dueUtc": "2025-01-03T19:38:00Z"
-  }
-]
+{
+  "items": [
+    {
+      "id": "000000001",
+      "customerReference": "0007729",
+      "destinationAirport": {
+        "code": "EBCI",
+        "name": "Brussels South Charleroi",
+        "gmtOffsetHours": 1,
+        "storageCapacity": 3200,
+        "continent": "EUROPE",
+        "latitude": 50.4592,
+        "longitude": 4.4538
+      },
+      "quantity": 6,
+      "creationUtc": "2025-01-02T01:38:00Z",
+      "dueUtc": "2025-01-03T19:38:00Z",
+      "scope": "REAL"
+    }
+  ],
+  "page": 0,
+  "size": 50,
+  "totalElements": 1240,
+  "totalPages": 25
+}
 ```
 
 **Frontend usa para:**
 
 * Mostrar la cola de pedidos activos.
 * Sincronizar la vista antes/después de recalcular el plan.
+
+**Query params**
+
+* `scope=REAL|PROJECTED` → filtra por tipo de pedido (default `REAL`).
+* `page=<n>` → página deseada (0-index, default `0`).
+* `size=<n>` → tamaño de página (default `50`, máximo `2000`).
 
 ---
 
@@ -147,13 +160,15 @@
   "customerReference": "0007729",
   "destinationAirportCode": "EBCI",
   "quantity": 6,
-  "creationLocal": "2025-01-02T01:38:00"
+  "creationLocal": "2025-01-02T01:38:00",
+  "projected": false
 }
 ```
 
 > 💡 El identificador completo del archivo (`000000001-20250102-01-38-EBCI-006-0007729`) se descompone así:
 > `id` = `000000001`, `creationLocal` = `2025-01-02T01:38` (hora local del destino), `destinationAirportCode` = `EBCI`, `quantity` = `006` → `6` y `customerReference` = `0007729`.
 > El backend convierte `creationLocal` a UTC usando el huso del aeropuerto destino y, por ahora, fija `dueUtc` internamente; el GA podrá ajustar el vencimiento según el origen final.
+> Si `projected` se omite o es `false`, el pedido se marca como `REAL`. Envía `true` únicamente para pedidos usados por la simulación semanal.
 
 **Response** `201 Created`
 
@@ -366,21 +381,14 @@ Recalcula la capacidad desde la BD o la planificación actual.
 
 ### `POST /api/simulations`
 
-Inicia una simulación semanal en memoria. El body contiene la lista de órdenes proyectadas.
+Inicia una simulación semanal en memoria tomando los pedidos `PROJECTED` almacenados en la base de datos. El body define un rango opcional (UTC) para acotar la ejecución.
 
 **Request**
 
 ```json
 {
-  "orders": [
-    {
-      "id": "000000001",
-      "customerReference": "0007729",
-      "destinationAirportCode": "EBCI",
-      "quantity": 6,
-      "creationLocal": "2025-01-02T01:38:00"
-    }
-  ]
+  "startDate": "2025-01-02T00:00:00",
+  "endDate": "2025-01-05T23:59:59"
 }
 ```
 
@@ -390,7 +398,7 @@ Inicia una simulación semanal en memoria. El body contiene la lista de órdenes
 { "simulationId": "d4d9fbaa-9c0f-4f28-8b41-1d36d8aca3c1" }
 ```
 
-El backend empieza a procesar las órdenes en segundo plano y a publicar snapshots parciales.
+Si omites `startDate` o `endDate`, el backend usa automáticamente la primera y última fecha disponible entre los pedidos proyectados. El backend empieza a procesar las órdenes en segundo plano y a publicar snapshots parciales.
 
 ---
 
@@ -558,3 +566,60 @@ Estadísticas globales del algoritmo y del sistema.
 ---
 
 **Fin del documento.**
+### `POST /api/orders/batch`
+
+**Crea** múltiples pedidos en una sola llamada. Se recomienda para importar proyecciones masivas.
+
+**Request**
+
+```json
+{
+  "orders": [
+    {
+      "id": "000000001",
+      "customerReference": "0007729",
+      "destinationAirportCode": "EBCI",
+      "quantity": 6,
+      "creationLocal": "2025-01-02T01:38:00",
+      "projected": true
+    },
+    {
+      "id": "000000002",
+      "customerReference": "0008888",
+      "destinationAirportCode": "LIM",
+      "quantity": 4,
+      "creationLocal": "2025-01-02T02:00:00",
+      "projected": true
+    }
+  ]
+}
+```
+
+**Response** `201 Created`
+
+```json
+[
+  { "id": "000000001", "scope": "PROJECTED", ... },
+  { "id": "000000002", "scope": "PROJECTED", ... }
+]
+```
+
+> ⚠️ Todos los IDs deben ser únicos (tanto dentro del payload como en la base de datos) o la operación falla con `409 Conflict`.
+### `GET /api/orders/count`
+
+Devuelve el total de pedidos para el scope especificado.
+
+```json
+{
+  "scope": "PROJECTED",
+  "total": 24873
+}
+```
+
+**Query params**
+
+* `scope=REAL|PROJECTED` (opcional, default `REAL`).
+
+Permite a la UI calcular la cantidad de páginas sin descargar todos los registros.
+
+---
