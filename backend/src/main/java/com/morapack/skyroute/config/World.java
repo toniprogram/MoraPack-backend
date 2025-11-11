@@ -161,7 +161,7 @@ public class World implements Orders.Observer {
             throw new RuntimeException("Error loading orders", e);
         }*/
 
-        List<Order> orderList = orderRepository.findAll();
+        List<Order> orderList = orderRepository.findAllByScope(OrderScope.REAL);
         return OrderLoader.loadFromDatabase(orderList, airports);
     }
 }

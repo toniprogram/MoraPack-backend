@@ -9,6 +9,7 @@ import com.morapack.skyroute.models.Airport;
 import com.morapack.skyroute.models.AirportSchedule;
 import com.morapack.skyroute.models.FlightCancellation;
 import com.morapack.skyroute.models.Order;
+import com.morapack.skyroute.models.OrderScope;
 import com.morapack.skyroute.orders.repository.OrderRepository;
 import com.morapack.skyroute.config.World;
 import org.springframework.stereotype.Component;
@@ -51,7 +52,7 @@ public class WorldBuilder {
         AirportSchedule airportSchedule = new AirportSchedule(airports.asMap());
         World world = World.fromData(airports, flights, airportSchedule, Instant.now());
 
-        List<Order> clonedOrders = orderRepository.findAll().stream()
+        List<Order> clonedOrders = orderRepository.findAllByScope(OrderScope.REAL).stream()
                 .map(order -> cloneOrder(order, airports))
                 .filter(Objects::nonNull)
                 .toList();
@@ -82,7 +83,8 @@ public class WorldBuilder {
                 destination,
                 source.getQuantity(),
                 source.getCreationUtc(),
-                source.getDueUtc()
+                source.getDueUtc(),
+                source.getScope()
         );
     }
 

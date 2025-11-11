@@ -3,9 +3,14 @@ package com.morapack.skyroute.orders.service;
 import com.morapack.skyroute.base.repository.AirportRepository;
 import com.morapack.skyroute.models.Airport;
 import com.morapack.skyroute.models.Order;
+import com.morapack.skyroute.models.OrderScope;
 import com.morapack.skyroute.orders.dto.OrderRequest;
 import com.morapack.skyroute.orders.repository.OrderRepository;
 import com.morapack.skyroute.config.Config;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -14,7 +19,10 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 @Service
 public class OrderService {
@@ -27,8 +35,25 @@ public class OrderService {
         this.airportRepository = airportRepository;
     }
 
-    public List<Order> getAll() {
-        return orderRepository.findAll();
+    private static final int DEFAULT_LIMIT = 500;
+    private static final int MAX_LIMIT = 2000;
+
+    public Page<Order> getPage(OrderScope scope, Integer page, Integer size) {
+        int pageIndex = page == null || page < 0 ? 0 : page;
+        int pageSize = normalizeLimit(size);
+        Sort sort = Sort.by(Sort.Direction.DESC, "creationUtc");
+        Pageable pageable = PageRequest.of(pageIndex, pageSize, sort);
+        if (scope == null) {
+            return orderRepository.findAll(pageable);
+        }
+        return orderRepository.findAllByScope(scope, pageable);
+    }
+
+    public long count(OrderScope scope) {
+        if (scope == null) {
+            return orderRepository.count();
+        }
+        return orderRepository.countByScope(scope);
     }
 
     public Order create(OrderRequest request) {
@@ -38,6 +63,38 @@ public class OrderService {
         }
         Order order = buildOrderFromRequest(request);
         return orderRepository.save(order);
+    }
+
+    public List<Order> createAll(List<OrderRequest> requests) {
+        if (requests == null || requests.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "orders list is required");
+        }
+
+        Set<String> seenIds = new HashSet<>();
+        for (OrderRequest request : requests) {
+            validateRequest(request, true);
+            if (!seenIds.add(request.id())) {
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_REQUEST,
+                        "Duplicated order id in payload: " + request.id()
+                );
+            }
+        }
+
+        var existing = orderRepository.findAllById(seenIds);
+        if (!existing.isEmpty()) {
+            String conflicting = existing.stream().map(Order::getId).findFirst().orElse("unknown");
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Order " + conflicting + " already exists"
+            );
+        }
+
+        List<Order> toPersist = new ArrayList<>(requests.size());
+        for (OrderRequest request : requests) {
+            toPersist.add(buildOrderFromRequest(request));
+        }
+        return orderRepository.saveAll(toPersist);
     }
 
     public Order update(String id, OrderRequest request) {
@@ -56,6 +113,7 @@ public class OrderService {
         existing.setQuantity(request.quantity());
         existing.setCreationUtc(creationUtc);
         existing.setDueUtc(dueUtc);
+        existing.setScope(resolveScope(request.projected()));
         return orderRepository.save(existing);
     }
 
@@ -78,7 +136,8 @@ public class OrderService {
                 destination,
                 request.quantity(),
                 creationUtc,
-                dueUtc
+                dueUtc,
+                resolveScope(request.projected())
         );
     }
 
@@ -110,5 +169,16 @@ public class OrderService {
     private Instant toUtc(java.time.LocalDateTime creationLocal, Airport destination) {
         ZoneOffset offset = destination.getZoneOffset();
         return creationLocal.atOffset(offset).toInstant();
+    }
+
+    private OrderScope resolveScope(Boolean projectedFlag) {
+        return Boolean.TRUE.equals(projectedFlag) ? OrderScope.PROJECTED : OrderScope.REAL;
+    }
+
+    private int normalizeLimit(Integer limit) {
+        if (limit == null || limit <= 0) {
+            return DEFAULT_LIMIT;
+        }
+        return Math.min(limit, MAX_LIMIT);
     }
 }

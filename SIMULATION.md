@@ -5,28 +5,24 @@ Este backend ofrece un modo de simulación “en memoria” que genera planes pa
 ## 1. Requisitos previos
 
 - El catálogo base debe estar cargado (`POST /api/setup` o similar) para que existan aeropuertos y vuelos.
-- Se necesita una lista ordenada de órdenes proyectadas (hora local del aeropuerto destino).
-- El backend debe permitirse conexiones WebSocket (endpoint STOMP `/ws`).
+- Las órdenes proyectadas deben haberse cargado previamente en la BD mediante `POST /api/orders` con el campo `projected: true`. Por defecto todos los pedidos creados desde el endpoint son `REAL`.
+- Puedes consultar los pedidos proyectados vigentes con `GET /api/orders?scope=PROJECTED`.
+- El backend debe permitir conexiones WebSocket (endpoint STOMP `/ws`).
 
 ## 2. Endpoints HTTP
 
 ### `POST /api/simulations`
 
-Inicia una nueva sesión. El cuerpo es un JSON con la lista de órdenes en orden cronológico. Cada orden usa el mismo formato que `/api/orders`:
+Inicia una nueva sesión tomando todos los pedidos `PROJECTED` almacenados entre un rango de fechas (UTC). Ambos campos son opcionales:
 
 ```json
 {
-  "orders": [
-    {
-      "id": "000000001",
-      "customerReference": "0007729",
-      "destinationAirportCode": "EBCI",
-      "quantity": 6,
-      "creationLocal": "2025-01-02T01:38:00"
-    }
-  ]
+  "startDate": "2025-01-02T00:00:00",
+  "endDate": "2025-01-09T23:59:59"
 }
 ```
+
+Si omites `startDate` o `endDate`, el backend usa respectivamente la primera y la última fecha disponible entre los pedidos proyectados.
 
 Respuesta (`202 Accepted`):
 
@@ -98,25 +94,44 @@ Mensajes (`SimulationMessage`):
      -d '{ "airports": [...], "flights": [...] }'
    ```
 
-2. **Iniciar simulación**:
+2. **Registrar pedidos proyectados** (solo la primera vez o cuando recibas un nuevo archivo):
+   ```bash
+   curl -X POST http://localhost:8080/api/orders/batch \
+     -H "Content-Type: application/json" \
+     -d '{
+       "orders": [
+         {
+           "id": "000000001",
+           "customerReference": "0007729",
+           "destinationAirportCode": "EBCI",
+           "quantity": 6,
+           "creationLocal": "2025-01-02T01:38:00",
+           "projected": true
+         }
+       ]
+     }'
+   ```
+   > Por defecto, los pedidos se marcan como `REAL`. Envía `projected: true` únicamente para los escenarios simulados.
+
+3. **Iniciar simulación**:
    ```bash
    curl -X POST http://localhost:8080/api/simulations \
      -H "Content-Type: application/json" \
-     -d '{ "orders": [ { ... } ] }'
+     -d '{ "startDate": "2025-01-02T00:00:00", "endDate": "2025-01-05T23:59:59" }'
    ```
-   Guarda el `simulationId` que retorna.
+   Si omites las fechas, se toma el rango completo de pedidos `PROJECTED` existentes.
 
-3. **Conectar al WebSocket**:
+4. **Conectar al WebSocket**:
    - Usa una herramienta STOMP (STOMP over WebSocket) o una librería JavaScript (`SockJS + StompJS`).
    - Conecta a `ws://localhost:8080/ws` y suscríbete a `/topic/simulations/{simulationId}`.
    - Verás mensajes `PROGRESS` cada vez que se procesa una orden, y `COMPLETED` al terminar.
 
-4. **Consultar estado** (opcional):
+5. **Consultar estado** (opcional):
    ```bash
    curl http://localhost:8080/api/simulations/{simulationId}/status
    ```
 
-5. **Cancelar** (opcional):
+6. **Cancelar** (opcional):
    ```bash
    curl -X DELETE http://localhost:8080/api/simulations/{simulationId}
    ```

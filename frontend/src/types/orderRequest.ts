@@ -4,4 +4,5 @@ export interface OrderRequest {
   destinationAirportCode: string;
   quantity: number;
   creationLocal: string;
+  projected?: boolean;
 }
