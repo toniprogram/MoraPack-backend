@@ -1,8 +1,9 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { useSimulacion } from '../hooks/useSimulacion';
 import { MapaVuelos } from '../components/mapas/MapaVuelos';
-import { Check, AlertTriangle, Play, Pause, XCircle, Upload, Package, Plane } from 'lucide-react';
+import { Check, AlertTriangle, Play, Pause, XCircle, Upload, Package, Plane, Database } from 'lucide-react';
 import type { OrderRequest } from '../types/orderRequest';
+import { orderService } from '../services/orderService';
 
 // Interfaz extendida para mantener fechas originales del archivo TXT
 interface OrderRequestExtended extends OrderRequest {
@@ -31,6 +32,29 @@ export default function SimulacionPage() {
   const [ordenesParaSimular, setOrdenesParaSimular] = useState<OrderRequestExtended[]>([]);
   const [vistaPanel, setVistaPanel] = useState<'envios' | 'vuelos' | 'aeropuertos'>('envios');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
+  const [estaSincronizando, setEstaSincronizando] = useState(false);
+  const [proyeccionGuardada, setProyeccionGuardada] = useState(false);
+
+  const formatoInputDesdeIso = (iso: string) => iso.slice(0, 16);
+  const ensureSeconds = (value?: string) => {
+    if (!value) return undefined;
+    return value.length === 16 ? `${value}:00` : value;
+  };
+
+  const actualizarRangoSimulacion = (ordenes: OrderRequestExtended[]) => {
+    if (!ordenes.length) {
+      setStartDate('');
+      setEndDate('');
+      return;
+    }
+    const sorted = [...ordenes].sort((a, b) =>
+      new Date(`${a.creationLocal}Z`).getTime() - new Date(`${b.creationLocal}Z`).getTime()
+    );
+    setStartDate(formatoInputDesdeIso(sorted[0].creationLocal));
+    setEndDate(formatoInputDesdeIso(sorted[sorted.length - 1].creationLocal));
+  };
 
   const fechasOriginalesPorOrden = useMemo(() => {
     const mapa = new Map<string, { fecha: Date; fechaStr: string }>();
@@ -146,6 +170,8 @@ export default function SimulacionPage() {
         };
       });
       setOrdenesParaSimular(ordenesParseadas);
+      actualizarRangoSimulacion(ordenesParseadas);
+      setProyeccionGuardada(false);
       alert(`Se cargaron ${ordenesParseadas.length} órdenes correctamente`);
 
     } catch (e: any) {
@@ -158,12 +184,30 @@ export default function SimulacionPage() {
   };
 
   const handleIniciarSimulacion = () => {
+    const payload = {
+      startDate: ensureSeconds(startDate),
+      endDate: ensureSeconds(endDate),
+    };
+    iniciar(payload);
+  };
+
+  const handleGuardarProyeccion = async () => {
     if (ordenesParaSimular.length === 0) {
-      alert('No hay órdenes cargadas');
+      alert('Carga un archivo con órdenes proyectadas antes de sincronizar.');
       return;
     }
-    console.log('Iniciando simulación con', ordenesParaSimular.length, 'órdenes');
-    iniciar(ordenesParaSimular);
+    setEstaSincronizando(true);
+    setProyeccionGuardada(false);
+    try {
+      await orderService.createProjectedBatch(ordenesParaSimular);
+      setProyeccionGuardada(true);
+      alert(`Se guardaron ${ordenesParaSimular.length} órdenes proyectadas en el backend`);
+    } catch (error) {
+      console.error('Error guardando pedidos proyectados:', error);
+      alert('❌ No se pudieron guardar todos los pedidos proyectados. Revisa la consola para más detalles.');
+    } finally {
+      setEstaSincronizando(false);
+    }
   };
 
   if (isLoading) {
@@ -194,7 +238,50 @@ export default function SimulacionPage() {
 
             {ordenesParaSimular.length > 0 && (
               <div className="text-xs text-green-300 text-center">
-                 {ordenesParaSimular.length} órdenes listas
+                 {ordenesParaSimular.length} órdenes listas para sincronizar
+              </div>
+            )}
+
+            <div className="space-y-2 text-xs text-gray-200">
+              <div>
+                <label className="block uppercase tracking-wide text-[10px] text-gray-400 mb-1">
+                  Inicio (UTC)
+                </label>
+                <input
+                  type="datetime-local"
+                  className="input input-sm w-full text-black"
+                  value={startDate}
+                  onChange={(event) => setStartDate(event.target.value)}
+                  disabled={estaActivo || estaVisualizando}
+                />
+              </div>
+              <div>
+                <label className="block uppercase tracking-wide text-[10px] text-gray-400 mb-1">
+                  Fin (UTC)
+                </label>
+                <input
+                  type="datetime-local"
+                  className="input input-sm w-full text-black"
+                  value={endDate}
+                  onChange={(event) => setEndDate(event.target.value)}
+                  disabled={estaActivo || estaVisualizando}
+                />
+                <p className="text-[10px] text-gray-400 mt-1">
+                  Vacío = usa todo el rango de pedidos proyectados guardados.
+                </p>
+              </div>
+            </div>
+
+            <button
+              className="btn btn-sm btn-outline w-full"
+              onClick={handleGuardarProyeccion}
+              disabled={estaSincronizando || estaActivo || estaVisualizando || ordenesParaSimular.length === 0}
+            >
+              <Database size={16} /> Guardar pedidos proyectados
+            </button>
+            {proyeccionGuardada && (
+              <div className="text-[11px] text-green-300 text-center">
+                Proyección sincronizada en base de datos.
               </div>
             )}
 
@@ -202,9 +289,9 @@ export default function SimulacionPage() {
               <button
                 className="btn btn-sm btn-primary flex-1"
                 onClick={handleIniciarSimulacion}
-                disabled={estaActivo || estaVisualizando || ordenesParaSimular.length === 0}
+                disabled={estaActivo || estaVisualizando || estaSincronizando || isStarting}
               >
-                <Play size={16} /> Iniciar
+                <Play size={16} /> {isStarting ? 'Preparando...' : 'Iniciar'}
               </button>
               <button
                 className="btn btn-sm btn-warning flex-1"
@@ -266,8 +353,8 @@ export default function SimulacionPage() {
               {!panelSnapshot || panelSnapshot.orderPlans.length === 0 ? (
                 <div className="text-center text-gray-400 py-8">
                   {ordenesParaSimular.length > 0
-                    ? 'Presiona "Iniciar" para comenzar la simulación'
-                    : 'Carga un archivo para comenzar'}
+                    ? 'Sincroniza y presiona "Iniciar" para comenzar la simulación'
+                    : 'Carga pedidos proyectados o usa los ya guardados para iniciar.'}
                 </div>
               ) : (
                 panelSnapshot.orderPlans.map((plan) => {

@@ -35,8 +35,8 @@
 ### B. Modo simulación semanal
 
 ```
-1️⃣ El usuario carga un archivo de órdenes proyectadas.
-2️⃣ El backend construye un World temporal (sin persistencia).
+1️⃣ El usuario carga un archivo de órdenes proyectadas y las persiste en `/api/orders` con `projected = true`.
+2️⃣ El backend recibe `startDate` / `endDate`, construye un World temporal (solo lectura) y consulta los pedidos `PROJECTED` en ese rango.
 3️⃣ El GA ejecuta las simulaciones día por día.
 4️⃣ Los resultados viven en memoria y se muestran en tiempo real.
 5️⃣ Al finalizar, se descarta todo.
@@ -54,7 +54,7 @@
 | `Airport`                          | Nodos fijos del grafo.                                      | ✅             |
 | `Flight`                           | Plantillas de vuelos (repetitivos diarios).                 | ✅             |
 | `Client`                           | Identificador de cliente.                                   | ✅             |
-| `Order`                            | Pedido activo o en tránsito.                               | ✅             |
+| `Order`                            | Pedido real o proyectado (`scope = REAL | PROJECTED`).     | ✅             |
 | `FlightCapacity`                   | Capacidad usada por vuelo y fecha.                          | ✅             |
 | `AirportOperation`                 | Cambios (+/–) de capacidad en un aeropuerto.               | ✅             |
 | `CurrentPlan`                      | Última planificación válida (foto del mejor Individual). | ✅             |
@@ -78,7 +78,7 @@
 
 | Elemento              | Operativo diario                                   | Simulación semanal                             |
 | --------------------- | -------------------------------------------------- | ----------------------------------------------- |
-| Orders                | Persistente                                        | En memoria                                      |
+| Orders                | Persistente (`scope = REAL`)                       | Persistente (`scope = PROJECTED`, filtrado por fecha) |
 | Flights / Airports    | Persistentes                                       | Persistentes (solo lectura)                     |
 | Capacidades           | Persistentes (`FlightCapacity`,`AirportOperation`) | En memoria (`FlightSchedule`,`AirportSchedule`) |
 | Planificación actual | Persistente (`CurrentPlan`)                        | En memoria                                      |
@@ -149,6 +149,22 @@ public class CurrentPlan {
     private List<OrderPlan> orderPlans;
 }
 ```
+
+---
+
+### Consulta de pedidos proyectados
+
+Los pedidos usados por la simulación semanal se almacenan en la misma tabla `orders`, diferenciados por `scope = PROJECTED`. Cuando el usuario solicita una simulación, el backend filtra ese subconjunto por fecha:
+
+```java
+Instant start = ...; // definido por startDate o el primer pedido PROJECTED disponible
+Instant end = ...;   // definido por endDate o el último pedido PROJECTED disponible
+
+List<Order> projected = orderRepository
+        .findAllByScopeAndCreationUtcBetweenOrderByCreationUtcAsc(OrderScope.PROJECTED, start, end);
+```
+
+Ese listado (ya ordenado cronológicamente) se pasa al GA en RAM sin tocar los pedidos `REAL`.
 
 ---
 
@@ -315,7 +331,7 @@ Frontend → Controller → Service → Algorithm → Mapper → Repository → 
 | Individual                   | Algoritmo   | No                 | Efímero, solo en RAM     |
 | CurrentPlan                  | Resultado   | Sí (una versión) | Último plan vigente      |
 | Capacities (Flight, Airport) | Estado      | Sí                | Refleja disponibilidad    |
-| Simulated Orders             | Simulación | No                 | Descartables              |
+| Simulated Orders             | Simulación | Sí (`Order.scope = PROJECTED`) | Reutilizables por rango o eliminables manualmente |
 
 ---
 
