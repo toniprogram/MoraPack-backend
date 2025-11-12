@@ -3,14 +3,17 @@ import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet'
 import L, { LatLngExpression } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import type { Airport } from '../../types/airport';
-import type { SimulationOrderPlan } from '../../hooks/useSimulacion';
+import type { SimulationOrderPlan } from '../../types/simulacion';
 import type { VueloEnMovimiento } from '../../hooks/useSimulacion';
 import MapResizer from './MapResizer';
 
 const hubIcon = new L.Icon({
   iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
   iconSize: [25, 41],
   iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+  shadowSize: [41, 41]
 });
 
 const greenPlaneIcon = new L.Icon({
@@ -36,15 +39,16 @@ interface MapaVuelosProps {
   aeropuertos: Airport[];
   isLoading: boolean;
   vuelosEnMovimiento: VueloEnMovimiento[];
+  filtroHubActivo: string;
 }
 
-export function MapaVuelos({ orderPlans, aeropuertos, isLoading, vuelosEnMovimiento }: MapaVuelosProps) {
+export function MapaVuelos({ orderPlans, aeropuertos, isLoading, vuelosEnMovimiento, filtroHubActivo }: MapaVuelosProps) {
   const initialPosition: LatLngExpression = [20, 0];
 
-  console.log('🗺️ OrderPlans recibidos:', orderPlans);
-  console.log('🗺️ Aeropuertos recibidos:', aeropuertos);
-  console.log('🗺️ Vuelos en movimiento recibidos:', vuelosEnMovimiento);
-  console.log('🗺️ CANTIDAD de vuelos en movimiento:', vuelosEnMovimiento.length);
+  //console.log('🗺️ OrderPlans recibidos:', orderPlans);
+  //console.log('🗺️ Aeropuertos recibidos:', aeropuertos);
+  //console.log('🗺️ Vuelos en movimiento recibidos:', vuelosEnMovimiento);
+  //console.log('🗺️ CANTIDAD de vuelos en movimiento:', vuelosEnMovimiento.length);
 
   // Crea el directorio de coordenadas
   const coordsAeropuertos = new Map(
@@ -98,6 +102,7 @@ export function MapaVuelos({ orderPlans, aeropuertos, isLoading, vuelosEnMovimie
             key={aeropuerto.id}
             position={[aeropuerto.latitude, aeropuerto.longitude]}
             icon={hubIcon}
+            opacity={!filtroHubActivo || filtroHubActivo === aeropuerto.id ? 1.0 : 0.3}
           >
             <Popup>
               <strong>{aeropuerto.id}</strong><br />
@@ -107,7 +112,7 @@ export function MapaVuelos({ orderPlans, aeropuertos, isLoading, vuelosEnMovimie
           </Marker>
         ))}
 
-      {/* 1. Dibuja las RUTAS ESTÁTICAS */}
+      {/* Dibuja las RUTAS ESTÁTICAS */}
       {orderPlans.map(plan => (
         <React.Fragment key={plan.orderId}>
           {plan.routes.map((ruta, rutaIndex) => (
@@ -116,17 +121,30 @@ export function MapaVuelos({ orderPlans, aeropuertos, isLoading, vuelosEnMovimie
               const destinoCoords = coordsAeropuertos.get(segmento.destination);
 
               if (!origenCoords || !destinoCoords) return null;
+              const esRetrasado = plan.slackMinutes <= 0;
+              let colorRuta = esRetrasado ? "#FF0000" : "#3b82f6";
+              let opacidadRuta = 0.7;
+              let dashRuta: string | undefined = "5, 10";
 
-              const color = plan.slackMinutes <= 0 ? "#FF0000" : "#3b82f6";
+              if (filtroHubActivo) {
+                if (segmento.origin === filtroHubActivo) {
+                  colorRuta = "#FFA500";
+                  opacidadRuta = 1.0;
+                  dashRuta = undefined;
+                } else {
+                  colorRuta = "#6b7280";
+                  opacidadRuta = 0.2;
+                }
+              }
 
               return (
                 <Polyline
                   key={`${plan.orderId}-route-${rutaIndex}-${segIndex}`}
                   positions={[origenCoords, destinoCoords]}
-                  color={color}
-                  weight={2}
-                  opacity={0.7}
-                  dashArray="5, 10"
+                  color={colorRuta}
+                  weight={filtroHubActivo && segmento.origin === filtroHubActivo ? 3 : 2}
+                  opacity={opacidadRuta}
+                  dashArray={dashRuta}
                 />
               );
             })
@@ -140,21 +158,25 @@ export function MapaVuelos({ orderPlans, aeropuertos, isLoading, vuelosEnMovimie
         const destinoCoords = coordsAeropuertos.get(vuelo.destino);
 
         if (!origenCoords || !destinoCoords) {
-          console.error(`VUELO ${vuelo.id} IGNORADO: No se encontraron coordenadas para ${vuelo.origen} → ${vuelo.destino}`);
           return null;
         }
 
         if (isNaN(vuelo.latActual) || isNaN(vuelo.lonActual)) {
-          console.error(`VUELO ${vuelo.id} IGNORADO: Coordenadas calculadas son NaN`);
           return null;
         }
 
-        console.log(`VUELO ${vuelo.id} RENDERIZADO en posición [${vuelo.latActual}, ${vuelo.lonActual}]`);
+        // Atenúa los aviones que NO salieron del hub seleccionado
+        let opacidadAvion = 1.0;
+        if (filtroHubActivo && vuelo.origen !== filtroHubActivo) {
+          opacidadAvion = 0.2;
+        }
+
         return (
           <Marker
             key={vuelo.id}
             position={[vuelo.latActual, vuelo.lonActual]}
             icon={getIconForStatus(vuelo.estadoVisual)}
+            opacity={opacidadAvion}
           >
             <Popup>
               <div className="text-sm">
