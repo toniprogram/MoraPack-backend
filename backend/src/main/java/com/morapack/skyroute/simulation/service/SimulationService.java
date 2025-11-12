@@ -1,5 +1,6 @@
 package com.morapack.skyroute.simulation.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.morapack.skyroute.algorithm.GeneticAlgorithm;
 import com.morapack.skyroute.algorithm.Individual;
 import com.morapack.skyroute.config.Config;
@@ -17,14 +18,21 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -36,18 +44,23 @@ import java.util.stream.Collectors;
 public class SimulationService {
 
     private static final String TOPIC_PREFIX = "/topic/simulations/";
+    private final Random random = new Random();
     private final WorldBuilder worldBuilder;
     private final OrderRepository orderRepository;
     private final SimpMessagingTemplate messagingTemplate;
+    private final ObjectMapper objectMapper;
+    private final Path snapshotsDir = Paths.get("snapshots");
     private final ExecutorService executorService = Executors.newCachedThreadPool();
     private final Map<UUID, SimulationSession> sessions = new ConcurrentHashMap<>();
 
     public SimulationService(WorldBuilder worldBuilder,
                              OrderRepository orderRepository,
-                             SimpMessagingTemplate messagingTemplate) {
+                             SimpMessagingTemplate messagingTemplate,
+                             ObjectMapper objectMapper) {
         this.worldBuilder = worldBuilder;
         this.orderRepository = orderRepository;
         this.messagingTemplate = messagingTemplate;
+        this.objectMapper = objectMapper;
     }
 
     public SimulationStartResponse startSimulation(SimulationStartRequest request) {
@@ -75,7 +88,19 @@ public class SimulationService {
         SimulationSession session = new SimulationSession(simulationId, projectedOrders.size());
         sessions.put(simulationId, session);
 
-        executorService.submit(() -> runSimulation(session, projectedOrders));
+        long worldBuildStart = System.nanoTime();
+        World simulationWorld = worldBuilder.buildBaseWorld();
+        log.info("[SIM] Base world built in {} ms", nanosToMillis(System.nanoTime() - worldBuildStart));
+        try {
+            Files.createDirectories(snapshotsDir);
+            Path sessionFile = snapshotsDir.resolve(simulationId + ".jsonl");
+            Files.deleteIfExists(sessionFile);
+            session.snapshotFile = sessionFile;
+        } catch (IOException ex) {
+            log.warn("[SIM:{}] Unable to prepare snapshot file: {}", simulationId, ex.getMessage());
+        }
+
+        executorService.submit(() -> runSimulation(session, projectedOrders, simulationWorld));
 
         return new SimulationStartResponse(simulationId.toString());
     }
@@ -96,8 +121,9 @@ public class SimulationService {
         session.cancel();
     }
 
-    private void runSimulation(SimulationSession session, List<Order> orders) {
+    private void runSimulation(SimulationSession session, List<Order> orders, World world) {
         List<Order> demand = new ArrayList<>();
+        Individual previousBest = null;
         try {
             log.info("[SIM:{}] Starting simulation with {} orders", session.id, orders.size());
             for (int index = 0; index < orders.size(); index++) {
@@ -111,31 +137,44 @@ public class SimulationService {
                 log.debug("[SIM:{}] Processing order {} of {}: {}", session.id, index + 1, orders.size(), order.getId());
                 demand.add(order);
 
-                long worldStart = System.nanoTime();
-                World world = worldBuilder.buildBaseWorld();
-                long worldDuration = System.nanoTime() - worldStart;
-                GeneticAlgorithm ga = new GeneticAlgorithm(world, List.copyOf(demand));
-                
-                log.info("[SIM:{}] === Order {} of {} ===", session.id, index + 1, orders.size());
-                long start = System.nanoTime();
-                Individual best = ga.run(Config.POP_SIZE, Config.MAX_GEN);
-                long duration = System.nanoTime() - start;
-                log.info("[SIM:{}] GA done for {} (took {} ms)", session.id, order.getId(), duration / 1_000_000);
+                world.advanceTo(order.getCreationUtc());
+                Individual best = null;
+                if (previousBest != null) {
+                    best = previousBest.tryInsertOrder(world, order, random);
+                    if (best != null) {
+                        best.applyToWorld(world);
+                        log.debug("[SIM:{}] Order {} patched via heuristic", session.id, order.getId());
+                    }
+                }
 
-                log.info("[SIM:{}] Metrics: worldBuild={} ms, gaRun={} ms, iterationTotal={} ms",
+                long gaDuration = 0;
+                if (best == null) {
+                    GeneticAlgorithm ga = new GeneticAlgorithm(world, List.copyOf(demand));
+                    long start = System.nanoTime();
+                    best = ga.run(Config.POP_SIZE, Config.MAX_GEN, previousBest);
+                    gaDuration = System.nanoTime() - start;
+                }
+
+                if (gaDuration > 0) {
+                    log.info("[SIM:{}] GA done for {} (took {} ms)", session.id, order.getId(), gaDuration / 1_000_000);
+                }
+
+                log.info("[SIM:{}] Metrics: gaRun={} ms, iterationTotal={} ms",
                         session.id,
-                        nanosToMillis(worldDuration),
-                        nanosToMillis(duration),
+                        nanosToMillis(gaDuration),
                         nanosToMillis(System.nanoTime() - iterationStart));
 
-                log.debug("[SIM:{}] GA completed for order {} (fitness={}, time={} ms)",
+                previousBest = best;
+
+                log.debug("[SIM:{}] Plan ready for order {} (fitness={}, gaTime={} ms)",
                         session.id,
                         order.getId(),
                         best.getFitness(),
-                        duration / 1_000_000);
+                        gaDuration / 1_000_000);
 
                 SimulationSnapshot snapshot = toSnapshot(session.id, demand.size(), orders.size(), best);
                 session.update(snapshot);
+                persistSnapshot(session, snapshot);
                 log.trace("[SIM:{}] Snapshot created: processed={}/{}", session.id, demand.size(), orders.size());
                 messagingTemplate.convertAndSend(topic(session.id), SimulationMessage.progress(session.id.toString(), snapshot));
             }
@@ -143,6 +182,7 @@ public class SimulationService {
             session.complete();
             SimulationSnapshot finalSnapshot = session.lastSnapshot;
             log.info("[SIM:{}] Simulation completed. Processed {}/{} orders", session.id, session.processed.get(), session.totalOrders);
+            persistSnapshot(session, finalSnapshot);
             messagingTemplate.convertAndSend(
                     topic(session.id),
                     SimulationMessage.completed(session.id.toString(), finalSnapshot)
@@ -243,6 +283,21 @@ public class SimulationService {
         return nanos / 1_000_000;
     }
 
+    private void persistSnapshot(SimulationSession session, SimulationSnapshot snapshot) {
+        if (snapshot == null || session.snapshotFile == null) {
+            return;
+        }
+        try {
+            String line = objectMapper.writeValueAsString(snapshot) + System.lineSeparator();
+            Files.write(session.snapshotFile,
+                    line.getBytes(StandardCharsets.UTF_8),
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.APPEND);
+        } catch (IOException ex) {
+            log.warn("[SIM:{}] Unable to persist snapshot: {}", session.id, ex.getMessage());
+        }
+    }
+
     private String topic(UUID simulationId) {
         return TOPIC_PREFIX + simulationId;
     }
@@ -255,6 +310,7 @@ public class SimulationService {
         private final AtomicBoolean cancelled = new AtomicBoolean(false);
         private volatile SimulationSnapshot lastSnapshot;
         private volatile String error;
+        private volatile Path snapshotFile;
 
         private SimulationSession(UUID id, int totalOrders) {
             this.id = id;
