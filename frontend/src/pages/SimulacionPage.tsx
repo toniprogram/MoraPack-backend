@@ -368,7 +368,7 @@ export default function SimulacionPage() {
           {/* Filtros de Hub */}
           <div>
             <label className="block uppercase tracking-wide text-[10px] text-gray-400 mb-2">
-              Filtrar por Hub de Origen
+              Hub de Origen
             </label>
             <div className="grid grid-cols-2 gap-2">
               <button
