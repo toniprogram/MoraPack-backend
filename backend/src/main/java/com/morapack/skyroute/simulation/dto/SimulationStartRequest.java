@@ -1,7 +1,8 @@
 package com.morapack.skyroute.simulation.dto;
 
-import com.morapack.skyroute.orders.dto.OrderRequest;
+import java.time.LocalDateTime;
 
-import java.util.List;
-
-public record SimulationStartRequest(List<OrderRequest> orders) {}
+public record SimulationStartRequest(
+        LocalDateTime startDate,
+        LocalDateTime endDate
+) {}

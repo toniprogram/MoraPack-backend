@@ -46,7 +46,8 @@ public class OrderLoader implements AutoCloseable {
                 destination,
                 entity.getQuantity(),
                 entity.getCreationUtc(),
-                entity.getDueUtc()
+                entity.getDueUtc(),
+                entity.getScope()
             );
             orders.register(order);
         }

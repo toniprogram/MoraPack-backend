@@ -1,58 +1,37 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { pedidosService } from "../services/pedidosService";
-import type { Pedido } from "../types/pedido";
+import { orderService } from "../services/orderService";
+import type { OrderRequest } from "../types/orderRequest";
 
-//Claves de cache
+export type PedidoScope = "REAL" | "PROJECTED";
+
 const keys = {
-  all: ["pedidos"] as const,
-  one: (id: string) => ["pedidos", id] as const,
+  list: (scope: PedidoScope, page: number, size: number) =>
+    ["pedidos", scope, page, size] as const,
 };
 
-//Hook principal
-export function usePedidos() {
+export function usePedidos(scope: PedidoScope, page: number, size: number) {
   const queryClient = useQueryClient();
+  const queryKey = keys.list(scope, page, size);
 
-  // Obtener todos los pedidos
   const list = useQuery({
-    queryKey: keys.all,
-    queryFn: pedidosService.getAll,
+    queryKey,
+    queryFn: () => orderService.getPage(scope, page, size),
+    keepPreviousData: true,
   });
 
-  //Crear pedido
   const create = useMutation({
-    mutationFn: pedidosService.create,
+    mutationFn: (request: OrderRequest) => orderService.create(request),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: keys.all });
+      queryClient.invalidateQueries({ queryKey });
     },
   });
 
-  //Actualizar pedido
-  const update = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: Partial<Pedido> }) =>
-      pedidosService.update(id, data),
-    onSuccess: (_, variables) => {
-      // Refresca tanto la lista como el detalle editado
-      queryClient.invalidateQueries({ queryKey: keys.all });
-      queryClient.invalidateQueries({ queryKey: keys.one(variables.id) });
-    },
-  });
-
-  //Eliminar pedido
   const remove = useMutation({
-    mutationFn: pedidosService.delete,
+    mutationFn: orderService.delete,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: keys.all });
+      queryClient.invalidateQueries({ queryKey });
     },
   });
 
-  return { list, create, update, remove };
-}
-
-// Obtener un pedido específico
-export function usePedido(id: string) {
-  return useQuery({
-    queryKey: keys.one(id),
-    queryFn: () => pedidosService.getOne(id),
-    enabled: !!id,
-  });
+  return { list, create, remove };
 }

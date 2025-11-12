@@ -1,8 +1,9 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { useSimulacion } from '../hooks/useSimulacion';
 import { MapaVuelos } from '../components/mapas/MapaVuelos';
-import { Check, AlertTriangle, Play, Pause, XCircle, Upload, Package, Plane, Loader2 } from 'lucide-react';
+import { Check, AlertTriangle, Play, Pause, XCircle, Upload, Package, Plane, Database } from 'lucide-react';
 import type { OrderRequest } from '../types/orderRequest';
+import { orderService } from '../services/orderService';
 
 // Interfaz extendida para mantener fechas originales del archivo TXT
 interface OrderRequestExtended extends OrderRequest {
@@ -23,7 +24,7 @@ export default function SimulacionPage() {
       pausar,
       terminar,
       snapshotFinal,
-      // snapshotProgreso,
+      snapshotProgreso,
       vuelosEnMovimiento,
       tiempoSimulado
   } = useSimulacion();
@@ -31,6 +32,29 @@ export default function SimulacionPage() {
   const [ordenesParaSimular, setOrdenesParaSimular] = useState<OrderRequestExtended[]>([]);
   const [vistaPanel, setVistaPanel] = useState<'envios' | 'vuelos' | 'aeropuertos'>('envios');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
+  const [estaSincronizando, setEstaSincronizando] = useState(false);
+  const [proyeccionGuardada, setProyeccionGuardada] = useState(false);
+
+  const formatoInputDesdeIso = (iso: string) => iso.slice(0, 16);
+  const ensureSeconds = (value?: string) => {
+    if (!value) return undefined;
+    return value.length === 16 ? `${value}:00` : value;
+  };
+
+  const actualizarRangoSimulacion = (ordenes: OrderRequestExtended[]) => {
+    if (!ordenes.length) {
+      setStartDate('');
+      setEndDate('');
+      return;
+    }
+    const sorted = [...ordenes].sort((a, b) =>
+      new Date(`${a.creationLocal}Z`).getTime() - new Date(`${b.creationLocal}Z`).getTime()
+    );
+    setStartDate(formatoInputDesdeIso(sorted[0].creationLocal));
+    setEndDate(formatoInputDesdeIso(sorted[sorted.length - 1].creationLocal));
+  };
 
   const fechasOriginalesPorOrden = useMemo(() => {
     const mapa = new Map<string, { fecha: Date; fechaStr: string }>();
@@ -43,8 +67,7 @@ export default function SimulacionPage() {
     return mapa;
   }, [ordenesParaSimular]);
 
-  const panelSnapshot = snapshotFinal;
-
+  const panelSnapshot = snapshotFinal || snapshotProgreso;
   // Agrupa pedidos por vuelo, mostrando horas UTC
   const vuelosPorFlightId = useMemo(() => {
     if (!panelSnapshot) return new Map();
@@ -115,7 +138,9 @@ export default function SimulacionPage() {
     try {
       const ordenesParseadas: OrderRequestExtended[] = lines.map(line => {
         const parts = line.split('-');
+
         if (parts.length < 7) throw new Error(`Línea inválida: "${line}"`);
+
         const id = parts[0].trim();
         const datePart = parts[1].trim();
         const hourPart = parts[2].trim();
@@ -123,14 +148,18 @@ export default function SimulacionPage() {
         const dest = parts[4].trim();
         const qty = parts[5].trim();
         const ref = parts[6].trim();
+
         const year = datePart.substring(0, 4);
         const month = datePart.substring(4, 6);
         const day = datePart.substring(6, 8);
+
         const isoDate = `${year}-${month}-${day}`;
         const isoTime = `${hourPart.padStart(2, '0')}:${minutePart.padStart(2, '0')}:00`;
         const creationLocal = `${isoDate}T${isoTime}`;
+
         const quantity = parseInt(qty, 10);
         if (isNaN(quantity)) throw new Error(`Cantidad inválida: "${qty}"`);
+
         return {
           id: id,
           customerReference: ref,
@@ -141,7 +170,10 @@ export default function SimulacionPage() {
         };
       });
       setOrdenesParaSimular(ordenesParseadas);
+      actualizarRangoSimulacion(ordenesParseadas);
+      setProyeccionGuardada(false);
       alert(`Se cargaron ${ordenesParseadas.length} órdenes correctamente`);
+
     } catch (e: any) {
       console.error('❌ Error al parsear archivo:', e);
       alert(`❌ Error: ${e.message}`);
@@ -152,12 +184,30 @@ export default function SimulacionPage() {
   };
 
   const handleIniciarSimulacion = () => {
+    const payload = {
+      startDate: ensureSeconds(startDate),
+      endDate: ensureSeconds(endDate),
+    };
+    iniciar(payload);
+  };
+
+  const handleGuardarProyeccion = async () => {
     if (ordenesParaSimular.length === 0) {
-      alert('No hay órdenes cargadas');
+      alert('Carga un archivo con órdenes proyectadas antes de sincronizar.');
       return;
     }
-    console.log('Iniciando simulación con', ordenesParaSimular.length, 'órdenes');
-    iniciar(ordenesParaSimular);
+    setEstaSincronizando(true);
+    setProyeccionGuardada(false);
+    try {
+      await orderService.createProjectedBatch(ordenesParaSimular);
+      setProyeccionGuardada(true);
+      alert(`Se guardaron ${ordenesParaSimular.length} órdenes proyectadas en el backend`);
+    } catch (error) {
+      console.error('Error guardando pedidos proyectados:', error);
+      alert('❌ No se pudieron guardar todos los pedidos proyectados. Revisa la consola para más detalles.');
+    } finally {
+      setEstaSincronizando(false);
+    }
   };
 
   if (isLoading) {
@@ -166,9 +216,6 @@ export default function SimulacionPage() {
   if (isError) {
     return <div className="p-6 text-center text-red-500">Error al cargar datos.</div>;
   }
-
-  const isSimulating = estaActivo || estaVisualizando || isStarting;
-
   return (
     <div className="flex h-screen w-full bg-gray-100">
 
@@ -183,7 +230,7 @@ export default function SimulacionPage() {
             <button
               className="btn btn-sm btn-success w-full"
               onClick={() => fileInputRef.current?.click()}
-              disabled={isSimulating}
+              disabled={estaActivo || estaVisualizando}
             >
               <Upload size={16} /> Cargar Órdenes
             </button>
@@ -191,7 +238,50 @@ export default function SimulacionPage() {
 
             {ordenesParaSimular.length > 0 && (
               <div className="text-xs text-green-300 text-center">
-                 {ordenesParaSimular.length} órdenes listas
+                 {ordenesParaSimular.length} órdenes listas para sincronizar
+              </div>
+            )}
+
+            <div className="space-y-2 text-xs text-gray-200">
+              <div>
+                <label className="block uppercase tracking-wide text-[10px] text-gray-400 mb-1">
+                  Inicio (UTC)
+                </label>
+                <input
+                  type="datetime-local"
+                  className="input input-sm w-full text-black"
+                  value={startDate}
+                  onChange={(event) => setStartDate(event.target.value)}
+                  disabled={estaActivo || estaVisualizando}
+                />
+              </div>
+              <div>
+                <label className="block uppercase tracking-wide text-[10px] text-gray-400 mb-1">
+                  Fin (UTC)
+                </label>
+                <input
+                  type="datetime-local"
+                  className="input input-sm w-full text-black"
+                  value={endDate}
+                  onChange={(event) => setEndDate(event.target.value)}
+                  disabled={estaActivo || estaVisualizando}
+                />
+                <p className="text-[10px] text-gray-400 mt-1">
+                  Vacío = usa todo el rango de pedidos proyectados guardados.
+                </p>
+              </div>
+            </div>
+
+            <button
+              className="btn btn-sm btn-outline w-full"
+              onClick={handleGuardarProyeccion}
+              disabled={estaSincronizando || estaActivo || estaVisualizando || ordenesParaSimular.length === 0}
+            >
+              <Database size={16} /> Guardar pedidos proyectados
+            </button>
+            {proyeccionGuardada && (
+              <div className="text-[11px] text-green-300 text-center">
+                Proyección sincronizada en base de datos.
               </div>
             )}
 
@@ -199,28 +289,20 @@ export default function SimulacionPage() {
               <button
                 className="btn btn-sm btn-primary flex-1"
                 onClick={handleIniciarSimulacion}
-                disabled={isSimulating || ordenesParaSimular.length === 0}
+                disabled={estaActivo || estaVisualizando || estaSincronizando || isStarting}
               >
-                {isStarting ? 'Iniciando...' : (
-                  estaActivo ? 'Planificando...' : (
-                    estaVisualizando ? 'Animando...' : <><Play size={16} /> Iniciar</>
-                  )
-                )}
+                <Play size={16} /> {isStarting ? 'Preparando...' : 'Iniciar'}
               </button>
               <button
                 className="btn btn-sm btn-warning flex-1"
                 onClick={pausar}
-                disabled={!estaVisualizando}
+                disabled={!estaActivo && !estaVisualizando}
               >
                 <Pause size={16} /> Pausar
               </button>
             </div>
 
-            <button
-              className="btn btn-sm btn-error w-full"
-              onClick={terminar}
-              disabled={!isSimulating}
-            >
+            <button className="btn btn-sm btn-error w-full" onClick={terminar}>
               <XCircle size={16} /> Terminar
             </button>
           </div>
@@ -265,125 +347,217 @@ export default function SimulacionPage() {
         {/* Contenido del Panel */}
         <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-gray-900">
 
-          {estaActivo ? (
-            <div className="text-center text-gray-400 py-8 px-4 space-y-3">
-              <Loader2 className="animate-spin h-8 w-8 mx-auto text-blue-400" />
-              <p className="font-semibold">Procesando órdenes...</p>
-              <p className="text-sm">Esto puede tardar varios minutos.</p>
-              <div className="text-lg font-mono text-white">{reloj}</div>
-            </div>
-          ) : !panelSnapshot || panelSnapshot.orderPlans.length === 0 ? (
-            <div className="text-center text-gray-400 py-8">
-              {ordenesParaSimular.length > 0
-                ? 'Presiona "Iniciar" para comenzar la simulación'
-                : 'Carga un archivo para comenzar'}
-            </div>
-          ) : (
+          {/* ===== VISTA: ENVÍOS ===== */}
+          {vistaPanel === 'envios' && (
+            <>
+              {!panelSnapshot || panelSnapshot.orderPlans.length === 0 ? (
+                <div className="text-center text-gray-400 py-8">
+                  {ordenesParaSimular.length > 0
+                    ? 'Sincroniza y presiona "Iniciar" para comenzar la simulación'
+                    : 'Carga pedidos proyectados o usa los ya guardados para iniciar.'}
+                </div>
+              ) : (
+                panelSnapshot.orderPlans.map((plan) => {
+                  const primerSegmento = plan.routes[0]?.segments[0];
+                  const ultimoSegmento = plan.routes[plan.routes.length - 1]?.segments[
+                    plan.routes[plan.routes.length - 1].segments.length - 1
+                  ];
 
-            /* ===== VISTA: ENVÍOS ===== */
-            vistaPanel === 'envios' && (
-              panelSnapshot.orderPlans.map((plan) => {
-                const primerSegmento = plan.routes[0]?.segments[0];
-                const ultimoSegmento = plan.routes[plan.routes.length - 1]?.segments[
-                  plan.routes[plan.routes.length - 1].segments.length - 1
-                ];
-                const esRetrasado = plan.slackMinutes <= 0;
-                const estado = esRetrasado ? 'error' : 'success';
-                const estadoTexto = esRetrasado ? 'Retrasado' : 'A tiempo';
-                const fechaOriginalData = fechasOriginalesPorOrden.get(plan.orderId);
-                let fechaRegistro = 'N/A';
-                let horaRegistro = 'N/A';
-                if (fechaOriginalData) {
-                  fechaRegistro = fechaOriginalData.fecha.toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' });
-                  horaRegistro = fechaOriginalData.fecha.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
-                }
-                return (
-                  <div key={plan.orderId} className={`card bg-gray-800 border-l-4 ${estado === 'success' ? 'border-green-500' : 'border-red-500'} shadow-sm hover:shadow-md transition-shadow`}>
-                    <div className="card-body p-3 text-white">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <h3 className="font-bold text-sm text-blue-400">Pedido {plan.orderId}</h3>
-                          <p className="text-xs text-gray-400">Cantidad: {primerSegmento?.quantity || 'N/A'}</p>
-                        </div>
-                        <span className={`badge badge-sm ${estado === 'success' ? 'badge-success' : 'badge-error'}`}>{estadoTexto}</span>
-                      </div>
-                      <div className="mt-2 pt-2 border-t border-gray-700">
-                        <p className="text-[10px] text-gray-500 mb-1">Fecha de Registro:</p>
-                        <div className="flex gap-3 text-xs">
-                          <div><span className="text-gray-400">📅</span> {fechaRegistro}</div>
-                          <div><span className="text-gray-400">🕒</span> {horaRegistro}</div>
-                        </div>
-                      </div>
-                      <div className="text-xs mt-2 space-y-1">
-                        <div className="flex justify-between"><span className="text-gray-400">Origen:</span><span className="font-semibold text-white">{primerSegmento?.origin || 'N/A'}</span></div>
-                        <div className="flex justify-between"><span className="text-gray-400">Destino:</span><span className="font-semibold text-white">{ultimoSegmento?.destination || 'N/A'}</span></div>
-                        <div className="flex justify-between"><span className="text-gray-400">Holgura:</span><span className={`font-semibold ${estado === 'success' ? 'text-green-400' : 'text-red-400'}`}>{plan.slackMinutes} min</span></div>
-                      </div>
-                      <div className="mt-2 pt-2 border-t border-gray-700">
-                        <p className="text-xs font-semibold text-gray-300 mb-1">Ruta ({plan.routes.reduce((acc, r) => acc + r.segments.length, 0)} tramos):</p>
-                        {plan.routes.map((ruta, rutaIdx) => (
-                          <div key={rutaIdx}>
-                            {ruta.segments.map((seg, segIdx) => (
-                              <div key={segIdx} className="text-xs text-gray-400 ml-2 mb-1">
-                                • {seg.origin} → {seg.destination}
-                                {seg.departureUtc && seg.arrivalUtc && (
-                                  <span className="text-[10px] text-gray-500 ml-2">
-                                    ({new Date(seg.departureUtc).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })} - {new Date(seg.arrivalUtc).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })})
-                                  </span>
-                                )}
-                              </div>
-                            ))}
+                  const esRetrasado = plan.slackMinutes <= 0;
+                  const estado = esRetrasado ? 'error' : 'success';
+                  const estadoTexto = esRetrasado ? 'Retrasado' : 'A tiempo';
+
+                  const fechaOriginalData = fechasOriginalesPorOrden.get(plan.orderId);
+
+                  let fechaRegistro = 'N/A';
+                  let horaRegistro = 'N/A';
+
+                  if (fechaOriginalData) {
+                    fechaRegistro = fechaOriginalData.fecha.toLocaleDateString('es-PE', {
+                      day: '2-digit',
+                      month: 'short',
+                      year: 'numeric'
+                    });
+                    horaRegistro = fechaOriginalData.fecha.toLocaleTimeString('es-PE', {
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    });
+                  }
+
+                  return (
+                    <div
+                      key={plan.orderId}
+                      className={`card bg-gray-800 border-l-4 ${
+                        estado === 'success' ? 'border-green-500' : 'border-red-500'
+                      } shadow-sm hover:shadow-md transition-shadow`}
+                    >
+                      <div className="card-body p-3 text-white">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <h3 className="font-bold text-sm text-blue-400">
+                              Pedido {plan.orderId}
+                            </h3>
+                            <p className="text-xs text-gray-400">
+                              Cantidad: {primerSegmento?.quantity || 'N/A'}
+                            </p>
                           </div>
-                        ))}
+                          <span className={`badge badge-sm ${
+                            estado === 'success' ? 'badge-success' : 'badge-error'
+                          }`}>
+                            {estadoTexto}
+                          </span>
+                        </div>
+
+                        {/* Fecha y hora de REGISTRO */}
+                        <div className="mt-2 pt-2 border-t border-gray-700">
+                          <p className="text-[10px] text-gray-500 mb-1">Fecha de Registro:</p>
+                          <div className="flex gap-3 text-xs">
+                            <div>
+                              <span className="text-gray-400">📅</span> {fechaRegistro}
+                            </div>
+                            <div>
+                              <span className="text-gray-400">🕒</span> {horaRegistro}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="text-xs mt-2 space-y-1">
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Origen:</span>
+                            <span className="font-semibold text-white">{primerSegmento?.origin || 'N/A'}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Destino:</span>
+                            <span className="font-semibold text-white">
+                              {ultimoSegmento?.destination || 'N/A'}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Holgura:</span>
+                            <span className={`font-semibold ${
+                              estado === 'success' ? 'text-green-400' : 'text-red-400'
+                            }`}>
+                              {plan.slackMinutes} min
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Ruta detallada */}
+                        <div className="mt-2 pt-2 border-t border-gray-700">
+                          <p className="text-xs font-semibold text-gray-300 mb-1">
+                            Ruta ({plan.routes.reduce((acc, r) => acc + r.segments.length, 0)} tramos):
+                          </p>
+                          {plan.routes.map((ruta, rutaIdx) => (
+                            <div key={rutaIdx}>
+                              {ruta.segments.map((seg, segIdx) => (
+                                <div key={segIdx} className="text-xs text-gray-400 ml-2 mb-1">
+                                  • {seg.origin} → {seg.destination}
+                                  {seg.departureUtc && seg.arrivalUtc && (
+                                    <span className="text-[10px] text-gray-500 ml-2">
+                                      ({new Date(seg.departureUtc).toLocaleTimeString('es-PE', {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        timeZone: 'UTC'
+                                      })} - {new Date(seg.arrivalUtc).toLocaleTimeString('es-PE', {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        timeZone: 'UTC'
+                                      })})
+                                    </span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })
-            )
+                  );
+                })
+              )}
+            </>
           )}
 
           {/* ===== VISTA: VUELOS ===== */}
           {vistaPanel === 'vuelos' && (
-            Array.from(vuelosPorFlightId.values())
-              .sort((a, b) => (new Date(a.departureUtc).getTime() - new Date(b.departureUtc).getTime()))
-              .map(vuelo => {
-                const vueloEnCurso = vuelosEnMovimiento.find(v => v.id === vuelo.departureUtc);
-                return (
-                  <div key={vuelo.departureUtc} className="card bg-gray-800 shadow-sm hover:shadow-md transition-shadow">
-                    <div className="card-body p-3 text-white">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2"><Plane size={16} className="text-blue-400" /><span className="font-bold text-sm text-blue-300">{vuelo.origen} → {vuelo.destino}</span></div>
-                        {vueloEnCurso && (
-                          vueloEnCurso.progreso >= 100 ? (
-                            <span className="badge badge-xs badge-success">Completado</span>
-                          ) : (
-                            <span className="badge badge-xs badge-info">En vuelo</span>
-                          )
-                        )}
+            <>
+              {vuelosPorFlightId.size === 0 && (
+                <div className="text-center text-gray-400 py-8">
+                  No hay vuelos activos
+                </div>
+              )}
 
-                      </div>
-                      <div className="text-xs text-gray-300 font-semibold mb-1">📅 {vuelo.fecha}</div>
-                      <div className="flex justify-between text-xs text-gray-400 mb-2">
-                        <div><span className="text-gray-500">Salida:</span> {vuelo.hora}</div>
-                        <div><span className="text-gray-500">Llegada:</span> {vuelo.horaLlegada}</div>
-                      </div>
-                      <div className="mt-2 pt-2 border-t border-gray-700">
-                        <p className="text-xs text-gray-400 font-semibold mb-1">Pedidos ({vuelo.pedidos.length}):</p>
-                        <div className="flex flex-wrap gap-1">
-                          {vuelo.pedidos.map(pedido => (<span key={pedido} className="badge badge-xs bg-gray-700 text-gray-300 border-gray-600">{pedido}</span>))}
+              {Array.from(vuelosPorFlightId.values())
+                .sort((a, b) => {
+                  const dateA = a.departureUtc ? new Date(a.departureUtc).getTime() : 0;
+                  const dateB = b.departureUtc ? new Date(b.departureUtc).getTime() : 0;
+                  return dateA - dateB;
+                })
+                .map(vuelo => {
+                  // Buscamos el vuelo en movimiento usando su ID único
+                  const vueloEnCurso = vuelosEnMovimiento.find(v => v.id === vuelo.departureUtc);
+
+                  return (
+                    // El key debe ser único (departureUtc)
+                    <div key={vuelo.departureUtc} className="card bg-gray-800 shadow-sm hover:shadow-md transition-shadow">
+                      <div className="card-body p-3 text-white">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <Plane size={16} className="text-blue-400" />
+                            <span className="font-bold text-sm text-blue-300">
+                              {vuelo.origen} → {vuelo.destino}
+                            </span>
+                          </div>
+                          {vueloEnCurso && (
+                            <span className="badge badge-xs badge-success">En vuelo</span>
+                          )}
                         </div>
-                      </div>
-                      {vueloEnCurso && (
-                        <div className="mt-3">
-                          <div className="w-full bg-gray-700 rounded-full h-2"><div className="bg-green-500 h-2 rounded-full transition-all" style={{ width: `${Math.min(vueloEnCurso.progreso, 100)}%` }} /></div>
-                          <p className="text-xs text-gray-400 mt-1 text-center">{Math.round(vueloEnCurso.progreso)}% {vueloEnCurso.progreso >= 100 && ' - Completado'}</p>
+
+                        <div className="text-xs text-gray-300 font-semibold mb-1">
+                          📅 {vuelo.fecha}
                         </div>
-                      )}
+
+                        <div className="flex justify-between text-xs text-gray-400 mb-2">
+                          <div>
+                            <span className="text-gray-500">Salida:</span> {vuelo.hora}
+                          </div>
+                          <div>
+                            <span className="text-gray-500">Llegada:</span> {vuelo.horaLlegada}
+                          </div>
+                        </div>
+
+                        <div className="mt-2 pt-2 border-t border-gray-700">
+                          <p className="text-xs text-gray-400 font-semibold mb-1">
+                            Pedidos ({vuelo.pedidos.length}):
+                          </p>
+                          <div className="flex flex-wrap gap-1">
+                            {vuelo.pedidos.map(pedido => (
+                              <span key={pedido} className="badge badge-xs bg-gray-700 text-gray-300 border-gray-600">
+                                {pedido}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+
+                        {vueloEnCurso && (
+                          <div className="mt-3">
+                            <div className="w-full bg-gray-700 rounded-full h-2">
+                              <div
+                                className="bg-green-500 h-2 rounded-full transition-all"
+                                style={{ width: `${Math.min(vueloEnCurso.progreso, 100)}%` }}
+                              />
+                            </div>
+                            <p className="text-xs text-gray-400 mt-1 text-center">
+                              {Math.round(vueloEnCurso.progreso)}%
+                              {vueloEnCurso.progreso >= 100 && ' - Completado'}
+                            </p>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                );
-              })
+                  );
+                })}
+            </>
           )}
 
           {/* ===== VISTA: AEROPUERTOS ===== */}
