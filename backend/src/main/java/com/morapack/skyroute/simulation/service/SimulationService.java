@@ -2,15 +2,14 @@ package com.morapack.skyroute.simulation.service;
 
 import com.morapack.skyroute.algorithm.GeneticAlgorithm;
 import com.morapack.skyroute.algorithm.Individual;
-import com.morapack.skyroute.base.repository.AirportRepository;
 import com.morapack.skyroute.config.Config;
 import com.morapack.skyroute.config.World;
-import com.morapack.skyroute.models.Airport;
 import com.morapack.skyroute.models.Order;
+import com.morapack.skyroute.models.OrderScope;
 import com.morapack.skyroute.models.Route;
 import com.morapack.skyroute.models.RouteSegment;
-import com.morapack.skyroute.orders.dto.OrderRequest;
 import com.morapack.skyroute.plan.service.WorldBuilder;
+import com.morapack.skyroute.orders.repository.OrderRepository;
 import com.morapack.skyroute.simulation.dto.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -23,9 +22,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -40,33 +37,39 @@ public class SimulationService {
 
     private static final String TOPIC_PREFIX = "/topic/simulations/";
     private final WorldBuilder worldBuilder;
-    private final AirportRepository airportRepository;
+    private final OrderRepository orderRepository;
     private final SimpMessagingTemplate messagingTemplate;
     private final ExecutorService executorService = Executors.newCachedThreadPool();
     private final Map<UUID, SimulationSession> sessions = new ConcurrentHashMap<>();
 
     public SimulationService(WorldBuilder worldBuilder,
-                             AirportRepository airportRepository,
+                             OrderRepository orderRepository,
                              SimpMessagingTemplate messagingTemplate) {
         this.worldBuilder = worldBuilder;
-        this.airportRepository = airportRepository;
+        this.orderRepository = orderRepository;
         this.messagingTemplate = messagingTemplate;
     }
 
     public SimulationStartResponse startSimulation(SimulationStartRequest request) {
-        if (request == null || request.orders() == null || request.orders().isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "orders list is required");
+        TimeRange range = resolveRange(request);
+        List<Order> projectedOrders = orderRepository
+                .findAllByScopeAndCreationUtcBetweenOrderByCreationUtcAsc(
+                        OrderScope.PROJECTED,
+                        range.start(),
+                        range.end()
+                );
+        if (projectedOrders.isEmpty()) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "No projected orders found for the selected range"
+            );
         }
 
-        List<OrderRequest> sortedOrders = request.orders().stream()
-                .sorted(Comparator.comparing(OrderRequest::creationLocal))
-                .toList();
-
         UUID simulationId = UUID.randomUUID();
-        SimulationSession session = new SimulationSession(simulationId, sortedOrders.size());
+        SimulationSession session = new SimulationSession(simulationId, projectedOrders.size());
         sessions.put(simulationId, session);
 
-        executorService.submit(() -> runSimulation(session, sortedOrders));
+        executorService.submit(() -> runSimulation(session, projectedOrders));
 
         return new SimulationStartResponse(simulationId.toString());
     }
@@ -87,7 +90,7 @@ public class SimulationService {
         session.cancel();
     }
 
-    private void runSimulation(SimulationSession session, List<OrderRequest> orders) {
+    private void runSimulation(SimulationSession session, List<Order> orders) {
         List<Order> demand = new ArrayList<>();
         try {
             log.info("[SIM:{}] Starting simulation with {} orders", session.id, orders.size());
@@ -97,9 +100,8 @@ public class SimulationService {
                     break;
                 }
 
-                OrderRequest request = orders.get(index);
-                log.debug("[SIM:{}] Processing order {} of {}: {}", session.id, index + 1, orders.size(), request.id());
-                Order order = toDomainOrder(request);
+                Order order = orders.get(index);
+                log.debug("[SIM:{}] Processing order {} of {}: {}", session.id, index + 1, orders.size(), order.getId());
                 demand.add(order);
 
                 World world = worldBuilder.buildBaseWorld();
@@ -109,11 +111,11 @@ public class SimulationService {
                 long start = System.nanoTime();
                 Individual best = ga.run(Config.POP_SIZE, Config.MAX_GEN);
                 long duration = System.nanoTime() - start;
-                log.info("[SIM:{}] GA done for {} (took {} ms)", session.id, request.id(), duration / 1_000_000);
+                log.info("[SIM:{}] GA done for {} (took {} ms)", session.id, order.getId(), duration / 1_000_000);
 
                 log.debug("[SIM:{}] GA completed for order {} (fitness={}, time={} ms)",
                         session.id,
-                        request.id(),
+                        order.getId(),
                         best.getFitness(),
                         duration / 1_000_000);
 
@@ -135,29 +137,6 @@ public class SimulationService {
             log.error("[SIM:{}] Simulation failed: {}", session.id, ex.getMessage(), ex);
             messagingTemplate.convertAndSend(topic(session.id), SimulationMessage.error(session.id.toString(), ex.getMessage()));
         }
-    }
-
-    private Order toDomainOrder(OrderRequest request) {
-        Airport destination = airportRepository.findById(request.destinationAirportCode())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "Destination airport not found: " + request.destinationAirportCode()));
-
-        Instant creationUtc = toUtc(request.creationLocal(), destination);
-        Instant dueUtc = creationUtc.plus(Config.INTERCONTINENTAL_SLA_HOURS, ChronoUnit.HOURS);
-
-        return new Order(
-                request.id(),
-                request.customerReference(),
-                destination,
-                request.quantity(),
-                creationUtc,
-                dueUtc
-        );
-    }
-
-    private Instant toUtc(LocalDateTime creationLocal, Airport destination) {
-        ZoneOffset offset = destination.getZoneOffset();
-        return creationLocal.atOffset(offset).toInstant();
     }
 
     private SimulationSnapshot toSnapshot(UUID simulationId,
@@ -215,6 +194,35 @@ public class SimulationService {
     private long optionalDurationMinutes(Duration duration) {
         return duration == null ? 0 : duration.toMinutes();
     }
+
+    private TimeRange resolveRange(SimulationStartRequest request) {
+        Order firstProjected = orderRepository.findFirstByScopeOrderByCreationUtcAsc(OrderScope.PROJECTED)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.BAD_REQUEST,
+                        "No projected orders available. Load projections before running the simulation."
+                ));
+        Order lastProjected = orderRepository.findFirstByScopeOrderByCreationUtcDesc(OrderScope.PROJECTED)
+                .orElse(firstProjected);
+
+        Instant start = request != null && request.startDate() != null
+                ? toUtc(request.startDate())
+                : firstProjected.getCreationUtc();
+        Instant end = request != null && request.endDate() != null
+                ? toUtc(request.endDate())
+                : lastProjected.getCreationUtc();
+
+        if (end.isBefore(start)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "endDate must be greater than startDate");
+        }
+
+        return new TimeRange(start, end);
+    }
+
+    private Instant toUtc(LocalDateTime value) {
+        return value.atOffset(ZoneOffset.UTC).toInstant();
+    }
+
+    private record TimeRange(Instant start, Instant end) {}
 
     private String topic(UUID simulationId) {
         return TOPIC_PREFIX + simulationId;

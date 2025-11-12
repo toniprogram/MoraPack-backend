@@ -7,4 +7,13 @@ export interface Order {
   quantity: number;
   creationUtc: string;
   dueUtc: string;
+  scope: 'REAL' | 'PROJECTED';
+}
+
+export interface OrderPage {
+  items: Order[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
 }
