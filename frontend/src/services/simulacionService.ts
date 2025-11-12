@@ -7,6 +7,11 @@ const startSimulation = async (request: SimulationStartRequest): Promise<Simulat
   return res.data;
 };
 
+const cancelSimulation = async (simulationId: string): Promise<void> => {
+  await API.delete(`/simulations/${simulationId}`);
+};
+
 export const simulacionService = {
   startSimulation,
+  cancelSimulation,
 };

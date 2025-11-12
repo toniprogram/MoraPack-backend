@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { useSimulacion } from '../hooks/useSimulacion';
 import { MapaVuelos } from '../components/mapas/MapaVuelos';
-import { Check, AlertTriangle, Play, Pause, XCircle, Upload, Package, Plane, Database } from 'lucide-react';
+import { Check, AlertTriangle, Play, Pause, XCircle, Upload, Package, Plane, Database, Search, X } from 'lucide-react';
 import type { OrderRequest } from '../types/orderRequest';
 import { orderService } from '../services/orderService';
 
@@ -37,6 +37,9 @@ export default function SimulacionPage() {
   const [estaSincronizando, setEstaSincronizando] = useState(false);
   const [proyeccionGuardada, setProyeccionGuardada] = useState(false);
 
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  const [filtroHub, setFiltroHub] = useState<string>('');
+
   const formatoInputDesdeIso = (iso: string) => iso.slice(0, 16);
   const ensureSeconds = (value?: string) => {
     if (!value) return undefined;
@@ -68,6 +71,7 @@ export default function SimulacionPage() {
   }, [ordenesParaSimular]);
 
   const panelSnapshot = snapshotFinal || snapshotProgreso;
+
   // Agrupa pedidos por vuelo, mostrando horas UTC
   const vuelosPorFlightId = useMemo(() => {
     if (!panelSnapshot) return new Map();
@@ -86,7 +90,10 @@ export default function SimulacionPage() {
     panelSnapshot.orderPlans.forEach(plan => {
       plan.routes.forEach(ruta => {
         ruta.segments.forEach(segmento => {
-          if (!segmento.departureUtc || !segmento.arrivalUtc) return;
+          if (!segmento.departureUtc || !segmento.arrivalUtc) {
+            return;
+          }
+
           const uniqueFlightId = segmento.departureUtc;
           const diaVuelo = new Date(segmento.departureUtc).toLocaleDateString('es-PE', {
                 day: '2-digit',
@@ -126,6 +133,44 @@ export default function SimulacionPage() {
     });
     return mapa;
   }, [panelSnapshot]);
+
+  // --- LÓGICA DE FILTRADO PARA LOS PANELES ---
+  const enviosFiltrados = useMemo(() => {
+    if (!panelSnapshot) return [];
+    const term = searchTerm.toLowerCase();
+
+    return panelSnapshot.orderPlans.filter(plan => {
+      // Filtro por término de búsqueda (ID de pedido)
+      const matchSearch = term === '' || plan.orderId.toLowerCase().includes(term);
+
+      // Filtro por Hub de origen
+      const matchHub = filtroHub === '' || plan.routes.some(ruta =>
+        ruta.segments.some(seg => seg.origin === filtroHub)
+      );
+
+      return matchSearch && matchHub;
+    });
+  }, [panelSnapshot, searchTerm, filtroHub]);
+
+  const vuelosFiltrados = useMemo(() => {
+    const term = searchTerm.toLowerCase();
+
+    return Array.from(vuelosPorFlightId.values())
+      .filter(vuelo => {
+        // Filtro por término de búsqueda (ID de pedido en el vuelo)
+        const matchSearch = term === '' || vuelo.pedidos.some(pedidoId => pedidoId.toLowerCase().includes(term));
+
+        // Filtro por Hub de origen
+        const matchHub = filtroHub === '' || vuelo.origen === filtroHub;
+
+        return matchSearch && matchHub;
+      })
+      .sort((a, b) => {
+        const dateA = a.departureUtc ? new Date(a.departureUtc).getTime() : 0;
+        const dateB = b.departureUtc ? new Date(b.departureUtc).getTime() : 0;
+        return dateA - dateB;
+      });
+  }, [vuelosPorFlightId, searchTerm, filtroHub]);
 
   // Lógica de carga de archivo
   const handleArchivoCargado = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -227,15 +272,6 @@ export default function SimulacionPage() {
           <h1 className="text-xl font-bold mb-2">Simulación Semanal</h1>
           {/* Controles */}
           <div className="space-y-2">
-            <button
-              className="btn btn-sm btn-success w-full"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={estaActivo || estaVisualizando}
-            >
-              <Upload size={16} /> Cargar Órdenes
-            </button>
-            <input type="file" ref={fileInputRef} onChange={handleArchivoCargado} className="hidden" accept=".txt" />
-
             {ordenesParaSimular.length > 0 && (
               <div className="text-xs text-green-300 text-center">
                  {ordenesParaSimular.length} órdenes listas para sincronizar
@@ -308,6 +344,65 @@ export default function SimulacionPage() {
           </div>
         </div>
 
+        <div className="p-3 bg-gray-800 border-b border-gray-700 space-y-3">
+          <h3 className="text-sm font-semibold text-gray-200">Filtros de Visualización</h3>
+
+          {/* Barra de Búsqueda */}
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="Buscar por ID de pedido..."
+              className="input input-sm w-full text-black pl-8"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              disabled={!panelSnapshot}
+            />
+            <Search size={16} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
+            {searchTerm && (
+              <button onClick={() => setSearchTerm('')} className="absolute right-2 top-1/2 -translate-y-1/2">
+                <X size={16} className="text-gray-500 hover:text-red-500" />
+              </button>
+            )}
+          </div>
+
+          {/* Filtros de Hub */}
+          <div>
+            <label className="block uppercase tracking-wide text-[10px] text-gray-400 mb-2">
+              Filtrar por Hub de Origen
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                className={`btn btn-xs ${filtroHub === 'SPIM' ? 'btn-warning' : 'btn-outline btn-ghost text-gray-300'}`}
+                onClick={() => setFiltroHub(f => f === 'SPIM' ? '' : 'SPIM')}
+                disabled={!panelSnapshot}
+              >
+                Lima (SPIM)
+              </button>
+              <button
+                className={`btn btn-xs ${filtroHub === 'EBCI' ? 'btn-warning' : 'btn-outline btn-ghost text-gray-300'}`}
+                onClick={() => setFiltroHub(f => f === 'EBCI' ? '' : 'EBCI')}
+                disabled={!panelSnapshot}
+              >
+                Bruselas (EBCI)
+              </button>
+              <button
+                className={`btn btn-xs ${filtroHub === 'UBBB' ? 'btn-warning' : 'btn-outline btn-ghost text-gray-300'}`}
+                onClick={() => setFiltroHub(f => f === 'UBBB' ? '' : 'UBBB')}
+                disabled={!panelSnapshot}
+              >
+                Baku (UBBB)
+              </button>
+              <button
+                className={`btn btn-xs ${filtroHub === '' ? 'btn-active' : 'btn-outline btn-ghost text-gray-300'}`}
+                onClick={() => setFiltroHub('')}
+                disabled={!panelSnapshot}
+              >
+                Todos
+              </button>
+            </div>
+          </div>
+        </div>
+
         {/* Tabs del Panel */}
         <div className="flex border-b border-gray-700 bg-gray-800">
           <button
@@ -319,7 +414,7 @@ export default function SimulacionPage() {
             onClick={() => setVistaPanel('envios')}
           >
             <Package size={16} className="inline mr-1" />
-            Envíos
+            Envíos ({enviosFiltrados.length})
           </button>
           <button
             className={`flex-1 py-2 text-sm font-medium transition-colors ${
@@ -330,7 +425,7 @@ export default function SimulacionPage() {
             onClick={() => setVistaPanel('vuelos')}
           >
             <Plane size={16} className="inline mr-1" />
-            Vuelos
+            Vuelos ({vuelosFiltrados.length})
           </button>
           <button
             className={`flex-1 py-2 text-sm font-medium transition-colors ${
@@ -350,14 +445,21 @@ export default function SimulacionPage() {
           {/* ===== VISTA: ENVÍOS ===== */}
           {vistaPanel === 'envios' && (
             <>
-              {!panelSnapshot || panelSnapshot.orderPlans.length === 0 ? (
+              {(!panelSnapshot || panelSnapshot.orderPlans.length === 0) && (
                 <div className="text-center text-gray-400 py-8">
                   {ordenesParaSimular.length > 0
                     ? 'Sincroniza y presiona "Iniciar" para comenzar la simulación'
                     : 'Carga pedidos proyectados o usa los ya guardados para iniciar.'}
                 </div>
-              ) : (
-                panelSnapshot.orderPlans.map((plan) => {
+              )}
+              {panelSnapshot && enviosFiltrados.length === 0 && (
+                 <div className="text-center text-gray-400 py-8">
+                  No se encontraron envíos con los filtros actuales.
+                </div>
+              )}
+
+              {/* USAMOS enviosFiltrados en lugar de panelSnapshot.orderPlans */}
+              {enviosFiltrados.map((plan) => {
                   const primerSegmento = plan.routes[0]?.segments[0];
                   const ultimoSegmento = plan.routes[plan.routes.length - 1]?.segments[
                     plan.routes[plan.routes.length - 1].segments.length - 1
@@ -367,7 +469,9 @@ export default function SimulacionPage() {
                   const estado = esRetrasado ? 'error' : 'success';
                   const estadoTexto = esRetrasado ? 'Retrasado' : 'A tiempo';
 
-                  const fechaOriginalData = fechasOriginalesPorOrden.get(plan.orderId);
+                  // Intenta buscar el ID completo, y si falla, busca el ID base
+                  const idBase = plan.orderId.split('_')[0];
+                  const fechaOriginalData = fechasOriginalesPorOrden.get(plan.orderId) || fechasOriginalesPorOrden.get(idBase);
 
                   let fechaRegistro = 'N/A';
                   let horaRegistro = 'N/A';
@@ -398,7 +502,7 @@ export default function SimulacionPage() {
                               Pedido {plan.orderId}
                             </h3>
                             <p className="text-xs text-gray-400">
-                              Cantidad: {primerSegmento?.quantity || 'N/A'}
+                              Cantidad: {plan.routes.reduce((acc, r) => acc + r.quantity, 0) || 'N/A'}
                             </p>
                           </div>
                           <span className={`badge badge-sm ${
@@ -474,7 +578,7 @@ export default function SimulacionPage() {
                     </div>
                   );
                 })
-              )}
+              }
             </>
           )}
 
@@ -486,14 +590,14 @@ export default function SimulacionPage() {
                   No hay vuelos activos
                 </div>
               )}
+              {vuelosPorFlightId.size > 0 && vuelosFiltrados.length === 0 && (
+                 <div className="text-center text-gray-400 py-8">
+                  No se encontraron vuelos con los filtros actuales.
+                </div>
+              )}
 
-              {Array.from(vuelosPorFlightId.values())
-                .sort((a, b) => {
-                  const dateA = a.departureUtc ? new Date(a.departureUtc).getTime() : 0;
-                  const dateB = b.departureUtc ? new Date(b.departureUtc).getTime() : 0;
-                  return dateA - dateB;
-                })
-                .map(vuelo => {
+              {/* USAMOS vuelosFiltrados en lugar de Array.from(vuelosPorFlightId.values()) */}
+              {vuelosFiltrados.map(vuelo => {
                   // Buscamos el vuelo en movimiento usando su ID único
                   const vueloEnCurso = vuelosEnMovimiento.find(v => v.id === vuelo.departureUtc);
 
@@ -508,11 +612,17 @@ export default function SimulacionPage() {
                               {vuelo.origen} → {vuelo.destino}
                             </span>
                           </div>
+
                           {vueloEnCurso && (
-                            <span className="badge badge-xs badge-success">En vuelo</span>
+                            <span className={`badge badge-xs ${
+                              vueloEnCurso.progreso >= 100
+                                ? 'badge-info'
+                                : 'badge-success'
+                            }`}>
+                              {vueloEnCurso.progreso >= 100 ? 'Aterrizado' : 'En vuelo'}
+                            </span>
                           )}
                         </div>
-
                         <div className="text-xs text-gray-300 font-semibold mb-1">
                           📅 {vuelo.fecha}
                         </div>
@@ -626,11 +736,36 @@ export default function SimulacionPage() {
 
         {/* Mapa */}
         <div className="flex-1 relative">
+
+          {/* Mostramos overlay de carga si el GA está corriendo */}
+          {estaActivo && (
+            <div className="absolute top-0 left-0 w-full h-full bg-gray-900 bg-opacity-75 z-[1000] flex items-center justify-center text-white p-8">
+              <div className="text-center">
+                <div
+                  className="animate-spin rounded-full h-24 w-24 border-8 border-t-blue-500 border-gray-600 mx-auto mb-4"
+                  style={{borderTopColor: '#3b82f6'}}
+                ></div>
+                <h2 className="text-2xl font-semibold mb-2">Planificando Rutas...</h2>
+                <p className="text-lg text-gray-300 mb-4">
+                  El Sistema está procesando las órdenes.
+                </p>
+                <div className="stats bg-gray-800 shadow-xl">
+                  <div className="stat">
+                    <div className="stat-title">Órdenes Procesadas</div>
+                    <div className="stat-value text-blue-400">
+                      {reloj}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
           <MapaVuelos
             aeropuertos={aeropuertos}
-            orderPlans={snapshotFinal?.orderPlans ?? []} // El mapa solo usa la solución final
+            orderPlans={panelSnapshot?.orderPlans ?? []}
             isLoading={isLoading || isStarting}
-            vuelosEnMovimiento={vuelosEnMovimiento} // Los aviones solo se mueven con la solución final
+            vuelosEnMovimiento={vuelosEnMovimiento}
+            filtroHubActivo={filtroHub}
           />
         </div>
       </div>

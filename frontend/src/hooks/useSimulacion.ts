@@ -1,4 +1,4 @@
- import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { Client } from '@stomp/stompjs';
 import { aeropuertoService } from '../services/aeropuertoService';
@@ -23,7 +23,9 @@ import type { SimulationSnapshot, SimulationMessage, SimulationStartRequest } fr
  // URL de WebSocket nativo
  const BROKER_URL = 'ws://localhost:8080/ws';
  const TOPIC_PREFIX = '/topic/simulations/';
- const VELOCIDAD_SIMULACION = 60; // 60x velocidad real
+
+ // 3600x (1 hora sim = 1 seg real)
+ const VELOCIDAD_SIMULACION = 3600;
 
  export const useSimulacion = () => {
    const [simulationId, setSimulationId] = useState<string | null>(null);
@@ -93,7 +95,8 @@ import type { SimulationSnapshot, SimulationMessage, SimulationStartRequest } fr
      if (status !== 'completed') return;
 
      const interval = setInterval(() => {
-       setTiempoMovimiento(prev => prev + 0.05);
+       // Incrementamos por los milisegundos del intervalo
+       setTiempoMovimiento(prev => prev + 50);
      }, 50);
 
      return () => clearInterval(interval);
@@ -107,21 +110,26 @@ import type { SimulationSnapshot, SimulationMessage, SimulationStartRequest } fr
        return;
      }
      let primerTiempoMs: number | null = null;
+
      snapshot.orderPlans.forEach(plan =>
        plan.routes.forEach(ruta =>
          ruta.segments.forEach(segmento => {
            if (segmento.departureUtc) {
              const departureMs = new Date(segmento.departureUtc).getTime();
-             if (primerTiempoMs === null || departureMs < primerTiempoMs) {
-               primerTiempoMs = departureMs;
+             if (!isNaN(departureMs)) {
+               if (primerTiempoMs === null || departureMs < primerTiempoMs) {
+                 primerTiempoMs = departureMs;
+               }
              }
            }
          })
        )
      );
+
      if (primerTiempoMs !== null) {
-       const minutosSimulados = tiempoMovimiento * VELOCIDAD_SIMULACION;
-       const tiempoActual = new Date(primerTiempoMs + minutosSimulados * 60000);
+       // msSimuladosPasados = msRealesPasados (tiempoMovimiento) * Velocidad
+       const msSimuladosPasados = tiempoMovimiento * VELOCIDAD_SIMULACION;
+       const tiempoActual = new Date(primerTiempoMs + msSimuladosPasados);
        setTiempoSimulado(tiempoActual);
      } else {
        setTiempoSimulado(null);
@@ -142,6 +150,10 @@ import type { SimulationSnapshot, SimulationMessage, SimulationStartRequest } fr
          }
      });
 
+     if (coordsAeropuertos.size === 0 && aeropuertos.length > 0) {
+       return [];
+     }
+
      const vuelosMap = new Map<string, {
        flightId: string;
        origen: string;
@@ -155,7 +167,9 @@ import type { SimulationSnapshot, SimulationMessage, SimulationStartRequest } fr
      snapshot.orderPlans.forEach(plan => {
        plan.routes.forEach(ruta => {
          ruta.segments.forEach(segmento => {
-           if (!segmento.departureUtc || !segmento.arrivalUtc) return;
+           if (!segmento.departureUtc || !segmento.arrivalUtc) {
+             return;
+           }
            const uniqueFlightId = segmento.departureUtc;
 
            if (!vuelosMap.has(uniqueFlightId)) {
@@ -180,21 +194,37 @@ import type { SimulationSnapshot, SimulationMessage, SimulationStartRequest } fr
      const vuelosEnCurso: VueloEnMovimiento[] = [];
      const tiempoActualMs = tiempoSimulado.getTime();
 
+     const loggedMissing = new Set<string>();
+
      Array.from(vuelosMap.values()).forEach((vuelo, vueloIndex) => {
        const origen = coordsAeropuertos.get(vuelo.origen);
        const destino = coordsAeropuertos.get(vuelo.destino);
-       if (!origen || !destino) return;
+
+       if (!origen) {
+         if (!loggedMissing.has(vuelo.origen)) {
+           loggedMissing.add(vuelo.origen);
+         }
+         return;
+       }
+       if (!destino) {
+         if (!loggedMissing.has(vuelo.destino)) {
+           loggedMissing.add(vuelo.destino);
+         }
+         return;
+       }
 
        const horaSalida = new Date(vuelo.departureTime).getTime();
        const horaLlegada = new Date(vuelo.arrivalTime).getTime();
        const duracionVuelo = horaLlegada - horaSalida;
-       if (duracionVuelo <= 0) return;
+       if (duracionVuelo <= 0) {
+         return;
+       }
 
        let progreso = 0;
        let estadoVisual: 'en curso' | 'retrasado' | 'completado' = 'en curso';
 
        if (tiempoActualMs < horaSalida) {
-         return; // Aún no ha despegado
+         return;
        } else if (tiempoActualMs >= horaLlegada) {
          progreso = 100;
          estadoVisual = 'completado';
@@ -252,7 +282,19 @@ import type { SimulationSnapshot, SimulationMessage, SimulationStartRequest } fr
      setStatus(prev => (prev === 'completed' ? 'idle' : 'completed'));
    }, []);
 
-   const terminar = useCallback(() => {
+   const terminar = useCallback(async () => {
+     // Solo intentamos cancelar si estamos 'running' (procesando) o 'completed' (animando)
+     if (simulationId && (status === 'running' || status === 'completed')) {
+       try {
+         console.log(`[Terminar] Solicitando cancelación para simulación: ${simulationId}`);
+         await simulacionService.cancelSimulation(simulationId);
+         console.log(`[Terminar] Backend confirmó cancelación.`);
+       } catch (error) {
+         console.error("Error al cancelar la simulación en el backend:", error);
+       }
+     }
+
+     // Resetea el estado del frontend
      stompClient?.deactivate();
      setSimulationId(null);
      setLatestProgress(null);
@@ -260,7 +302,8 @@ import type { SimulationSnapshot, SimulationMessage, SimulationStartRequest } fr
      setStatus('idle');
      setTiempoMovimiento(0);
      setTiempoSimulado(null);
-   }, [stompClient]);
+
+   }, [stompClient, simulationId, status]);
 
    // ===== KPIs =====
    const kpis = useMemo(() => {
