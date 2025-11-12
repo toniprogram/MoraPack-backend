@@ -1,5 +1,6 @@
 package com.morapack.skyroute.models;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -34,6 +35,7 @@ public class Flight {
     private LocalTime depLocal;
     private LocalTime arrLocal;
     private int dailyCapacity;
+    private Duration flightDuration = Duration.ZERO;
 
     @Transient
     private Set<LocalDate> cancelledDates = Set.of();
@@ -55,6 +57,7 @@ public class Flight {
         this.depLocal = Objects.requireNonNull(depLocal, "depLocal");
         this.arrLocal = Objects.requireNonNull(arrLocal, "arrLocal");
         this.dailyCapacity = dailyCapacity;
+        this.flightDuration = computeDuration(origin, destination, depLocal, arrLocal);
         setCancelledDates(cancelledDates);
     }
 
@@ -115,12 +118,36 @@ public class Flight {
         if (isCancelled(date)) {
             throw new IllegalStateException("Flight is cancelled on " + date);
         }
-        LocalDateTime departureLocal = LocalDateTime.of(date, depLocal);
-        LocalDateTime arrivalLocalDateTime = LocalDateTime.of(date, arrLocal);
-        if (!arrivalLocalDateTime.isAfter(departureLocal)) {
-            arrivalLocalDateTime = arrivalLocalDateTime.plusDays(1);
+        Instant departureInstant = getDepartureInstant(date);
+        return departureInstant.plus(flightDuration);
+    }
+
+    @PostLoad
+    @PostPersist
+    @PostUpdate
+    private void refreshDuration() {
+        if (origin != null && destination != null && depLocal != null && arrLocal != null) {
+            this.flightDuration = computeDuration(origin, destination, depLocal, arrLocal);
         }
-        ZoneOffset offset = destination.getZoneOffset();
-        return arrivalLocalDateTime.toInstant(offset);
+    }
+
+    private Duration computeDuration(Airport origin,
+                                     Airport destination,
+                                     LocalTime departureLocal,
+                                     LocalTime arrivalLocal) {
+        LocalDate baseDate = LocalDate.of(2000, 1, 1);
+        LocalDateTime depDateTime = LocalDateTime.of(baseDate, departureLocal);
+        LocalDateTime arrDateTime = LocalDateTime.of(baseDate, arrivalLocal);
+        ZoneOffset originOffset = origin.getZoneOffset();
+        ZoneOffset destinationOffset = destination.getZoneOffset();
+
+        Instant depInstant = depDateTime.toInstant(originOffset);
+        Instant arrInstant = arrDateTime.toInstant(destinationOffset);
+
+        while (!arrInstant.isAfter(depInstant)) {
+            arrDateTime = arrDateTime.plusDays(1);
+            arrInstant = arrDateTime.toInstant(destinationOffset);
+        }
+        return Duration.between(depInstant, arrInstant);
     }
 }

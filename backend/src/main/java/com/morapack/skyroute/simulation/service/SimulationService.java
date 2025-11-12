@@ -52,12 +52,18 @@ public class SimulationService {
 
     public SimulationStartResponse startSimulation(SimulationStartRequest request) {
         TimeRange range = resolveRange(request);
+        long fetchStart = System.nanoTime();
         List<Order> projectedOrders = orderRepository
                 .findAllByScopeAndCreationUtcBetweenOrderByCreationUtcAsc(
                         OrderScope.PROJECTED,
                         range.start(),
                         range.end()
                 );
+        log.info("[SIM] Loaded {} projected orders in {} ms (range {} - {})",
+                projectedOrders.size(),
+                nanosToMillis(System.nanoTime() - fetchStart),
+                range.start(),
+                range.end());
         if (projectedOrders.isEmpty()) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
@@ -100,11 +106,14 @@ public class SimulationService {
                     break;
                 }
 
+                long iterationStart = System.nanoTime();
                 Order order = orders.get(index);
                 log.debug("[SIM:{}] Processing order {} of {}: {}", session.id, index + 1, orders.size(), order.getId());
                 demand.add(order);
 
+                long worldStart = System.nanoTime();
                 World world = worldBuilder.buildBaseWorld();
+                long worldDuration = System.nanoTime() - worldStart;
                 GeneticAlgorithm ga = new GeneticAlgorithm(world, List.copyOf(demand));
                 
                 log.info("[SIM:{}] === Order {} of {} ===", session.id, index + 1, orders.size());
@@ -112,6 +121,12 @@ public class SimulationService {
                 Individual best = ga.run(Config.POP_SIZE, Config.MAX_GEN);
                 long duration = System.nanoTime() - start;
                 log.info("[SIM:{}] GA done for {} (took {} ms)", session.id, order.getId(), duration / 1_000_000);
+
+                log.info("[SIM:{}] Metrics: worldBuild={} ms, gaRun={} ms, iterationTotal={} ms",
+                        session.id,
+                        nanosToMillis(worldDuration),
+                        nanosToMillis(duration),
+                        nanosToMillis(System.nanoTime() - iterationStart));
 
                 log.debug("[SIM:{}] GA completed for order {} (fitness={}, time={} ms)",
                         session.id,
@@ -223,6 +238,10 @@ public class SimulationService {
     }
 
     private record TimeRange(Instant start, Instant end) {}
+
+    private static long nanosToMillis(long nanos) {
+        return nanos / 1_000_000;
+    }
 
     private String topic(UUID simulationId) {
         return TOPIC_PREFIX + simulationId;
