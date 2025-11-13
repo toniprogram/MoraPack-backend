@@ -70,7 +70,7 @@ export default function SimulacionPage() {
     return mapa;
   }, [ordenesParaSimular]);
 
-  const panelSnapshot = snapshotFinal || snapshotProgreso;
+  const panelSnapshot = snapshotProgreso;
 
   // Agrupa pedidos por vuelo, mostrando horas UTC
   const vuelosPorFlightId = useMemo(() => {
@@ -91,6 +91,10 @@ export default function SimulacionPage() {
       plan.routes.forEach(ruta => {
         ruta.segments.forEach(segmento => {
           if (!segmento.departureUtc || !segmento.arrivalUtc) {
+            return;
+          }
+
+          if (new Date(segmento.departureUtc) > new Date(segmento.arrivalUtc)) {
             return;
           }
 
@@ -285,7 +289,7 @@ export default function SimulacionPage() {
                 </label>
                 <input
                   type="datetime-local"
-                  className="input input-sm w-full text-black"
+                  className="input input-sm w-full text-white"
                   value={startDate}
                   onChange={(event) => setStartDate(event.target.value)}
                   disabled={estaActivo || estaVisualizando}
@@ -297,7 +301,7 @@ export default function SimulacionPage() {
                 </label>
                 <input
                   type="datetime-local"
-                  className="input input-sm w-full text-black"
+                  className="input input-sm w-full text-white"
                   value={endDate}
                   onChange={(event) => setEndDate(event.target.value)}
                   disabled={estaActivo || estaVisualizando}
@@ -344,6 +348,7 @@ export default function SimulacionPage() {
           </div>
         </div>
 
+        {/* --- BARRA DE FILTROS --- */}
         <div className="p-3 bg-gray-800 border-b border-gray-700 space-y-3">
           <h3 className="text-sm font-semibold text-gray-200">Filtros de Visualización</h3>
 
@@ -351,8 +356,8 @@ export default function SimulacionPage() {
           <div className="relative">
             <input
               type="text"
-              placeholder="Buscar por ID de pedido..."
-              className="input input-sm w-full text-black pl-8"
+              placeholder="Buscar por ID de pedido"
+              className="input input-sm w-full text-white pl-8"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               disabled={!panelSnapshot}
@@ -368,7 +373,7 @@ export default function SimulacionPage() {
           {/* Filtros de Hub */}
           <div>
             <label className="block uppercase tracking-wide text-[10px] text-gray-400 mb-2">
-              Hub de Origen
+              Filtrar por Hub de Origen
             </label>
             <div className="grid grid-cols-2 gap-2">
               <button
@@ -458,7 +463,6 @@ export default function SimulacionPage() {
                 </div>
               )}
 
-              {/* USAMOS enviosFiltrados en lugar de panelSnapshot.orderPlans */}
               {enviosFiltrados.map((plan) => {
                   const primerSegmento = plan.routes[0]?.segments[0];
                   const ultimoSegmento = plan.routes[plan.routes.length - 1]?.segments[
@@ -469,7 +473,6 @@ export default function SimulacionPage() {
                   const estado = esRetrasado ? 'error' : 'success';
                   const estadoTexto = esRetrasado ? 'Retrasado' : 'A tiempo';
 
-                  // Intenta buscar el ID completo, y si falla, busca el ID base
                   const idBase = plan.orderId.split('_')[0];
                   const fechaOriginalData = fechasOriginalesPorOrden.get(plan.orderId) || fechasOriginalesPorOrden.get(idBase);
 
@@ -512,7 +515,6 @@ export default function SimulacionPage() {
                           </span>
                         </div>
 
-                        {/* Fecha y hora de REGISTRO */}
                         <div className="mt-2 pt-2 border-t border-gray-700">
                           <p className="text-[10px] text-gray-500 mb-1">Fecha de Registro:</p>
                           <div className="flex gap-3 text-xs">
@@ -546,7 +548,6 @@ export default function SimulacionPage() {
                           </div>
                         </div>
 
-                        {/* Ruta detallada */}
                         <div className="mt-2 pt-2 border-t border-gray-700">
                           <p className="text-xs font-semibold text-gray-300 mb-1">
                             Ruta ({plan.routes.reduce((acc, r) => acc + r.segments.length, 0)} tramos):
@@ -596,13 +597,10 @@ export default function SimulacionPage() {
                 </div>
               )}
 
-              {/* USAMOS vuelosFiltrados en lugar de Array.from(vuelosPorFlightId.values()) */}
               {vuelosFiltrados.map(vuelo => {
-                  // Buscamos el vuelo en movimiento usando su ID único
                   const vueloEnCurso = vuelosEnMovimiento.find(v => v.id === vuelo.departureUtc);
 
                   return (
-                    // El key debe ser único (departureUtc)
                     <div key={vuelo.departureUtc} className="card bg-gray-800 shadow-sm hover:shadow-md transition-shadow">
                       <div className="card-body p-3 text-white">
                         <div className="flex items-center justify-between mb-2">
@@ -737,29 +735,6 @@ export default function SimulacionPage() {
         {/* Mapa */}
         <div className="flex-1 relative">
 
-          {/* Mostramos overlay de carga si el GA está corriendo */}
-          {estaActivo && (
-            <div className="absolute top-0 left-0 w-full h-full bg-gray-900 bg-opacity-75 z-[1000] flex items-center justify-center text-white p-8">
-              <div className="text-center">
-                <div
-                  className="animate-spin rounded-full h-24 w-24 border-8 border-t-blue-500 border-gray-600 mx-auto mb-4"
-                  style={{borderTopColor: '#3b82f6'}}
-                ></div>
-                <h2 className="text-2xl font-semibold mb-2">Planificando Rutas...</h2>
-                <p className="text-lg text-gray-300 mb-4">
-                  El Sistema está procesando las órdenes.
-                </p>
-                <div className="stats bg-gray-800 shadow-xl">
-                  <div className="stat">
-                    <div className="stat-title">Órdenes Procesadas</div>
-                    <div className="stat-value text-blue-400">
-                      {reloj}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
           <MapaVuelos
             aeropuertos={aeropuertos}
             orderPlans={panelSnapshot?.orderPlans ?? []}
