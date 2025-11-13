@@ -91,9 +91,7 @@ import type { SimulationSnapshot, SimulationMessage, SimulationStartRequest } fr
 
    // ===== INCREMENTO DE TIEMPO SIMULADO (ANIMACIÓN) =====
    useEffect(() => {
-     // El intervalo solo debe correr si el estado es 'completed'
-     if (status !== 'completed') return;
-
+     if (status !== 'completed' && status !== 'running') return;
      const interval = setInterval(() => {
        // Incrementamos por los milisegundos del intervalo
        setTiempoMovimiento(prev => prev + 50);
@@ -104,7 +102,8 @@ import type { SimulationSnapshot, SimulationMessage, SimulationStartRequest } fr
 
    // ===== CÁLCULO DE TIEMPO SIMULADO =====
    useEffect(() => {
-     const snapshot = finalSnapshot;
+     const snapshot = finalSnapshot || latestProgress;
+
      if (!snapshot?.orderPlans || snapshot.orderPlans.length === 0) {
        setTiempoSimulado(null);
        return;
@@ -134,11 +133,11 @@ import type { SimulationSnapshot, SimulationMessage, SimulationStartRequest } fr
      } else {
        setTiempoSimulado(null);
      }
-   }, [finalSnapshot, tiempoMovimiento]);
+   }, [finalSnapshot, latestProgress, tiempoMovimiento]);
 
    // ===== CÁLCULO DE VUELOS EN MOVIMIENTO =====
    const vuelosEnMovimiento: VueloEnMovimiento[] = useMemo(() => {
-     const snapshot = finalSnapshot;
+     const snapshot = finalSnapshot || latestProgress;
      if (!snapshot?.orderPlans || snapshot.orderPlans.length === 0 || !tiempoSimulado) {
        return [];
      }
@@ -257,7 +256,7 @@ import type { SimulationSnapshot, SimulationMessage, SimulationStartRequest } fr
      });
 
      return vuelosEnCurso;
-   }, [finalSnapshot, tiempoSimulado, aeropuertos]);
+   }, [finalSnapshot, latestProgress, tiempoSimulado, aeropuertos]);
 
    // ===== MUTACIÓN PARA INICIAR SIMULACIÓN =====
   const { mutate: iniciar, isPending: estaIniciando } = useMutation({
@@ -279,8 +278,8 @@ import type { SimulationSnapshot, SimulationMessage, SimulationStartRequest } fr
 
    const pausar = useCallback(() => {
      // Pausa/Reanuda la animación del frontend
-     setStatus(prev => (prev === 'completed' ? 'idle' : 'completed'));
-   }, []);
+     setStatus(prev => (prev === 'completed' || prev === 'running') ? 'idle' : (finalSnapshot ? 'completed' : 'running'));
+   }, [finalSnapshot]);
 
    const terminar = useCallback(async () => {
      // Solo intentamos cancelar si estamos 'running' (procesando) o 'completed' (animando)
@@ -307,13 +306,13 @@ import type { SimulationSnapshot, SimulationMessage, SimulationStartRequest } fr
 
    // ===== KPIs =====
    const kpis = useMemo(() => {
-     const snapshot = finalSnapshot;
+     const snapshot = finalSnapshot || latestProgress;
      if (!snapshot?.orderPlans) return { entregas: 0, retrasados: 0 };
      return {
        entregas: snapshot.orderPlans.filter(p => p.slackMinutes > 0).length,
        retrasados: snapshot.orderPlans.filter(p => p.slackMinutes <= 0).length,
      };
-   }, [finalSnapshot]);
+   }, [finalSnapshot, latestProgress]);
 
    // ===== RELOJ DE PROGRESO =====
    const reloj = `${latestProgress?.processedOrders ?? 0} / ${latestProgress?.totalOrders ?? 0} Órdenes`;
