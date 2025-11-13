@@ -285,7 +285,7 @@ export default function SimulacionPage() {
                 </label>
                 <input
                   type="datetime-local"
-                  className="input input-sm w-full text-black"
+                  className="input input-sm w-full text-white"
                   value={startDate}
                   onChange={(event) => setStartDate(event.target.value)}
                   disabled={estaActivo || estaVisualizando}
@@ -351,8 +351,8 @@ export default function SimulacionPage() {
           <div className="relative">
             <input
               type="text"
-              placeholder="Buscar por ID de pedido..."
-              className="input input-sm w-full text-black pl-8"
+              placeholder="Buscar por ID de pedido"
+              className="input input-sm w-full text-white pl-8"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               disabled={!panelSnapshot}
