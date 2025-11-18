@@ -1,10 +1,9 @@
-import React from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
-import L, { LatLngExpression } from 'leaflet';
+import L from 'leaflet';
+import type { LatLngExpression } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import type { Airport } from '../../types/airport';
-import type { SimulationOrderPlan } from '../../types/simulacion';
-import type { VueloEnMovimiento } from '../../hooks/useSimulacion';
+import type { SegmentoVuelo, VueloEnMovimiento } from '../../hooks/useSimulacion';
 import MapResizer from './MapResizer';
 
 const hubIcon = new L.Icon({
@@ -35,14 +34,14 @@ const bluePlaneIcon = new L.Icon({
 });
 
 interface MapaVuelosProps {
-  orderPlans: SimulationOrderPlan[];
+  activeSegments: SegmentoVuelo[];
   aeropuertos: Airport[];
   isLoading: boolean;
   vuelosEnMovimiento: VueloEnMovimiento[];
   filtroHubActivo: string;
 }
 
-export function MapaVuelos({ orderPlans, aeropuertos, isLoading, vuelosEnMovimiento, filtroHubActivo }: MapaVuelosProps) {
+export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMovimiento, filtroHubActivo }: MapaVuelosProps) {
   const initialPosition: LatLngExpression = [20, 0];
 
   //console.log('🗺️ OrderPlans recibidos:', orderPlans);
@@ -51,8 +50,10 @@ export function MapaVuelos({ orderPlans, aeropuertos, isLoading, vuelosEnMovimie
   //console.log('🗺️ CANTIDAD de vuelos en movimiento:', vuelosEnMovimiento.length);
 
   // Crea el directorio de coordenadas
-  const coordsAeropuertos = new Map(
-    aeropuertos.map(a => [a.id, [a.latitude, a.longitude] as LatLngExpression])
+  const coordsAeropuertos = new Map<string, LatLngExpression>(
+    aeropuertos
+      .filter((a) => typeof a.latitude === 'number' && typeof a.longitude === 'number')
+      .map((a) => [a.id, [a.latitude, a.longitude]])
   );
 
   // Determina el icono según el estado
@@ -112,48 +113,42 @@ export function MapaVuelos({ orderPlans, aeropuertos, isLoading, vuelosEnMovimie
           </Marker>
         ))}
 
-      {/* Dibuja las RUTAS ESTÁTICAS */}
-      {orderPlans.map(plan => (
-        <React.Fragment key={plan.orderId}>
-          {plan.routes.map((ruta, rutaIndex) => (
-            ruta.segments.map((segmento, segIndex) => {
-              const origenCoords = coordsAeropuertos.get(segmento.origin);
-              const destinoCoords = coordsAeropuertos.get(segmento.destination);
+      {/* Dibuja las RUTAS EN CURSO */}
+      {activeSegments.map((segmento) => {
+        const origenCoords = coordsAeropuertos.get(segmento.origin);
+        const destinoCoords = coordsAeropuertos.get(segmento.destination);
+        if (!origenCoords || !destinoCoords) return null;
 
-              if (!origenCoords || !destinoCoords) return null;
-              const esRetrasado = plan.slackMinutes <= 0;
-              let colorRuta = esRetrasado ? "#FF0000" : "#3b82f6";
-              let opacidadRuta = 0.7;
-              let dashRuta: string | undefined = "5, 10";
+        const esRetrasado = segmento.retrasado;
+        let colorRuta = esRetrasado ? "#FF0000" : "#3b82f6";
+        let opacidadRuta = 0.7;
+        let dashRuta: string | undefined = "5, 10";
 
-              if (filtroHubActivo) {
-                if (segmento.origin === filtroHubActivo) {
-                  colorRuta = "#FFA500";
-                  opacidadRuta = 1.0;
-                  dashRuta = undefined;
-                } else {
-                  colorRuta = "#6b7280";
-                  opacidadRuta = 0.2;
-                }
-              }
+        if (filtroHubActivo) {
+          if (segmento.origin === filtroHubActivo) {
+            colorRuta = "#FFA500";
+            opacidadRuta = 1.0;
+            dashRuta = undefined;
+          } else {
+            colorRuta = "#6b7280";
+            opacidadRuta = 0.2;
+          }
+        }
 
-              return (
-                <Polyline
-                  key={`${plan.orderId}-route-${rutaIndex}-${segIndex}`}
-                  positions={[origenCoords, destinoCoords]}
-                  color={colorRuta}
-                  weight={filtroHubActivo && segmento.origin === filtroHubActivo ? 3 : 2}
-                  opacity={opacidadRuta}
-                  dashArray={dashRuta}
-                />
-              );
-            })
-          ))}
-        </React.Fragment>
-      ))}
+        return (
+          <Polyline
+            key={segmento.id}
+            positions={[origenCoords, destinoCoords]}
+            color={colorRuta}
+            weight={filtroHubActivo && segmento.origin === filtroHubActivo ? 3 : 2}
+            opacity={opacidadRuta}
+            dashArray={dashRuta}
+          />
+        );
+      })}
 
       {/* Dibuja los AVIONES en movimiento usando ID ÚNICO */}
-      {vuelosEnMovimiento?.map((vuelo, index) => {
+      {vuelosEnMovimiento?.map((vuelo) => {
         const origenCoords = coordsAeropuertos.get(vuelo.origen);
         const destinoCoords = coordsAeropuertos.get(vuelo.destino);
 

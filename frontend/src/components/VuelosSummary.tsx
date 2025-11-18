@@ -13,7 +13,7 @@ export default function VuelosSummary() {
     return <div className="p-4 text-center text-error">Error al cargar resumen.</div>;
 
   // 2. Lógica de cálculo de estadísticas
-  const vuelos = list.data ?? [];
+  const vuelos: Vuelo[] = list.data ?? [];
   const activos = vuelos.filter((v) => v.estado === "en vuelo").length;
   // ⚠️ Esta lógica asume que tu tipo 'Vuelo' incluye 'origenContinente' y 'destinoContinente'
   const intra = vuelos.filter((v) => v.origenContinente && v.destinoContinente && v.origenContinente === v.destinoContinente).length;
