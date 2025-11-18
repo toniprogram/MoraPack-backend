@@ -18,11 +18,12 @@ Inicia una nueva sesión tomando todos los pedidos `PROJECTED` almacenados entre
 ```json
 {
   "startDate": "2025-01-02T00:00:00",
-  "endDate": "2025-01-09T23:59:59"
-}
+  "endDate": "2025-01-09T23:59:59",
+  "windowMinutes": 5
+
 ```
 
-Si omites `startDate` o `endDate`, el backend usa respectivamente la primera y la última fecha disponible entre los pedidos proyectados.
+`windowMinutes` controla el tamaño de cada lote temporal (por defecto 10 minutos). Usa `0` para habilitar el modo legacy que procesa pedido por pedido.
 
 Respuesta (`202 Accepted`):
 
@@ -88,13 +89,14 @@ Mensajes (`SimulationMessage`):
 ## 4. Flujo de prueba
 
 1. **Cargar base** (si aún no existe):
+
    ```bash
    curl -X POST http://localhost:8080/api/setup \
      -H "Content-Type: application/json" \
      -d '{ "airports": [...], "flights": [...] }'
    ```
-
 2. **Registrar pedidos proyectados** (solo la primera vez o cuando recibas un nuevo archivo):
+
    ```bash
    curl -X POST http://localhost:8080/api/orders/batch \
      -H "Content-Type: application/json" \
@@ -111,27 +113,30 @@ Mensajes (`SimulationMessage`):
        ]
      }'
    ```
-   > Por defecto, los pedidos se marcan como `REAL`. Envía `projected: true` únicamente para los escenarios simulados.
 
+   > Por defecto, los pedidos se marcan como `REAL`. Envía `projected: true` únicamente para los escenarios simulados.
+   >
 3. **Iniciar simulación**:
+
    ```bash
    curl -X POST http://localhost:8080/api/simulations \
      -H "Content-Type: application/json" \
      -d '{ "startDate": "2025-01-02T00:00:00", "endDate": "2025-01-05T23:59:59" }'
    ```
-   Si omites las fechas, se toma el rango completo de pedidos `PROJECTED` existentes.
 
+   Si omites las fechas, se toma el rango completo de pedidos `PROJECTED` existentes.
 4. **Conectar al WebSocket**:
+
    - Usa una herramienta STOMP (STOMP over WebSocket) o una librería JavaScript (`SockJS + StompJS`).
    - Conecta a `ws://localhost:8080/ws` y suscríbete a `/topic/simulations/{simulationId}`.
    - Verás mensajes `PROGRESS` cada vez que se procesa una orden, y `COMPLETED` al terminar.
-
 5. **Consultar estado** (opcional):
+
    ```bash
    curl http://localhost:8080/api/simulations/{simulationId}/status
    ```
-
 6. **Cancelar** (opcional):
+
    ```bash
    curl -X DELETE http://localhost:8080/api/simulations/{simulationId}
    ```
