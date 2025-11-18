@@ -387,6 +387,9 @@ public class Individual {
             }
         }
         plan.setSlack(determinePlanSlack(world, order, plan));
+        if (plan.getSlack() == null || plan.getSlack().isNegative()) {
+            throw new IllegalStateException("Plan violates SLA for order " + order.getId());
+        }
         return plan;
     }
 
