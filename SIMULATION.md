@@ -89,7 +89,6 @@ Mensajes (`SimulationMessage`):
 ## 4. Flujo de prueba
 
 1. **Cargar base** (si aún no existe):
-
    ```bash
    curl -X POST http://localhost:8080/api/setup \
      -H "Content-Type: application/json" \
