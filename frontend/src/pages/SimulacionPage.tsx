@@ -1,8 +1,10 @@
-import React, { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef } from 'react';
+import type { ChangeEvent } from 'react';
 import { useSimulacion } from '../hooks/useSimulacion';
 import { MapaVuelos } from '../components/mapas/MapaVuelos';
-import { Check, AlertTriangle, Play, Pause, XCircle, Upload, Package, Plane, Database, Search, X } from 'lucide-react';
+import { Check, AlertTriangle, Play, Pause, XCircle, Package, Plane, Database, Search, X } from 'lucide-react';
 import type { OrderRequest } from '../types/orderRequest';
+import type { SimulationOrderPlan, SimulationSnapshot } from '../types/simulation';
 import { orderService } from '../services/orderService';
 
 // Interfaz extendida para mantener fechas originales del archivo TXT
@@ -13,6 +15,7 @@ interface OrderRequestExtended extends OrderRequest {
 export default function SimulacionPage() {
   const {
       aeropuertos,
+      activeSegments,
       kpis,
       reloj,
       isLoading,
@@ -24,9 +27,13 @@ export default function SimulacionPage() {
       pausar,
       terminar,
       snapshotFinal,
+      snapshotVisible,
       snapshotProgreso,
       vuelosEnMovimiento,
-      tiempoSimulado
+      hasSnapshots,
+      tiempoSimulado,
+      simSpeed,
+      setSimSpeed
   } = useSimulacion();
 
   const [ordenesParaSimular, setOrdenesParaSimular] = useState<OrderRequestExtended[]>([]);
@@ -70,31 +77,30 @@ export default function SimulacionPage() {
     return mapa;
   }, [ordenesParaSimular]);
 
-  const panelSnapshot = snapshotProgreso;
+  const panelSnapshot: SimulationSnapshot | null =
+    snapshotVisible ?? snapshotProgreso ?? snapshotFinal ?? null;
 
   // Agrupa pedidos por vuelo, mostrando horas UTC
-  const vuelosPorFlightId = useMemo(() => {
+  type FlightGroup = {
+    flightId: string;
+    origen: string;
+    destino: string;
+    pedidos: string[];
+    hora: string;
+    fecha: string;
+    departureUtc: string;
+    arrivalUtc: string;
+    horaLlegada: string;
+  };
+
+  const vuelosPorFlightId = useMemo<Map<string, FlightGroup>>(() => {
     if (!panelSnapshot) return new Map();
-    const mapa = new Map<string, {
-      flightId: string;
-      origen: string;
-      destino: string;
-      pedidos: string[];
-      hora: string;
-      fecha: string;
-      departureUtc: string;
-      arrivalUtc: string;
-      horaLlegada: string;
-    }>();
+    const mapa = new Map<string, FlightGroup>();
 
     panelSnapshot.orderPlans.forEach(plan => {
       plan.routes.forEach(ruta => {
         ruta.segments.forEach(segmento => {
           if (!segmento.departureUtc || !segmento.arrivalUtc) {
-            return;
-          }
-
-          if (new Date(segmento.departureUtc) > new Date(segmento.arrivalUtc)) {
             return;
           }
 
@@ -139,7 +145,7 @@ export default function SimulacionPage() {
   }, [panelSnapshot]);
 
   // --- LÓGICA DE FILTRADO PARA LOS PANELES ---
-  const enviosFiltrados = useMemo(() => {
+  const enviosFiltrados = useMemo<SimulationOrderPlan[]>(() => {
     if (!panelSnapshot) return [];
     const term = searchTerm.toLowerCase();
 
@@ -156,7 +162,7 @@ export default function SimulacionPage() {
     });
   }, [panelSnapshot, searchTerm, filtroHub]);
 
-  const vuelosFiltrados = useMemo(() => {
+  const vuelosFiltrados = useMemo<FlightGroup[]>(() => {
     const term = searchTerm.toLowerCase();
 
     return Array.from(vuelosPorFlightId.values())
@@ -177,7 +183,7 @@ export default function SimulacionPage() {
   }, [vuelosPorFlightId, searchTerm, filtroHub]);
 
   // Lógica de carga de archivo
-  const handleArchivoCargado = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleArchivoCargado = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
@@ -233,11 +239,14 @@ export default function SimulacionPage() {
   };
 
   const handleIniciarSimulacion = () => {
+    const startUtc = ensureSeconds(startDate);
+    const endUtc = ensureSeconds(endDate);
     const payload = {
-      startDate: ensureSeconds(startDate),
-      endDate: ensureSeconds(endDate),
+      startDate: startUtc,
+      endDate: endUtc,
+      windowMinutes: 5,
     };
-    iniciar(payload);
+    iniciar(payload, { start: startUtc, end: endUtc });
   };
 
   const handleGuardarProyeccion = async () => {
@@ -265,6 +274,8 @@ export default function SimulacionPage() {
   if (isError) {
     return <div className="p-6 text-center text-red-500">Error al cargar datos.</div>;
   }
+  const mostrandoOverlay = estaActivo && !hasSnapshots;
+
   return (
     <div className="flex h-screen w-full bg-gray-100">
 
@@ -289,7 +300,7 @@ export default function SimulacionPage() {
                 </label>
                 <input
                   type="datetime-local"
-                  className="input input-sm w-full text-white"
+                  className="input input-sm w-full text-black"
                   value={startDate}
                   onChange={(event) => setStartDate(event.target.value)}
                   disabled={estaActivo || estaVisualizando}
@@ -301,7 +312,7 @@ export default function SimulacionPage() {
                 </label>
                 <input
                   type="datetime-local"
-                  className="input input-sm w-full text-white"
+                  className="input input-sm w-full text-black"
                   value={endDate}
                   onChange={(event) => setEndDate(event.target.value)}
                   disabled={estaActivo || estaVisualizando}
@@ -311,6 +322,22 @@ export default function SimulacionPage() {
                 </p>
               </div>
             </div>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".txt"
+              className="hidden"
+              onChange={handleArchivoCargado}
+            />
+            <button
+              type="button"
+              className="btn btn-sm btn-outline w-full flex items-center gap-2"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={estaActivo || estaVisualizando || estaSincronizando}
+            >
+              <Package size={16} /> Cargar pedidos (.txt)
+            </button>
 
             <button
               className="btn btn-sm btn-outline w-full"
@@ -347,8 +374,26 @@ export default function SimulacionPage() {
             </button>
           </div>
         </div>
+        <div className="px-3 py-2 bg-gray-800 border-b border-gray-700 text-xs text-gray-200">
+          <label className="block uppercase tracking-wide text-[10px] text-gray-400 mb-1">
+            Velocidad de simulación (x)
+          </label>
+          <input
+            type="number"
+            className="input input-sm w-full text-black"
+            min={1}
+            max={86400}
+            value={simSpeed}
+            onChange={(e) => {
+              const parsed = Number(e.target.value);
+              setSimSpeed(Math.max(1, isNaN(parsed) ? (simSpeed || 1) : parsed));
+            }}
+          />
+          <p className="text-[10px] text-gray-400 mt-1">
+            Controla cuántas veces más rápido avanza el reloj simulado.
+          </p>
+        </div>
 
-        {/* --- BARRA DE FILTROS --- */}
         <div className="p-3 bg-gray-800 border-b border-gray-700 space-y-3">
           <h3 className="text-sm font-semibold text-gray-200">Filtros de Visualización</h3>
 
@@ -356,8 +401,8 @@ export default function SimulacionPage() {
           <div className="relative">
             <input
               type="text"
-              placeholder="Buscar por ID de pedido"
-              className="input input-sm w-full text-white pl-8"
+              placeholder="Buscar por ID de pedido..."
+              className="input input-sm w-full text-black pl-8"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               disabled={!panelSnapshot}
@@ -373,7 +418,7 @@ export default function SimulacionPage() {
           {/* Filtros de Hub */}
           <div>
             <label className="block uppercase tracking-wide text-[10px] text-gray-400 mb-2">
-              Filtrar por Hub de Origen
+              Hub de Origen
             </label>
             <div className="grid grid-cols-2 gap-2">
               <button
@@ -463,6 +508,7 @@ export default function SimulacionPage() {
                 </div>
               )}
 
+              {/* USAMOS enviosFiltrados en lugar de panelSnapshot.orderPlans */}
               {enviosFiltrados.map((plan) => {
                   const primerSegmento = plan.routes[0]?.segments[0];
                   const ultimoSegmento = plan.routes[plan.routes.length - 1]?.segments[
@@ -473,6 +519,7 @@ export default function SimulacionPage() {
                   const estado = esRetrasado ? 'error' : 'success';
                   const estadoTexto = esRetrasado ? 'Retrasado' : 'A tiempo';
 
+                  // Intenta buscar el ID completo, y si falla, busca el ID base
                   const idBase = plan.orderId.split('_')[0];
                   const fechaOriginalData = fechasOriginalesPorOrden.get(plan.orderId) || fechasOriginalesPorOrden.get(idBase);
 
@@ -515,6 +562,7 @@ export default function SimulacionPage() {
                           </span>
                         </div>
 
+                        {/* Fecha y hora de REGISTRO */}
                         <div className="mt-2 pt-2 border-t border-gray-700">
                           <p className="text-[10px] text-gray-500 mb-1">Fecha de Registro:</p>
                           <div className="flex gap-3 text-xs">
@@ -548,6 +596,7 @@ export default function SimulacionPage() {
                           </div>
                         </div>
 
+                        {/* Ruta detallada */}
                         <div className="mt-2 pt-2 border-t border-gray-700">
                           <p className="text-xs font-semibold text-gray-300 mb-1">
                             Ruta ({plan.routes.reduce((acc, r) => acc + r.segments.length, 0)} tramos):
@@ -597,10 +646,13 @@ export default function SimulacionPage() {
                 </div>
               )}
 
+              {/* USAMOS vuelosFiltrados en lugar de Array.from(vuelosPorFlightId.values()) */}
               {vuelosFiltrados.map(vuelo => {
+                  // Buscamos el vuelo en movimiento usando su ID único
                   const vueloEnCurso = vuelosEnMovimiento.find(v => v.id === vuelo.departureUtc);
 
                   return (
+                    // El key debe ser único (departureUtc)
                     <div key={vuelo.departureUtc} className="card bg-gray-800 shadow-sm hover:shadow-md transition-shadow">
                       <div className="card-body p-3 text-white">
                         <div className="flex items-center justify-between mb-2">
@@ -735,9 +787,32 @@ export default function SimulacionPage() {
         {/* Mapa */}
         <div className="flex-1 relative">
 
+          {/* Mostramos overlay de carga si el GA está corriendo */}
+          {mostrandoOverlay && (
+            <div className="absolute top-0 left-0 w-full h-full bg-gray-900 bg-opacity-75 z-[1000] flex items-center justify-center text-white p-8">
+              <div className="text-center">
+                <div
+                  className="animate-spin rounded-full h-24 w-24 border-8 border-t-blue-500 border-gray-600 mx-auto mb-4"
+                  style={{borderTopColor: '#3b82f6'}}
+                ></div>
+                <h2 className="text-2xl font-semibold mb-2">Planificando Rutas...</h2>
+                <p className="text-lg text-gray-300 mb-4">
+                  El Sistema está procesando las órdenes.
+                </p>
+                <div className="stats bg-gray-800 shadow-xl">
+                  <div className="stat">
+                    <div className="stat-title">Órdenes Procesadas</div>
+                    <div className="stat-value text-blue-400">
+                      {reloj}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
           <MapaVuelos
             aeropuertos={aeropuertos}
-            orderPlans={panelSnapshot?.orderPlans ?? []}
+            activeSegments={activeSegments}
             isLoading={isLoading || isStarting}
             vuelosEnMovimiento={vuelosEnMovimiento}
             filtroHubActivo={filtroHub}

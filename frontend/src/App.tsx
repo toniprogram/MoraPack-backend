@@ -1,4 +1,3 @@
-import React from "react";
 import { Routes, Route } from "react-router-dom";
 import FlightsPage from "./pages/FlightsPage";
 import PedidosPage from "./pages/PedidosPage";

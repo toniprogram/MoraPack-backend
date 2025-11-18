@@ -12,7 +12,7 @@ export function useFlights() {
   const queryClient = useQueryClient();
 
   // Obtener todos los vuelos
-  const list = useQuery({
+  const list = useQuery<Vuelo[]>({
     queryKey: flightKeys.all,
     queryFn: flightService.getAll,
   });

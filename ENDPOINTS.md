@@ -388,7 +388,8 @@ Inicia una simulación semanal en memoria tomando los pedidos `PROJECTED` almace
 ```json
 {
   "startDate": "2025-01-02T00:00:00",
-  "endDate": "2025-01-05T23:59:59"
+  "endDate": "2025-01-05T23:59:59",
+  "windowMinutes": 5
 }
 ```
 
@@ -398,7 +399,7 @@ Inicia una simulación semanal en memoria tomando los pedidos `PROJECTED` almace
 { "simulationId": "d4d9fbaa-9c0f-4f28-8b41-1d36d8aca3c1" }
 ```
 
-Si omites `startDate` o `endDate`, el backend usa automáticamente la primera y última fecha disponible entre los pedidos proyectados. El backend empieza a procesar las órdenes en segundo plano y a publicar snapshots parciales.
+Si omites `startDate` o `endDate`, el backend usa automáticamente la primera y última fecha disponible entre los pedidos proyectados. `windowMinutes` define la longitud de cada lote temporal (por defecto 10 minutos); usa `0` para ejecutar el modo legacy pedido por pedido. El backend empieza a procesar las órdenes en segundo plano y a publicar snapshots parciales.
 
 ---
 

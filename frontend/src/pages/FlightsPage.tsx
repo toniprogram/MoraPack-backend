@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from "react";
-import { Eye, Plus, Trash2, RefreshCw, Plane } from "lucide-react";
+import { Eye, Plus, RefreshCw } from "lucide-react";
 import { useFlights } from "../hooks/useFlights";
 import type { Vuelo, EstadoVuelo } from "../types/vuelo";
 import VuelosSummary from "../components/VuelosSummary";
@@ -67,12 +67,13 @@ export default function FlightsPage() {
   const filteredFlights = useMemo(() => {
     if (!list.data) return [];
     return list.data.filter((flight) => {
-      if (statusFilter !== "todos" && flight.estado !== statusFilter) return false;
+      const flightStatus = flight.estado ?? "programado";
+      if (statusFilter !== "todos" && flightStatus !== statusFilter) return false;
       if (searchTerm) {
         const lowerSearchTerm = searchTerm.toLowerCase();
-        // Se asume que el tipo 'Vuelo' tiene 'codigoVuelo'
+        const flightCode = flight.codigoVuelo ?? "";
         return (
-          flight.codigoVuelo.toLowerCase().includes(lowerSearchTerm) ||
+          flightCode.toLowerCase().includes(lowerSearchTerm) ||
           flight.origen.toLowerCase().includes(lowerSearchTerm) ||
           flight.destino.toLowerCase().includes(lowerSearchTerm)
         );
@@ -189,23 +190,27 @@ export default function FlightsPage() {
               <tr><td colSpan={7} className="text-center opacity-60 py-4">No se encontraron vuelos.</td></tr>
             ) : (
               filteredFlights.map((flight) => {
-                const ocupacionPct = Math.round((flight.ocupacionActual / flight.capacidad) * 100);
+                const ocupacionActual = flight.ocupacionActual ?? 0;
+                const ocupacionPct = flight.capacidad
+                  ? Math.round((ocupacionActual / flight.capacidad) * 100)
+                  : 0;
+                const flightStatus = flight.estado ?? "programado";
                 return (
                   <tr key={flight.id}>
-                    <td><strong>{flight.codigoVuelo}</strong></td>
-                    <td><div>{flight.origen} ✈️ {flight.destino}</div><div className="text-xs opacity-60">{flight.distanciaKm} km</div></td>
-                    <td>{flight.aeronave}</td>
+                    <td><strong>{flight.codigoVuelo ?? `FL-${flight.id}`}</strong></td>
+                    <td><div>{flight.origen} ✈️ {flight.destino}</div><div className="text-xs opacity-60">{flight.distanciaKm ?? 0} km</div></td>
+                    <td>{flight.aeronave ?? "N/A"}</td>
                     <td>
                       <div>{formatMinutes(flight.salidaLocalMin)} - {formatMinutes(flight.llegadaLocalMin)}</div>
                       <div className="text-xs opacity-60">{formatDuration(flight.salidaLocalMin, flight.llegadaLocalMin)}</div>
                     </td>
                     <td>
                       <div className="flex items-center gap-2">
-                        <span>{flight.ocupacionActual}/{flight.capacidad}</span>
+                        <span>{ocupacionActual}/{flight.capacidad}</span>
                         <progress className={`progress ${ocupacionPct > 90 ? 'progress-error' : 'progress-success'}`} value={ocupacionPct} max="100"></progress>
                       </div>
                     </td>
-                    <td><span className={`badge ${getStatusBadgeClass(flight.estado)} capitalize`}>{flight.estado}</span></td>
+                    <td><span className={`badge ${getStatusBadgeClass(flightStatus)} capitalize`}>{flightStatus}</span></td>
                     <td className="flex gap-2">
                       <button className="btn btn-ghost btn-xs" title="Ver detalle"><Eye size={16} /></button>
                       {/* botones de Editar/Eliminar */}

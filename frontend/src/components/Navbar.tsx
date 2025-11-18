@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 
 export default function Navbar() {
-  const [status, setStatus] = useState(true);
+  const [status] = useState(true);
   const [time, setTime] = useState("");
 
   useEffect(() => {

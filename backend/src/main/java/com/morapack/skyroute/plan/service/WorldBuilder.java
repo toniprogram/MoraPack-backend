@@ -62,11 +62,16 @@ public class WorldBuilder {
 
     @Transactional(readOnly = true)
     public World buildBaseWorld() {
+        return buildBaseWorld(Instant.now());
+    }
+
+    public World buildBaseWorld(Instant initialInstant) {
         Airports airports = Airports.fromEntities(airportRepository.findAll());
         Map<String, Set<LocalDate>> cancellationsByFlight = loadCancellations();
         Flights flights = Flights.fromEntities(flightRepository.findAll(), airports, cancellationsByFlight);
         AirportSchedule airportSchedule = new AirportSchedule(airports.asMap());
-        return World.fromData(airports, flights, airportSchedule, Instant.now());
+        Instant seed = initialInstant != null ? initialInstant : Instant.now();
+        return World.fromData(airports, flights, airportSchedule, seed);
     }
 
     private static Order cloneOrder(Order source, Airports airports) {

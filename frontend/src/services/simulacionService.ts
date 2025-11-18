@@ -1,6 +1,5 @@
 import { API } from "../api/api";
-import type { OrderRequest } from "../types/orderRequest";
-import type { SimulationStartResponse, SimulationStartRequest } from "../types/simulacion";
+import type { SimulationStartResponse, SimulationStartRequest } from "../types/simulation";
 
 const startSimulation = async (request: SimulationStartRequest): Promise<SimulationStartResponse> => {
   const res = await API.post<SimulationStartResponse>("/simulations", request);

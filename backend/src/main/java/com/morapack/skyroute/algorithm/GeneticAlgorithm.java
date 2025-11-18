@@ -23,7 +23,26 @@ public class GeneticAlgorithm {
     }
 
     public void initializePopulation(int size) {
-        for (int i = 0; i < size; i++) {
+        initializePopulation(size, null);
+    }
+
+    public void initializePopulation(int size, Individual seed) {
+        population.clear();
+        if (seed != null) {
+            try {
+                population.add(seed.copy());
+            } catch (Exception ex) {
+                // ignore copy failure
+            }
+            if (population.size() < size) {
+                try {
+                    population.add(Individual.mutate(world, demand, seed, rnd));
+                } catch (Exception ex) {
+                    // ignore mutation failure
+                }
+            }
+        }
+        while (population.size() < size) {
             population.add(Individual.randomIndividual(world, demand, rnd));
         }
     }
@@ -71,12 +90,15 @@ public class GeneticAlgorithm {
     }
 
     public Individual run(int populationSize, int generations) {
+        return run(populationSize, generations, null);
+    }
+
+    public Individual run(int populationSize, int generations, Individual seed) {
         if (demand.isEmpty()) {
             throw new IllegalStateException("No orders available for GA");
         }
 
-        population.clear();
-        initializePopulation(populationSize);
+        initializePopulation(populationSize, seed);
         Individual best = bestIndividual(population);
 
         for (int gen = 0; gen < generations; gen++) {
