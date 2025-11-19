@@ -17,7 +17,7 @@ export default function OperacionPage() {
         actions
     } = useOperacion();
 
-    // Fecha fija para la demo
+    // Fecha fija para la demo (cambiar)
     const [fechaSimulacion] = useState("2025-01-01");
 
     const handleStart = () => {
@@ -196,24 +196,6 @@ export default function OperacionPage() {
                             </button>
                         </div>
                     )}
-                </div>
-
-                {/* BITÁCORA (Footer del Sidebar) */}
-                <div className="h-32 bg-black/30 flex flex-col border-t border-gray-700">
-                    <div className="px-4 py-2 text-[9px] font-bold text-gray-500 uppercase tracking-widest border-b border-gray-800 flex justify-between items-center">
-                        <span>Bitácora</span>
-                        <Activity size={12} className="text-green-500 animate-pulse" />
-                    </div>
-                    <div className="flex-1 overflow-y-auto p-3 space-y-2 font-mono text-[10px]">
-                        {status === 'buffering' && (
-                            <div className="text-yellow-500 animate-pulse">Conectando con satélites...</div>
-                        )}
-                        {eventLog.map((log, i) => (
-                            <div key={i} className="text-gray-300 border-l-2 border-gray-600 pl-2 py-0.5 animate-in slide-in-from-left-2 leading-tight">
-                                <span className="text-indigo-500 mr-1 opacity-70">{'>'}</span> {log}
-                            </div>
-                        ))}
-                    </div>
                 </div>
             </div>
 

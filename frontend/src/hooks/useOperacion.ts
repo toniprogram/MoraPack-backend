@@ -27,7 +27,7 @@ export const useOperacion = () => {
     const [activeSegments, setActiveSegments] = useState<SegmentoVuelo[]>([]);
     const [vuelosEnMovimiento, setVuelosEnMovimiento] = useState<VueloEnMovimiento[]>([]);
 
-    // ESTADO DE MÉTRICAS AMPLIADO
+    // ESTADO DE MÉTRICAS
     const [metrics, setMetrics] = useState({
         processed: 0,          // Total pedidos procesados en el plan
         ordersInTransit: 0,    // Pedidos volando AHORA
@@ -52,7 +52,7 @@ export const useOperacion = () => {
                             setDayPlan(payload.snapshot);
                             if (status === 'buffering') {
                                 setStatus('running');
-                                setEventLog(prev => ['✅ Plan recibido. Iniciando operación.', ...prev]);
+                                setEventLog(prev => ['Plan recibido. Iniciando operación.', ...prev]);
                             }
                         }
                     }
@@ -69,7 +69,7 @@ export const useOperacion = () => {
         onSuccess: (data, variables) => {
             setSimulationId(data.simulationId);
             setStatus('buffering');
-            setEventLog(['🔄 Sincronizando...', '⏳ Obteniendo plan operativo...']);
+            setEventLog(['Sincronizando...', 'Obteniendo plan operativo...']);
             const start = new Date(variables.startDate + (variables.startDate.endsWith('Z') ? '' : 'Z'));
             setSimClock(start);
         }
@@ -121,7 +121,7 @@ export const useOperacion = () => {
 
                     // Conteo total de vuelos únicos en el plan
                     if (!completedFlightIds.has(uniqueFlightId)) {
-                        countTotalFlights++; // Solo contamos una vez por iteración global (lógica aproximada)
+                        countTotalFlights++;
                     }
 
                     // ESTADO DEL VUELO
@@ -187,30 +187,29 @@ export const useOperacion = () => {
 
         // Actualizamos métricas completas
         setMetrics({
-            processed: dayPlan.processedOrders, // Total del plan
+            processed: dayPlan.processedOrders,
             ordersInTransit: countOrdersInTransit,
             ordersDelivered: countOrdersDelivered,
             delayedOrders: countDelayedTotal,
             activeFlights: vuelosActivosMap.size,
-            // Nota: countCompletedFlights es un aproximado basado en la iteración actual
             completedFlights: countCompletedFlights,
-            totalFlights: countCompletedFlights + vuelosActivosMap.size // Aproximación visual
+            totalFlights: countCompletedFlights + vuelosActivosMap.size
         });
 
     }, [simClock, dayPlan, aeropuertos]);
 
     const triggerReplan = () => {
-        setEventLog(prev => ['⚠️ ALERTA: Iniciando protocolo de replanificación...', ...prev]);
+        setEventLog(prev => ['ALERTA: Iniciando protocolo de replanificación...', ...prev]);
         const oldStatus = status;
         setStatus('buffering');
         setTimeout(() => {
              setStatus(oldStatus === 'running' ? 'running' : 'idle');
-             setEventLog(prev => ['✅ Rutas optimizadas correctamente.', ...prev]);
+             setEventLog(prev => ['Rutas optimizadas correctamente.', ...prev]);
         }, 1500);
     };
 
     const triggerBlock = (code: string) => {
-        setEventLog(prev => [`⛔ ALERTA CRÍTICA: Operaciones suspendidas en ${code}`, ...prev]);
+        setEventLog(prev => [`ALERTA CRÍTICA: Operaciones suspendidas en ${code}`, ...prev]);
     };
 
     return {
