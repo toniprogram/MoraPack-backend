@@ -3,3 +3,12 @@
 @plugin "daisyui" {
     themes: autumn --default, business --prefersdark; 
 }
+
+.plane-marker-icon {
+    background: transparent;
+    border: none;
+}
+
+.plane-marker-icon img {
+    display: block;
+}

@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   Plus,
   Trash2,
@@ -9,6 +10,7 @@ import {
 import { usePedidos, type PedidoScope } from "../hooks/usePedidos";
 import type { Order } from "../types/order";
 import type { OrderRequest } from "../types/orderRequest";
+import { aeropuertoService } from "../services/aeropuertoService";
 import PedidosSummary from "../components/PedidosSummary";
 
 const PAGE_SIZE_OPTIONS = [20, 50, 100, 250, 500];
@@ -40,6 +42,11 @@ export default function PedidosPage() {
   const [jumpValue, setJumpValue] = useState<string>("1");
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<OrderRequest>(buildDefaultForm(scope === "PROJECTED"));
+
+  const { data: aeropuertos = [] } = useQuery({
+    queryKey: ["aeropuertos"],
+    queryFn: aeropuertoService.getAll,
+  });
 
   const { list, create, remove } = usePedidos(scope, page, pageSize);
 
@@ -174,14 +181,18 @@ export default function PedidosPage() {
           className="card bg-base-200 p-4 shadow-md border border-base-300"
         >
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <input
-              type="text"
-              placeholder="ID"
-              className="input input-bordered input-sm w-full"
-              value={form.id}
-              onChange={(e) => setForm({ ...form, id: e.target.value })}
-              required
-            />
+            <div className="form-control">
+              <input
+                type="text"
+                placeholder="ID (dejar vacío para autogenerar)"
+                className="input input-bordered input-sm w-full"
+                value={form.id}
+                onChange={(e) => setForm({ ...form, id: e.target.value })}
+              />
+              <label className="label">
+                <span className="label-text-alt">Prefix 1... = REAL, 0... = PROJECTED</span>
+              </label>
+            </div>
             <input
               type="text"
               placeholder="Referencia cliente"
@@ -192,19 +203,31 @@ export default function PedidosPage() {
               }
               required
             />
-            <input
-              type="text"
-              placeholder="Aeropuerto destino (código)"
-              className="input input-bordered input-sm w-full"
-              value={form.destinationAirportCode}
-              onChange={(e) =>
-                setForm({
-                  ...form,
-                  destinationAirportCode: e.target.value.toUpperCase(),
-                })
-              }
-              required
-            />
+            <div className="form-control">
+              <label className="label">
+                <span className="label-text">Aeropuerto destino</span>
+              </label>
+              <select
+                className="select select-bordered select-sm w-full"
+                value={form.destinationAirportCode}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    destinationAirportCode: e.target.value,
+                  })
+                }
+                required
+              >
+                <option value="" disabled>
+                  Selecciona aeropuerto
+                </option>
+                {aeropuertos.map((ap) => (
+                  <option key={ap.code} value={ap.code}>
+                    {ap.code} - {ap.name}
+                  </option>
+                ))}
+              </select>
+            </div>
             <input
               type="number"
               min={1}
