@@ -64,6 +64,16 @@ export default function Navbar() {
               Simulación
             </NavLink>
           </li>
+          <li>
+              <NavLink
+                to="/operacion"
+                className={({ isActive }) =>
+                  `btn btn-ghost ${isActive ? "btn-active" : ""}`
+                }
+              >
+                Operación
+              </NavLink>
+           </li>
         </ul>
       </div>
 
