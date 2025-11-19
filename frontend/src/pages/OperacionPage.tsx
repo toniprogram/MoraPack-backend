@@ -192,7 +192,7 @@ export default function OperacionPage() {
                                 className={`btn btn-sm w-full border-0 text-[10px] font-bold tracking-wide ${status === 'buffering' ? 'bg-yellow-600 text-white cursor-wait' : 'bg-yellow-500 hover:bg-yellow-400 text-black'}`}
                             >
                                 <RefreshCw size={14} className={status === 'buffering' ? 'animate-spin' : ''}/>
-                                {status === 'buffering' ? 'OPTIMIZANDO...' : 'REPLANIFICAR FLOTA'}
+                                {status === 'buffering' ? 'OPTIMIZANDO...' : 'REPLANIFICAR'}
                             </button>
                         </div>
                     )}
@@ -208,16 +208,6 @@ export default function OperacionPage() {
                     isLoading={false}
                     filtroHubActivo=""
                 />
-
-                {status === 'buffering' && (
-                    <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-black/80 text-white px-8 py-6 rounded-xl shadow-2xl backdrop-blur-md z-[1000] flex flex-col items-center gap-4 border border-indigo-500/30">
-                        <RefreshCw className="animate-spin text-indigo-400" size={40}/>
-                        <div className="text-center">
-                            <div className="font-bold text-lg">SINCRONIZANDO SISTEMA</div>
-                            <div className="text-xs text-gray-400 mt-1">Descargando itinerarios de vuelo...</div>
-                        </div>
-                    </div>
-                )}
             </div>
         </div>
     );
