@@ -16,6 +16,7 @@ export interface VueloEnMovimiento {
    estadoVisual: 'en curso' | 'retrasado' | 'completado';
    origen: string;
    destino: string;
+   destinoActual?: string;
    departureTime?: string;
   arrivalTime?: string;
 }
@@ -55,6 +56,7 @@ export interface SegmentoVuelo {
   const timelineStartRef = useRef<number | null>(null);
   const firstSnapshotRealRef = useRef<number | null>(null);
   const [segmentosVuelo, setSegmentosVuelo] = useState<Map<string, SegmentoVuelo>>(new Map());
+  const [animPaused, setAnimPaused] = useState(false);
 
   const { data: aeropuertos = [], isLoading: isLoadingAeropuertos } = useQuery<Airport[]>({
      queryKey: ['aeropuertos'],
@@ -122,6 +124,47 @@ export interface SegmentoVuelo {
     });
   }, []);
 
+  const snapshotConRutas = visibleSnapshot ?? finalSnapshot ?? latestProgress;
+
+  const segmentosPorOrden = useMemo(() => {
+    if (!snapshotConRutas?.orderPlans) {
+      return new Map<string, SimulationSegment[]>();
+    }
+    const mapa = new Map<string, SimulationSegment[]>();
+    snapshotConRutas.orderPlans.forEach(plan => {
+      const segmentos = plan.routes?.flatMap(ruta => ruta.segments ?? []) ?? [];
+      const ordenados = segmentos
+        .filter(seg => seg.departureUtc && seg.arrivalUtc)
+        .sort((a, b) => Date.parse(a.departureUtc) - Date.parse(b.departureUtc));
+      mapa.set(plan.orderId, ordenados);
+    });
+    return mapa;
+  }, [snapshotConRutas]);
+
+  const obtenerDestinoActualOrden = useCallback((orderId: string | undefined, currentMs: number) => {
+    if (!orderId) return null;
+    const segmentos = segmentosPorOrden.get(orderId);
+    if (!segmentos || segmentos.length === 0) {
+      return null;
+    }
+    for (const segmento of segmentos) {
+      if (!segmento.departureUtc || !segmento.arrivalUtc) continue;
+      const dep = Date.parse(segmento.departureUtc);
+      const arr = Date.parse(segmento.arrivalUtc);
+      if (Number.isNaN(dep) || Number.isNaN(arr)) {
+        continue;
+      }
+      if (currentMs <= dep) {
+        return segmento.destination;
+      }
+      if (dep <= currentMs && currentMs <= arr) {
+        return segmento.destination;
+      }
+    }
+    const ultimo = segmentos[segmentos.length - 1];
+    return ultimo?.destination ?? null;
+  }, [segmentosPorOrden]);
+
    // ===== WEBSOCKET CONNECTION =====
   useEffect(() => {
     if (!simulationId) return;
@@ -176,7 +219,7 @@ export interface SegmentoVuelo {
   }, [simulationId, adjustSnapshotTimestamp, mergeFlightSegments]);
 
    // ===== INCREMENTO DE TIEMPO SIMULADO (ANIMACIÓN) =====
-   const shouldAnimate = (status === 'running' || status === 'completed');
+   const shouldAnimate = !animPaused && (status === 'running' || status === 'completed');
 
    useEffect(() => {
      if (!shouldAnimate || simBaseReal === null || simBaseSimulado === null) return;
@@ -274,6 +317,9 @@ export interface SegmentoVuelo {
       const latActual = origen[0] + (destino[0] - origen[0]) * ratio + offsetLat;
       const lonActual = origen[1] + (destino[1] - origen[1]) * ratio + offsetLon;
 
+      const orderIdReferencia = segmento.orderIds[0];
+      const destinoRuta = obtenerDestinoActualOrden(orderIdReferencia, tiempoActualMs);
+
       vuelosEnCurso.push({
         id: segmento.id,
         orderId: segmento.orderIds.join(','),
@@ -284,13 +330,14 @@ export interface SegmentoVuelo {
         estadoVisual,
         origen: segmento.origin,
         destino: segmento.destination,
+        destinoActual: destinoRuta ?? segmento.destination,
         departureTime: segmento.departureUtc,
         arrivalTime: segmento.arrivalUtc,
       });
     });
 
     return vuelosEnCurso;
-  }, [activeSegments, tiempoSimulado, aeropuertos]);
+  }, [activeSegments, tiempoSimulado, aeropuertos, obtenerDestinoActualOrden]);
 
   // ===== MUTACIÓN PARA INICIAR SIMULACIÓN =====
   const simulationMutation = useMutation({
@@ -314,6 +361,8 @@ export interface SegmentoVuelo {
     const startMs = parseUtcMillis(timeline?.start);
     const endMs = parseUtcMillis(timeline?.end);
     setSegmentosVuelo(new Map());
+    setHasSnapshots(false);
+    setAnimPaused(false);
     setTimelineEndMs(endMs);
     timelineStartRef.current = startMs;
     firstSnapshotRealRef.current = null;
@@ -331,8 +380,7 @@ export interface SegmentoVuelo {
   }, [simulationMutation]);
 
    const pausar = useCallback(() => {
-     // Pausa/Reanuda la animación del frontend
-     setStatus(prev => (prev === 'completed' ? 'idle' : 'completed'));
+     setAnimPaused(prev => !prev);
    }, []);
 
   const terminar = useCallback(async () => {
@@ -361,6 +409,8 @@ export interface SegmentoVuelo {
     setStatus('idle');
     setTiempoMovimiento(0);
     setTiempoSimulado(null);
+    setHasSnapshots(false);
+    setAnimPaused(false);
 
   }, [stompClient, simulationId]);
 
@@ -398,5 +448,6 @@ export interface SegmentoVuelo {
      kpis,
      reloj,
      hasSnapshots,
+     status,
   };
  };

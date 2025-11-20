@@ -15,23 +15,48 @@ const hubIcon = new L.Icon({
   shadowSize: [41, 41]
 });
 
-const greenPlaneIcon = new L.Icon({
-  iconUrl: '/images/plane-icon-green.png',
-  iconSize: [25, 25],
-  iconAnchor: [12, 12],
-});
+const PLANE_ICON_SIZE = 25;
+const PLANE_ICON_ANCHOR = [PLANE_ICON_SIZE / 2, PLANE_ICON_SIZE / 2] as [number, number];
+const PLANE_ICON_BASE_ROTATION = 45; // imagen apunta 45° hacia arriba por defecto
 
-const redPlaneIcon = new L.Icon({
-  iconUrl: '/images/plane-icon-red.png',
-  iconSize: [25, 25],
-  iconAnchor: [12, 12],
-});
+const planeIconPaths: Record<'completado' | 'retrasado' | 'default', string> = {
+  completado: '/images/plane-icon-green.png',
+  retrasado: '/images/plane-icon-red.png',
+  default: '/images/plane-icon-blue.png',
+};
 
-const bluePlaneIcon = new L.Icon({
-  iconUrl: '/images/plane-icon-blue.png',
-  iconSize: [25, 25],
-  iconAnchor: [12, 12],
-});
+const createRotatedPlaneIcon = (status: VueloEnMovimiento['estadoVisual'], rotation: number) => {
+  const iconUrl = status === 'completado'
+    ? planeIconPaths.completado
+    : status === 'retrasado'
+      ? planeIconPaths.retrasado
+      : planeIconPaths.default;
+
+  const adjustedRotation = rotation - PLANE_ICON_BASE_ROTATION;
+  return L.divIcon({
+    html: `<img src="${iconUrl}" style="transform: rotate(${adjustedRotation.toFixed(2)}deg); width: ${PLANE_ICON_SIZE}px; height: ${PLANE_ICON_SIZE}px;" alt="avión" />`,
+    className: 'plane-marker-icon',
+    iconSize: [PLANE_ICON_SIZE, PLANE_ICON_SIZE],
+    iconAnchor: PLANE_ICON_ANCHOR,
+  });
+};
+
+const calculateBearing = (fromLat: number, fromLon: number, toLat: number, toLon: number) => {
+  const fromLatRad = (fromLat * Math.PI) / 180;
+  const toLatRad = (toLat * Math.PI) / 180;
+  const deltaLonRad = ((toLon - fromLon) * Math.PI) / 180;
+
+  const y = Math.sin(deltaLonRad) * Math.cos(toLatRad);
+  const x =
+    Math.cos(fromLatRad) * Math.sin(toLatRad) -
+    Math.sin(fromLatRad) * Math.cos(toLatRad) * Math.cos(deltaLonRad);
+
+  const rawBearing = (Math.atan2(y, x) * 180) / Math.PI;
+  if (Number.isNaN(rawBearing)) {
+    return 0;
+  }
+  return (rawBearing + 360) % 360;
+};
 
 interface MapaVuelosProps {
   activeSegments: SegmentoVuelo[];
@@ -55,15 +80,6 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
       .filter((a) => typeof a.latitude === 'number' && typeof a.longitude === 'number')
       .map((a) => [a.id, [a.latitude, a.longitude]])
   );
-
-  // Determina el icono según el estado
-  const getIconForStatus = (status: VueloEnMovimiento['estadoVisual']) => {
-    switch (status) {
-      case 'completado': return greenPlaneIcon;
-      case 'retrasado': return redPlaneIcon;
-      default: return bluePlaneIcon;
-    }
-  };
 
   return (
     <MapContainer
@@ -150,7 +166,8 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
       {/* Dibuja los AVIONES en movimiento usando ID ÚNICO */}
       {vuelosEnMovimiento?.map((vuelo) => {
         const origenCoords = coordsAeropuertos.get(vuelo.origen);
-        const destinoCoords = coordsAeropuertos.get(vuelo.destino);
+        const destinoCodigo = vuelo.destinoActual ?? vuelo.destino;
+        const destinoCoords = coordsAeropuertos.get(destinoCodigo);
 
         if (!origenCoords || !destinoCoords) {
           return null;
@@ -166,17 +183,20 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
           opacidadAvion = 0.2;
         }
 
+        const [destinoLat, destinoLon] = destinoCoords as [number, number];
+        const bearing = calculateBearing(vuelo.latActual, vuelo.lonActual, destinoLat, destinoLon);
+
         return (
           <Marker
             key={vuelo.id}
             position={[vuelo.latActual, vuelo.lonActual]}
-            icon={getIconForStatus(vuelo.estadoVisual)}
+            icon={createRotatedPlaneIcon(vuelo.estadoVisual, bearing)}
             opacity={opacidadAvion}
           >
             <Popup>
               <div className="text-sm">
                 <strong>Vuelo: {vuelo.flightId}</strong><br/>
-                Ruta: {vuelo.origen} → {vuelo.destino}<br/>
+                Ruta: {vuelo.origen} → {vuelo.destinoActual ?? vuelo.destino}<br/>
                 {vuelo.departureTime && (
                   <>Salida: {new Date(vuelo.departureTime).toLocaleTimeString('es-PE', {
                     hour: '2-digit',
