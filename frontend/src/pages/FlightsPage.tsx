@@ -1,8 +1,10 @@
 import React, { useState, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Eye, Plus, RefreshCw } from "lucide-react";
 import { useFlights } from "../hooks/useFlights";
 import type { Vuelo, EstadoVuelo } from "../types/vuelo";
 import VuelosSummary from "../components/VuelosSummary";
+import { aeropuertoService } from "../services/aeropuertoService";
 
 // --- FUNCIONES AUXILIARES ---
 const formatMinutes = (minutes: number) => {
@@ -20,19 +22,19 @@ const formatDuration = (startMin: number, endMin: number) => {
   return `${h}h ${m}m`;
 };
 
-const getStatusBadgeClass = (status: EstadoVuelo) => {
-  const statusClasses: Record<EstadoVuelo, string> = {
-    "en vuelo": "badge-info",
-    "programado": "badge-success",
-    "completado": "badge-ghost",
-    "retrasado": "badge-error"
-  };
-  return statusClasses[status] || "badge-ghost";
+const formatGmtOffset = (offset?: number) => {
+  if (offset === undefined || offset === null) return "GMT";
+  const sign = offset >= 0 ? "+" : "";
+  return `GMT${sign}${offset}`;
 };
 
 export default function FlightsPage() {
   const { list, create } = useFlights();
   const [showForm, setShowForm] = useState(false);
+  const { data: aeropuertos = [] } = useQuery({
+    queryKey: ["aeropuertos"],
+    queryFn: aeropuertoService.getAll,
+  });
 
   const [form, setForm] = useState<Omit<Vuelo, "id">>({
     origen: "",
@@ -82,6 +84,20 @@ export default function FlightsPage() {
     });
   }, [list.data, searchTerm, statusFilter]);
 
+  const airportLookup = useMemo(() => {
+    const map = new Map<string, typeof aeropuertos[number]>();
+    aeropuertos.forEach((ap) => {
+      const key = ap.code || ap.id;
+      if (key) {
+        map.set(key, ap);
+      }
+      if (ap.id && ap.id !== key) {
+        map.set(ap.id, ap);
+      }
+    });
+    return map;
+  }, [aeropuertos]);
+
   // --- ESTADOS DE CARGA ---
   if (list.isLoading)
     return <div className="p-6 text-center">Cargando vuelos...</div>;
@@ -127,8 +143,46 @@ export default function FlightsPage() {
           className="card bg-base-200 p-4 shadow-md border border-base-300"
         >
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-            <input type="text" placeholder="Origen (ej. SPIM)" className="input input-bordered input-sm w-full" value={form.origen} onChange={(e) => setForm({ ...form, origen: e.target.value.toUpperCase() })} required />
-            <input type="text" placeholder="Destino (ej. UBBB)" className="input input-bordered input-sm w-full" value={form.destino} onChange={(e) => setForm({ ...form, destino: e.target.value.toUpperCase() })} required />
+            <div className="form-control">
+              <label className="label">
+                <span className="label-text">Origen</span>
+              </label>
+              <select
+                className="select select-bordered select-sm w-full"
+                value={form.origen}
+                onChange={(e) => setForm({ ...form, origen: e.target.value })}
+                required
+              >
+                <option value="" disabled>
+                  Selecciona aeropuerto
+                </option>
+                {aeropuertos.map((ap) => (
+                  <option key={ap.code ?? ap.id} value={ap.code ?? ap.id}>
+                    {(ap.code ?? ap.id) ?? ""} - {ap.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="form-control">
+              <label className="label">
+                <span className="label-text">Destino</span>
+              </label>
+              <select
+                className="select select-bordered select-sm w-full"
+                value={form.destino}
+                onChange={(e) => setForm({ ...form, destino: e.target.value })}
+                required
+              >
+                <option value="" disabled>
+                  Selecciona aeropuerto
+                </option>
+                {aeropuertos.map((ap) => (
+                  <option key={ap.code ?? ap.id} value={ap.code ?? ap.id}>
+                    {(ap.code ?? ap.id) ?? ""} - {ap.name}
+                  </option>
+                ))}
+              </select>
+            </div>
             <input type="number" placeholder="Minuto Salida" className="input input-bordered input-sm w-full" value={form.salidaLocalMin} onChange={(e) => setForm({ ...form, salidaLocalMin: parseInt(e.target.value) || 0 })} required />
             <input type="number" placeholder="Minuto Llegada" className="input input-bordered input-sm w-full" value={form.llegadaLocalMin} onChange={(e) => setForm({ ...form, llegadaLocalMin: parseInt(e.target.value) || 0 })} required />
             <input type="number" placeholder="Capacidad" className="input input-bordered input-sm w-full" value={form.capacidad} onChange={(e) => setForm({ ...form, capacidad: parseInt(e.target.value) || 250 })} required />
@@ -177,11 +231,11 @@ export default function FlightsPage() {
           <thead>
             <tr>
               <th>Vuelo</th>
-              <th>Ruta</th>
-              <th>Aeronave</th>
-              <th>Horarios</th>
-              <th>Ocupación</th>
-              <th>Estado</th>
+              <th>Origen</th>
+              <th>Destino</th>
+              <th>Horario Local</th>
+              <th>Duración</th>
+              <th>Capacidad</th>
               <th>Acciones</th>
             </tr>
           </thead>
@@ -190,27 +244,46 @@ export default function FlightsPage() {
               <tr><td colSpan={7} className="text-center opacity-60 py-4">No se encontraron vuelos.</td></tr>
             ) : (
               filteredFlights.map((flight) => {
-                const ocupacionActual = flight.ocupacionActual ?? 0;
-                const ocupacionPct = flight.capacidad
-                  ? Math.round((ocupacionActual / flight.capacidad) * 100)
-                  : 0;
-                const flightStatus = flight.estado ?? "programado";
+                const origenAirport = airportLookup.get(flight.origen);
+                const destinoAirport = airportLookup.get(flight.destino);
+                const origenNombre = origenAirport
+                  ? `${origenAirport.name} (${origenAirport.id})`
+                  : flight.origen;
+                const destinoNombre = destinoAirport
+                  ? `${destinoAirport.name} (${destinoAirport.id})`
+                  : flight.destino;
                 return (
                   <tr key={flight.id}>
                     <td><strong>{flight.codigoVuelo ?? `FL-${flight.id}`}</strong></td>
-                    <td><div>{flight.origen} ✈️ {flight.destino}</div><div className="text-xs opacity-60">{flight.distanciaKm ?? 0} km</div></td>
-                    <td>{flight.aeronave ?? "N/A"}</td>
                     <td>
-                      <div>{formatMinutes(flight.salidaLocalMin)} - {formatMinutes(flight.llegadaLocalMin)}</div>
-                      <div className="text-xs opacity-60">{formatDuration(flight.salidaLocalMin, flight.llegadaLocalMin)}</div>
+                      <div>{origenNombre}</div>
+                      {origenAirport && (
+                        <div className="text-xs opacity-60">
+                          {formatGmtOffset(origenAirport.gmtOffsetHours)}
+                        </div>
+                      )}
                     </td>
                     <td>
-                      <div className="flex items-center gap-2">
-                        <span>{ocupacionActual}/{flight.capacidad}</span>
-                        <progress className={`progress ${ocupacionPct > 90 ? 'progress-error' : 'progress-success'}`} value={ocupacionPct} max="100"></progress>
+                      <div>{destinoNombre}</div>
+                      {destinoAirport && (
+                        <div className="text-xs opacity-60">
+                          {formatGmtOffset(destinoAirport.gmtOffsetHours)}
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      <div className="font-mono">
+                        {formatMinutes(flight.salidaLocalMin)} → {formatMinutes(flight.llegadaLocalMin)}
+                      </div>
+                      <div className="text-xs opacity-60">
+                        Origen: {formatGmtOffset(origenAirport?.gmtOffsetHours)} / Destino: {formatGmtOffset(destinoAirport?.gmtOffsetHours)}
                       </div>
                     </td>
-                    <td><span className={`badge ${getStatusBadgeClass(flightStatus)} capitalize`}>{flightStatus}</span></td>
+                    <td>{formatDuration(flight.salidaLocalMin, flight.llegadaLocalMin)}</td>
+                    <td>
+                      <div>{flight.capacidad} pax/día</div>
+                      {flight.aeronave && <div className="text-xs opacity-60">Aeronave: {flight.aeronave}</div>}
+                    </td>
                     <td className="flex gap-2">
                       <button className="btn btn-ghost btn-xs" title="Ver detalle"><Eye size={16} /></button>
                       {/* botones de Editar/Eliminar */}

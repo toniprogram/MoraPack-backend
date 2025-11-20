@@ -1,4 +1,5 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
+import type { ChangeEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Plus,
@@ -6,12 +7,15 @@ import {
   RefreshCw,
   ChevronLeft,
   ChevronRight,
+  Package,
+  Database,
 } from "lucide-react";
 import { usePedidos, type PedidoScope } from "../hooks/usePedidos";
 import type { Order } from "../types/order";
 import type { OrderRequest } from "../types/orderRequest";
 import { aeropuertoService } from "../services/aeropuertoService";
 import PedidosSummary from "../components/PedidosSummary";
+import { orderService } from "../services/orderService";
 
 const PAGE_SIZE_OPTIONS = [20, 50, 100, 250, 500];
 const DEFAULT_PAGE_SIZE = 50;
@@ -24,6 +28,10 @@ const buildDefaultForm = (projected: boolean): OrderRequest => ({
   creationLocal: new Date().toISOString().slice(0, 16),
   projected,
 });
+
+interface OrderRequestExtended extends OrderRequest {
+  fechaOriginal: string;
+}
 
 const formatUtc = (value: string) =>
   new Date(value).toLocaleString("es-PE", {
@@ -42,6 +50,9 @@ export default function PedidosPage() {
   const [jumpValue, setJumpValue] = useState<string>("1");
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<OrderRequest>(buildDefaultForm(scope === "PROJECTED"));
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [ordenesArchivo, setOrdenesArchivo] = useState<OrderRequestExtended[]>([]);
+  const [estaSincronizandoArchivo, setEstaSincronizandoArchivo] = useState(false);
 
   const { data: aeropuertos = [] } = useQuery({
     queryKey: ["aeropuertos"],
@@ -57,6 +68,10 @@ export default function PedidosPage() {
 
   useEffect(() => {
     setForm(buildDefaultForm(scope === "PROJECTED"));
+    setOrdenesArchivo([]);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
   }, [scope]);
 
   const pageData = list.data;
@@ -113,6 +128,80 @@ export default function PedidosPage() {
     remove.mutate(order.id);
   };
 
+  const handleArchivoCargado = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const text = await file.text();
+    const lines = text.split("\n").filter((line) => line.trim() !== "");
+
+    try {
+      const ordenesParseadas: OrderRequestExtended[] = lines.map((line) => {
+        const parts = line.split("-");
+
+        if (parts.length < 7) throw new Error(`Línea inválida: "${line}"`);
+
+        const id = parts[0].trim();
+        const datePart = parts[1].trim();
+        const hourPart = parts[2].trim();
+        const minutePart = parts[3].trim();
+        const dest = parts[4].trim();
+        const qty = parts[5].trim();
+        const ref = parts[6].trim();
+
+        const year = datePart.substring(0, 4);
+        const month = datePart.substring(4, 6);
+        const day = datePart.substring(6, 8);
+
+        const isoDate = `${year}-${month}-${day}`;
+        const isoTime = `${hourPart.padStart(2, "0")}:${minutePart.padStart(2, "0")}:00`;
+        const creationLocal = `${isoDate}T${isoTime}`;
+
+        const quantity = parseInt(qty, 10);
+        if (Number.isNaN(quantity)) throw new Error(`Cantidad inválida: "${qty}"`);
+
+        return {
+          id,
+          customerReference: ref,
+          destinationAirportCode: dest,
+          quantity,
+          creationLocal,
+          fechaOriginal: creationLocal,
+          projected: true,
+        };
+      });
+      setOrdenesArchivo(ordenesParseadas);
+      window.alert(`Se cargaron ${ordenesParseadas.length} órdenes correctamente`);
+    } catch (error: any) {
+      console.error("❌ Error al parsear archivo:", error);
+      window.alert(`❌ Error: ${error.message ?? error}`);
+      setOrdenesArchivo([]);
+    } finally {
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  };
+
+  const handleGuardarProyeccion = async () => {
+    if (ordenesArchivo.length === 0) {
+      window.alert("Carga un archivo con órdenes proyectadas antes de sincronizar.");
+      return;
+    }
+    setEstaSincronizandoArchivo(true);
+    try {
+      await orderService.createProjectedBatch(ordenesArchivo);
+      setOrdenesArchivo([]);
+      window.alert(`Se guardaron ${ordenesArchivo.length} órdenes proyectadas.`);
+      list.refetch();
+    } catch (error) {
+      console.error("Error guardando pedidos proyectados:", error);
+      window.alert("❌ No se pudieron guardar todos los pedidos proyectados. Revisa la consola para más detalles.");
+    } finally {
+      setEstaSincronizandoArchivo(false);
+    }
+  };
+
   if (list.isLoading) {
     return <div className="p-6 text-center">Cargando pedidos...</div>;
   }
@@ -157,6 +246,36 @@ export default function PedidosPage() {
               ))}
             </select>
           </div>
+          {scope === "PROJECTED" && (
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-wrap gap-2 items-center">
+                <label className="flex items-center gap-2 text-sm font-semibold">
+                  <Package size={16} /> Cargar pedidos (.txt)
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".txt"
+                    className="file-input file-input-bordered file-input-sm w-full max-w-xs"
+                    onChange={handleArchivoCargado}
+                    disabled={estaSincronizandoArchivo}
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline flex items-center gap-2"
+                  onClick={handleGuardarProyeccion}
+                  disabled={estaSincronizandoArchivo || ordenesArchivo.length === 0}
+                >
+                  <Database size={16} /> Guardar pedidos proyectados
+                </button>
+              </div>
+              {ordenesArchivo.length > 0 && (
+                <p className="text-xs text-success">
+                  {ordenesArchivo.length} pedidos listos para sincronizar.
+                </p>
+              )}
+            </div>
+          )}
         </div>
         <div className="flex gap-2">
           <button className="btn btn-outline btn-sm" onClick={() => list.refetch()}>
@@ -222,8 +341,8 @@ export default function PedidosPage() {
                   Selecciona aeropuerto
                 </option>
                 {aeropuertos.map((ap) => (
-                  <option key={ap.code} value={ap.code}>
-                    {ap.code} - {ap.name}
+                  <option key={ap.code ?? ap.id} value={ap.code ?? ap.id}>
+                    {(ap.code ?? ap.id) ?? ""} - {ap.name}
                   </option>
                 ))}
               </select>

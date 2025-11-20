@@ -36,8 +36,8 @@ export interface SegmentoVuelo {
  const BROKER_URL = 'ws://localhost:8080/ws';
  const TOPIC_PREFIX = '/topic/simulations/';
 
- // 3600x (1 hora sim = 1 seg real)
- const DEFAULT_SPEED = 3600;
+ // 2000x (configuración solicitada)
+ const DEFAULT_SPEED = 2000;
 
  export const useSimulacion = () => {
    const [simulationId, setSimulationId] = useState<string | null>(null);
