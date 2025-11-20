@@ -348,31 +348,10 @@ export default function SimulacionPage() {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".txt"
               className="hidden"
               onChange={handleArchivoCargado}
+              disabled
             />
-            <button
-              type="button"
-              className="btn btn-sm btn-outline w-full flex items-center gap-2"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={estaActivo || estaSincronizando}
-            >
-              <Package size={16} /> Cargar pedidos (.txt)
-            </button>
-
-            <button
-              className="btn btn-sm btn-outline w-full"
-              onClick={handleGuardarProyeccion}
-              disabled={estaSincronizando || estaActivo || ordenesParaSimular.length === 0}
-            >
-              <Database size={16} /> Guardar pedidos proyectados
-            </button>
-            {proyeccionGuardada && (
-              <div className="text-[11px] text-success-content text-center">
-                Proyección sincronizada en base de datos.
-              </div>
-            )}
 
             <div className="flex gap-2">
               <button
