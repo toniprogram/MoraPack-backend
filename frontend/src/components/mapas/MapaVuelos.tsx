@@ -1,6 +1,6 @@
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap, Tooltip } from 'react-leaflet';
 import L from 'leaflet';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import type { LatLngExpression } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import type { Airport } from '../../types/airport';
@@ -133,6 +133,22 @@ interface MapaVuelosProps {
 
 export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMovimiento, filtroHubActivo, airportStocks = {} }: MapaVuelosProps) {
   const initialPosition: LatLngExpression = [20, 0];
+  const [mapTheme, setMapTheme] = useState<'light' | 'dark'>('dark');
+
+  useEffect(() => {
+    const resolveTheme = () => {
+      const theme = (document.documentElement.getAttribute('data-theme') || '').toLowerCase();
+      if (theme.includes('business') || theme.includes('dark')) {
+        setMapTheme('dark');
+      } else {
+        setMapTheme('light');
+      }
+    };
+    resolveTheme();
+    const observer = new MutationObserver(resolveTheme);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => observer.disconnect();
+  }, []);
 
   const coordsAeropuertos = new Map<string, LatLngExpression>(
     aeropuertos
@@ -146,13 +162,23 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
       zoom={2}
       minZoom={2}
       className="w-full h-full z-0"
-      style={{ backgroundColor: '#1f2937' }}
+      style={{ backgroundColor: mapTheme === 'dark' ? '#1f2937' : '#e5e7eb' }}
     >
-      <TileLayer
-        url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-        attribution='&copy; OpenStreetMap &copy; CARTO'
-        noWrap={false}
-      />
+      {mapTheme === 'dark' ? (
+        <TileLayer
+          key="dark"
+          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+          attribution='&copy; OpenStreetMap &copy; CARTO'
+          noWrap={false}
+        />
+      ) : (
+        <TileLayer
+          key="light"
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          attribution='&copy; OpenStreetMap contributors'
+          noWrap={false}
+        />
+      )}
 
       <MapResizer isLoading={isLoading} />
 

@@ -86,18 +86,27 @@ export default function PedidosPage() {
     }
   }, [page, totalPages]);
 
-  const visiblePages = useMemo(() => {
-    const pages = new Set<number>();
-    pages.add(0);
-    pages.add(totalPages - 1);
-    for (let offset = -2; offset <= 2; offset++) {
-      const candidate = currentPage + offset;
-      if (candidate > 0 && candidate < totalPages - 1) {
-        pages.add(candidate);
+  useEffect(() => {
+    setJumpValue(String(currentPage + 1));
+  }, [currentPage]);
+
+  const getPageButtons = useMemo(() => {
+    return (page: number, total: number) => {
+      if (total <= 7) {
+        return Array.from({ length: total }, (_, idx) => idx);
       }
-    }
-    return Array.from(pages).sort((a, b) => a - b);
-  }, [currentPage, totalPages]);
+      const buttons = new Set<number>();
+      buttons.add(0);
+      buttons.add(total - 1);
+      for (let offset = -2; offset <= 2; offset++) {
+        const candidate = page + offset;
+        if (candidate > 0 && candidate < total - 1) {
+          buttons.add(candidate);
+        }
+      }
+      return Array.from(buttons).sort((a, b) => a - b);
+    };
+  }, []);
 
   const handleJump = () => {
     const numeric = Number(jumpValue);
@@ -308,9 +317,6 @@ export default function PedidosPage() {
                 value={form.id}
                 onChange={(e) => setForm({ ...form, id: e.target.value })}
               />
-              <label className="label">
-                <span className="label-text-alt">Prefix 1... = REAL, 0... = PROJECTED</span>
-              </label>
             </div>
             <input
               type="text"
@@ -413,7 +419,20 @@ export default function PedidosPage() {
             </tr>
           </thead>
           <tbody>
-            {items.length === 0 ? (
+            {list.isFetching ? (
+              Array.from({ length: Math.min(pageSize, 10) }).map((_, idx) => (
+                <tr key={`sk-${idx}`} className="h-12">
+                  <td><div className="skeleton h-4 w-20"></div></td>
+                  <td><div className="skeleton h-4 w-24"></div></td>
+                  <td><div className="skeleton h-4 w-28"></div></td>
+                  <td><div className="skeleton h-4 w-10"></div></td>
+                  <td><div className="skeleton h-4 w-16"></div></td>
+                  <td><div className="skeleton h-4 w-24"></div></td>
+                  <td><div className="skeleton h-4 w-24"></div></td>
+                  <td><div className="skeleton h-6 w-8"></div></td>
+                </tr>
+              ))
+            ) : items.length === 0 ? (
               <tr>
                 <td colSpan={8} className="text-center opacity-60 py-4">
                   No hay pedidos registrados
@@ -472,11 +491,11 @@ export default function PedidosPage() {
             <button
               className="btn btn-sm"
               onClick={() => setPage((prev) => Math.max(prev - 1, 0))}
-              disabled={currentPage === 0}
+              disabled={currentPage === 0 || list.isFetching}
             >
               <ChevronLeft size={16} />
             </button>
-            {visiblePages.map((pageIndex) => (
+            {getPageButtons(currentPage, totalPages).map((pageIndex) => (
               <button
                 key={pageIndex}
                 className={`btn btn-sm ${
@@ -486,6 +505,7 @@ export default function PedidosPage() {
                   setPage(pageIndex);
                   setJumpValue(String(pageIndex + 1));
                 }}
+                disabled={list.isFetching}
               >
                 {pageIndex + 1}
               </button>
@@ -495,7 +515,7 @@ export default function PedidosPage() {
               onClick={() =>
                 setPage((prev) => Math.min(prev + 1, totalPages - 1))
               }
-              disabled={currentPage >= totalPages - 1}
+              disabled={currentPage >= totalPages - 1 || list.isFetching}
             >
               <ChevronRight size={16} />
             </button>
@@ -507,8 +527,9 @@ export default function PedidosPage() {
                 className="input input-bordered input-xs w-20"
                 value={jumpValue}
                 onChange={(event) => setJumpValue(event.target.value)}
+                disabled={list.isFetching}
               />
-              <button className="btn btn-xs" onClick={handleJump}>
+              <button className="btn btn-xs" onClick={handleJump} disabled={list.isFetching}>
                 Ir
               </button>
             </div>
