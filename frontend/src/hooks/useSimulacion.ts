@@ -43,7 +43,6 @@ export interface SegmentoVuelo {
   arrivalUtc: string;
   orderIds: string[];
   retrasado: boolean;
-  capacity: number;
   routeQuantity: number;
 }
 
@@ -125,6 +124,7 @@ export const useSimulacion = () => {
 
             // Acumulamos la carga si es el mismo vuelo llevando varios pedidos
             const currentQuantity = existing?.routeQuantity || 0;
+            const segmentoQty = segmento.quantity ?? 0;
 
             next.set(id, {
               id,
@@ -135,8 +135,7 @@ export const useSimulacion = () => {
               arrivalUtc: segmento.arrivalUtc,
               orderIds,
               retrasado: plan.slackMinutes <= 0,
-              capacity: segmento.capacity || 0,
-              routeQuantity: currentQuantity + (segmento.routeQuantity || 0)
+              routeQuantity: currentQuantity + segmentoQty
             });
           });
         });
@@ -361,7 +360,7 @@ export const useSimulacion = () => {
         destinoCode: segmento.destination,
         salidaProgramada: segmento.departureUtc,
         llegadaProgramada: segmento.arrivalUtc,
-        capacidadTotal: segmento.capacity,
+        capacidadTotal: segmento.routeQuantity,
         capacidadUsada: segmento.routeQuantity,
 
         pedidos: segmento.orderIds.map(id => ({

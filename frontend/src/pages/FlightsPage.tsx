@@ -1,10 +1,13 @@
 import React, { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Eye, Plus, RefreshCw } from "lucide-react";
+import { Eye, Plus, RefreshCw, ChevronLeft, ChevronRight } from "lucide-react";
 import { useFlights } from "../hooks/useFlights";
 import type { Vuelo, EstadoVuelo } from "../types/vuelo";
 import VuelosSummary from "../components/VuelosSummary";
 import { aeropuertoService } from "../services/aeropuertoService";
+
+const PAGE_SIZE_OPTIONS = [20, 50, 100, 200];
+const DEFAULT_PAGE_SIZE = 50;
 
 // --- FUNCIONES AUXILIARES ---
 const formatMinutes = (minutes: number) => {
@@ -35,6 +38,9 @@ export default function FlightsPage() {
     queryKey: ["aeropuertos"],
     queryFn: aeropuertoService.getAll,
   });
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [page, setPage] = useState(0);
+  const [jumpValue, setJumpValue] = useState("1");
 
   const [form, setForm] = useState<Omit<Vuelo, "id">>({
     origen: "",
@@ -63,6 +69,7 @@ export default function FlightsPage() {
   const handleClearFilters = () => {
     setSearchTerm("");
     setStatusFilter("todos");
+    setPage(0);
   };
 
   // Filtrado
@@ -83,6 +90,41 @@ export default function FlightsPage() {
       return true;
     });
   }, [list.data, searchTerm, statusFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredFlights.length / pageSize));
+  const currentPage = Math.min(page, totalPages - 1);
+
+  const getPageButtons = useMemo(() => {
+    return (current: number, total: number) => {
+      if (total <= 7) return Array.from({ length: total }, (_, idx) => idx);
+      const buttons = new Set<number>();
+      buttons.add(0);
+      buttons.add(total - 1);
+      for (let offset = -2; offset <= 2; offset++) {
+        const candidate = current + offset;
+        if (candidate > 0 && candidate < total - 1) {
+          buttons.add(candidate);
+        }
+      }
+      return Array.from(buttons).sort((a, b) => a - b);
+    };
+  }, []);
+
+  React.useEffect(() => {
+    if (page >= totalPages) {
+      setPage(totalPages - 1);
+      setJumpValue(String(totalPages));
+    }
+  }, [page, totalPages]);
+
+  React.useEffect(() => {
+    setJumpValue(String(currentPage + 1));
+  }, [currentPage]);
+
+  const pagedFlights = useMemo(() => {
+    const start = currentPage * pageSize;
+    return filteredFlights.slice(start, start + pageSize);
+  }, [filteredFlights, currentPage, pageSize]);
 
   const airportLookup = useMemo(() => {
     const map = new Map<string, typeof aeropuertos[number]>();
@@ -116,7 +158,23 @@ export default function FlightsPage() {
     <div className="p-6 space-y-4">
       {/* Encabezado */}
       <div className="flex justify-between items-center">
-        <h1 className="text-xl font-semibold">Gestión de Vuelos</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-semibold">Gestión de Vuelos</h1>
+          <select
+            className="select select-bordered select-sm"
+            value={pageSize}
+            onChange={(e) => {
+              setPageSize(Number(e.target.value));
+              setPage(0);
+            }}
+          >
+            {PAGE_SIZE_OPTIONS.map((value) => (
+              <option key={value} value={value}>
+                {value} por página
+              </option>
+            ))}
+          </select>
+        </div>
         <div className="flex gap-2">
           <button
             className="btn btn-outline btn-sm"
@@ -243,7 +301,7 @@ export default function FlightsPage() {
             {!list.data || filteredFlights.length === 0 ? (
               <tr><td colSpan={7} className="text-center opacity-60 py-4">No se encontraron vuelos.</td></tr>
             ) : (
-              filteredFlights.map((flight) => {
+              pagedFlights.map((flight) => {
                 const origenAirport = airportLookup.get(flight.origen);
                 const destinoAirport = airportLookup.get(flight.destino);
                 const origenNombre = origenAirport
@@ -295,6 +353,65 @@ export default function FlightsPage() {
           </tbody>
         </table>
       </div>
+
+      {pagedFlights.length > 0 && (
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div className="text-sm opacity-70">
+            Página {currentPage + 1} de {totalPages}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              className="btn btn-sm"
+              onClick={() => setPage((prev) => Math.max(prev - 1, 0))}
+              disabled={currentPage === 0}
+            >
+              <ChevronLeft size={16} />
+            </button>
+            {getPageButtons(currentPage, totalPages).map((pageIndex) => (
+              <button
+                key={pageIndex}
+                className={`btn btn-sm ${
+                  pageIndex === currentPage ? "btn-primary" : "btn-outline"
+                }`}
+                onClick={() => {
+                  setPage(pageIndex);
+                  setJumpValue(String(pageIndex + 1));
+                }}
+              >
+                {pageIndex + 1}
+              </button>
+            ))}
+            <button
+              className="btn btn-sm"
+              onClick={() =>
+                setPage((prev) => Math.min(prev + 1, totalPages - 1))
+              }
+              disabled={currentPage >= totalPages - 1}
+            >
+              <ChevronRight size={16} />
+            </button>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={1}
+                max={totalPages}
+                className="input input-bordered input-xs w-20"
+                value={jumpValue}
+                onChange={(event) => setJumpValue(event.target.value)}
+              />
+              <button className="btn btn-xs" onClick={() => {
+                const numeric = Number(jumpValue);
+                if (Number.isNaN(numeric) || numeric < 1 || numeric > totalPages) {
+                  return;
+                }
+                setPage(numeric - 1);
+              }}>
+                Ir
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

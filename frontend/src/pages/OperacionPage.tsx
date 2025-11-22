@@ -68,27 +68,27 @@ export default function OperacionPage() {
     };
 
     return (
-        <div className="flex -m-8 h-[calc(100vh-4rem)] w-[calc(100%+4rem)] bg-neutral-900 text-gray-100 overflow-hidden font-sans">
+        <div className="flex -m-8 h-[calc(100vh-4rem)] w-[calc(100%+4rem)] bg-base-200 text-base-content overflow-hidden font-sans">
 
             {/* SIDEBAR */}
-            <div className="w-[400px] flex flex-col border-r border-gray-800 bg-neutral-900 shadow-2xl z-20 h-full shrink-0">
+            <div className="w-[400px] flex flex-col border-r border-base-300 bg-base-200 shadow-2xl z-20 h-full shrink-0">
 
                 {/* 1. HEADER & RELOJ */}
-                <div className="p-5 bg-neutral-800 border-b border-gray-700 shadow-lg shrink-0">
+                <div className="p-5 bg-base-100 border-b border-base-300 shadow-lg shrink-0">
                     <div className="flex justify-between items-center mb-4">
-                        <h1 className="text-lg font-bold tracking-tight flex items-center gap-2 text-white">
-                            <Radio className={status === 'running' ? 'text-green-500 animate-pulse' : 'text-gray-500'} size={20} />
+                        <h1 className="text-lg font-bold tracking-tight flex items-center gap-2">
+                            <Radio className={status === 'running' ? 'text-success animate-pulse' : 'text-base-content/50'} size={20} />
                             OPERACION DÍA A DÍA
                         </h1>
                         <span className="badge badge-outline text-xs font-mono opacity-50">UTC ZONE</span>
                     </div>
 
                     {/* RELOJ */}
-                    <div className="bg-black/40 rounded-xl border border-gray-700 p-4 text-center relative overflow-hidden group">
-                        <div className="text-5xl font-black font-mono tracking-widest text-blue-400 tabular-nums">
+                    <div className="bg-base-200 rounded-xl border border-base-300 p-4 text-center relative overflow-hidden group">
+                        <div className="text-5xl font-black font-mono tracking-widest text-primary tabular-nums">
                             {formatTime(simClock)}
                         </div>
-                        <div className="text-sm text-gray-400 font-medium mt-1 uppercase tracking-widest">
+                        <div className="text-sm text-base-content/70 font-medium mt-1 uppercase tracking-widest">
                             {simClock.toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'short', timeZone: 'UTC' })}
                         </div>
 
@@ -97,15 +97,15 @@ export default function OperacionPage() {
                             <div className="relative flex-1">
                                 <input
                                     type="datetime-local"
-                                    className="input input-xs input-bordered w-full bg-neutral-900 text-gray-300 font-mono border-gray-600 focus:border-blue-500"
+                                    className="input input-xs input-bordered w-full font-mono"
                                     value={getInputValue()}
                                     onChange={handleTimeChange}
                                 />
-                                <Calendar className="absolute right-2 top-1 text-gray-500 pointer-events-none" size={14}/>
+                                <Calendar className="absolute right-2 top-1 text-base-content/60 pointer-events-none" size={14}/>
                             </div>
                             <button
                                 onClick={handleResetTime}
-                                className="btn btn-xs btn-square btn-ghost text-gray-500 hover:text-white"
+                                className="btn btn-xs btn-square btn-ghost"
                                 title="Volver al presente"
                             >
                                 <RefreshCw size={14} />
@@ -115,41 +115,41 @@ export default function OperacionPage() {
                 </div>
 
                 {/* KPIs */}
-                <div className="p-4 bg-neutral-900 border-b border-gray-800 shrink-0 grid grid-cols-2 gap-3">
+                <div className="p-4 bg-base-200 border-b border-base-300 shrink-0 grid grid-cols-2 gap-3">
 
                     {/* Pedidos Totales */}
-                    <div className="bg-neutral-800 p-3 rounded-lg border border-gray-700">
-                        <div className="flex items-center gap-2 text-gray-400 text-[10px] uppercase font-bold mb-1">
-                            <Package size={12} className="text-blue-400"/> Pedidos Totales
+                    <div className="bg-base-100 p-3 rounded-lg border border-base-300">
+                        <div className="flex items-center gap-2 text-base-content/70 text-[10px] uppercase font-bold mb-1">
+                            <Package size={12} className="text-primary"/> Pedidos Totales
                         </div>
-                        <div className="text-2xl font-bold text-white">{metrics.totalOrders}</div>
+                        <div className="text-2xl font-bold">{metrics.totalOrders}</div>
                     </div>
 
                     {/* Pedidos en Tránsito */}
-                    <div className="bg-neutral-800 p-3 rounded-lg border border-gray-700">
-                        <div className="flex items-center gap-2 text-gray-400 text-[10px] uppercase font-bold mb-1">
-                            <Activity size={12} className="text-yellow-400"/> En Tránsito
+                    <div className="bg-base-100 p-3 rounded-lg border border-base-300">
+                        <div className="flex items-center gap-2 text-base-content/70 text-[10px] uppercase font-bold mb-1">
+                            <Activity size={12} className="text-warning"/> En Tránsito
                         </div>
-                        <div className="text-2xl font-bold text-yellow-400">{metrics.ordersInTransit}</div>
+                        <div className="text-2xl font-bold text-warning">{metrics.ordersInTransit}</div>
                     </div>
 
                     {/* Vuelos Totales vs Activos */}
-                    <div className="bg-neutral-800 p-3 rounded-lg border border-gray-700 col-span-2 flex justify-between items-center">
+                    <div className="bg-base-100 p-3 rounded-lg border border-base-300 col-span-2 flex justify-between items-center">
                         <div>
-                            <div className="flex items-center gap-2 text-gray-400 text-[10px] uppercase font-bold mb-1">
-                                <Plane size={12} className="text-purple-400"/> Vuelos (Activos / Total)
+                            <div className="flex items-center gap-2 text-base-content/70 text-[10px] uppercase font-bold mb-1">
+                                <Plane size={12} className="text-primary"/> Vuelos (Activos / Total)
                             </div>
-                            <div className="text-xl font-bold text-white flex items-baseline gap-1">
-                                <span className="text-purple-400">{metrics.activeFlights}</span>
-                                <span className="text-sm text-gray-500 font-normal">/ {metrics.totalFlights}</span>
+                            <div className="text-xl font-bold flex items-baseline gap-1">
+                                <span className="text-primary">{metrics.activeFlights}</span>
+                                <span className="text-sm text-base-content/60 font-normal">/ {metrics.totalFlights}</span>
                             </div>
                         </div>
                         {/* SLA Mini Chart */}
                         <div className="text-right">
-                            <div className="flex items-center gap-1 text-gray-400 text-[10px] uppercase font-bold justify-end mb-1">
-                                <CheckCircle size={12} className={metrics.slaPercentage >= 90 ? "text-green-500" : "text-red-500"}/> SLA On-Time
+                            <div className="flex items-center gap-1 text-base-content/70 text-[10px] uppercase font-bold justify-end mb-1">
+                                <CheckCircle size={12} className={metrics.slaPercentage >= 90 ? "text-success" : "text-error"}/> SLA On-Time
                             </div>
-                            <div className={`text-xl font-bold ${metrics.slaPercentage >= 90 ? "text-green-400" : "text-red-400"}`}>
+                            <div className={`text-xl font-bold ${metrics.slaPercentage >= 90 ? "text-success" : "text-error"}`}>
                                 {metrics.slaPercentage.toFixed(1)}%
                             </div>
                         </div>
@@ -157,15 +157,15 @@ export default function OperacionPage() {
                 </div>
 
                 {/* 3. REPORTE DE PEDIDOS */}
-                <div className="px-4 py-3 bg-neutral-800/50 text-[11px] font-bold text-gray-400 uppercase border-b border-gray-800 flex justify-between items-center shrink-0">
+                <div className="px-4 py-3 bg-base-200 text-[11px] font-bold text-base-content/70 uppercase border-b border-base-300 flex justify-between items-center shrink-0">
                     <span className="flex items-center gap-2"><Box size={14}/> Reporte de Pedidos</span>
                     <span className="badge badge-xs badge-neutral border-gray-600 font-mono">{orderStatusList.length}</span>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-neutral-900 scrollbar-thin scrollbar-thumb-gray-700">
+                <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-base-200 scrollbar-thin scrollbar-thumb-base-300">
                     {orderStatusList.length === 0 ? (
-                        <div className="text-center text-gray-500 mt-12 text-sm px-6 flex flex-col items-center">
-                            <div className="w-16 h-16 bg-neutral-800 rounded-full flex items-center justify-center mb-3">
+                        <div className="text-center text-base-content/60 mt-12 text-sm px-6 flex flex-col items-center">
+                            <div className="w-16 h-16 bg-base-100 rounded-full flex items-center justify-center mb-3">
                                 <Package size={32} className="opacity-20" />
                             </div>
                             <p className="font-medium">Sin pedidos operativos</p>
@@ -179,8 +179,8 @@ export default function OperacionPage() {
                 </div>
 
                 {/* Botón Planificar */}
-                <div className="p-4 bg-neutral-800 border-t border-gray-700 shrink-0">
-                    <div className="flex justify-between text-[10px] text-gray-500 mb-2 font-mono">
+                <div className="p-4 bg-base-100 border-t border-base-300 shrink-0">
+                    <div className="flex justify-between text-[10px] text-base-content/60 mb-2 font-mono">
                         <span>Last Sync: {lastUpdated ? formatShortTime(lastUpdated.toISOString()) : '--:--'}</span>
                     </div>
                     <button
@@ -195,7 +195,7 @@ export default function OperacionPage() {
             </div>
 
             {/* MAPA */}
-            <div className="flex-1 relative z-0 bg-neutral-900 h-full border-l border-gray-800">
+            <div className="flex-1 relative z-0 bg-base-200 h-full border-l border-base-300">
                 <MapaVuelos
                     aeropuertos={aeropuertos}
                     activeSegments={activeSegments}
