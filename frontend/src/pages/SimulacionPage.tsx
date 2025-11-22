@@ -44,6 +44,7 @@ export default function SimulacionPage() {
   const [endDate, setEndDate] = useState<string>('');
   const [estaSincronizando, setEstaSincronizando] = useState(false);
   const [proyeccionGuardada, setProyeccionGuardada] = useState(false);
+  
 
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [filtroHub, setFiltroHub] = useState<string>('');
@@ -307,6 +308,9 @@ export default function SimulacionPage() {
         {/* Header del Panel */}
         <div className="bg-primary text-primary-content p-4">
           <h1 className="text-xl font-bold mb-2">Simulación Semanal</h1>
+          {proyeccionGuardada && (
+            <div className="badge badge-success badge-sm mb-2">Proyección guardada</div>
+          )}
           {/* Controles */}
           <div className="space-y-2">
             {ordenesParaSimular.length > 0 && (
@@ -367,6 +371,16 @@ export default function SimulacionPage() {
                 disabled={!estaActivo && !estaVisualizando}
               >
                 <Pause size={16} /> Pausar
+              </button>
+            </div>
+
+            <div className="mt-2">
+              <button
+                className="btn btn-sm btn-outline w-full"
+                onClick={handleGuardarProyeccion}
+                disabled={ordenesParaSimular.length === 0 || estaSincronizando}
+              >
+                <Package size={14} /> Guardar proyección
               </button>
             </div>
 
