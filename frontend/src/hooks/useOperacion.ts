@@ -1,231 +1,412 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Client } from '@stomp/stompjs';
-import { simulacionService } from '../services/simulacionService';
+import { planService } from '../services/planService';
 import { aeropuertoService } from '../services/aeropuertoService';
 import type { Airport } from '../types/airport';
-import type { SimulationSnapshot, SimulationMessage, SimulationStartRequest } from '../types/simulation';
-import type { SegmentoVuelo, VueloEnMovimiento } from './useSimulacion';
+import type { CurrentPlanResponse, OrderPlan } from '../types/plan';
 
-const BROKER_URL = 'ws://localhost:8080/ws';
-const TOPIC_PREFIX = '/topic/simulations/';
+// --- TIPOS ---
+export interface SegmentoVuelo {
+    id: string;
+    flightId: string;
+    origin: string;
+    destination: string;
+    departureUtc: string;
+    arrivalUtc: string;
+    orderIds: string[];
+    retrasado: boolean;
+}
+
+export interface VueloEnMovimiento {
+    id: string;
+    orderId: string;
+    flightId: string;
+    latActual: number;
+    lonActual: number;
+    progreso: number;
+    estadoVisual: 'en curso' | 'retrasado' | 'completado';
+
+    // Campos detallados
+    origenCode: string;
+    destinoCode: string;
+    salidaProgramada: string;
+    llegadaProgramada: string;
+    capacidadTotal: number;
+    capacidadUsada: number;
+    pedidos: {
+        orderId: string;
+        cliente: string;
+        fechaCreacion: string;
+        cantidad: number;
+    }[];
+}
+
+export interface OrderStatusDetail {
+    orderId: string;
+    status: 'WAITING' | 'IN_FLIGHT' | 'LAYOVER' | 'COMPLETED';
+    currentFlightId?: string;
+    nextAirport?: string;
+    finalDestination: string;
+    departureTime: string;
+    arrivalTime: string;
+    progress: number;
+    isDelayed: boolean;
+    originAirport: string;
+    quantity: number;
+    currentSegDeparture?: string;
+    currentSegArrival?: string;
+}
+
+export interface OperationMetrics {
+    totalOrders: number;
+    ordersInTransit: number;
+    totalFlights: number;
+    activeFlights: number;
+    slaPercentage: number;
+    delayedOrders: number;
+}
 
 export const useOperacion = () => {
-    const [simulationId, setSimulationId] = useState<string | null>(null);
     const [status, setStatus] = useState<'idle' | 'buffering' | 'running' | 'error'>('idle');
+    const [isReplanning, setIsReplanning] = useState(false);
+    const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-    const [dayPlan, setDayPlan] = useState<SimulationSnapshot | null>(null);
+    const [dayPlan, setDayPlan] = useState<CurrentPlanResponse | null>(null);
+
     const { data: aeropuertos = [] } = useQuery<Airport[]>({
         queryKey: ['aeropuertos'],
         queryFn: aeropuertoService.getAll,
+        staleTime: 1000 * 60 * 60,
     });
 
-    const [simClock, setSimClock] = useState<Date | null>(null);
-    const [speed, setSpeed] = useState(60);
-    const [eventLog, setEventLog] = useState<string[]>([]);
+    // --- CONTROL DE TIEMPO ---
+    const [simClock, setSimClock] = useState<Date>(new Date());
+    const [timeOffset, setTimeOffset] = useState<number>(0);
+
+    const setManualTime = (newDate: Date) => {
+        const offset = newDate.getTime() - Date.now();
+        setTimeOffset(offset);
+        setSimClock(newDate);
+    };
+
+    const resetTime = () => {
+        setTimeOffset(0);
+        setSimClock(new Date());
+    };
 
     const [activeSegments, setActiveSegments] = useState<SegmentoVuelo[]>([]);
     const [vuelosEnMovimiento, setVuelosEnMovimiento] = useState<VueloEnMovimiento[]>([]);
+    const [orderStatusList, setOrderStatusList] = useState<OrderStatusDetail[]>([]);
+    const [airportStocks, setAirportStocks] = useState<Record<string, number>>({});
 
-    // ESTADO DE MÉTRICAS
-    const [metrics, setMetrics] = useState({
-        processed: 0,          // Total pedidos procesados en el plan
-        ordersInTransit: 0,    // Pedidos volando AHORA
-        ordersDelivered: 0,    // Pedidos que ya aterrizaron
-        delayedOrders: 0,      // Total pedidos con retraso
-        activeFlights: 0,      // Aviones en el aire
-        completedFlights: 0,   // Aviones que ya aterrizaron
-        totalFlights: 0        // Total de vuelos programados para el día
+    const [metrics, setMetrics] = useState<OperationMetrics>({
+        totalOrders: 0,
+        ordersInTransit: 0,
+        totalFlights: 0,
+        activeFlights: 0,
+        slaPercentage: 100,
+        delayedOrders: 0
     });
 
-    // 1. WebSocket
-    useEffect(() => {
-        if (!simulationId) return;
-        const client = new Client({
-            brokerURL: BROKER_URL,
-            reconnectDelay: 5000,
-            onConnect: () => {
-                client.subscribe(TOPIC_PREFIX + simulationId, (msg) => {
-                    const payload: SimulationMessage = JSON.parse(msg.body);
-                    if (payload.type === 'PROGRESS' || payload.type === 'COMPLETED') {
-                        if (payload.snapshot && payload.snapshot.orderPlans.length > 0) {
-                            setDayPlan(payload.snapshot);
-                            if (status === 'buffering') {
-                                setStatus('running');
-                                setEventLog(prev => ['Plan recibido. Iniciando operación.', ...prev]);
-                            }
-                        }
-                    }
-                });
-            }
-        });
-        client.activate();
-        return () => { client.deactivate(); };
-    }, [simulationId, status]);
+    const fetchRealTimePlan = useCallback(async () => {
+        try {
+            const rawResponse = await planService.getCurrentPlan();
+            let parsedPlan: any = rawResponse;
 
-    // 2. Iniciar
-    const startMutation = useMutation({
-        mutationFn: (req: SimulationStartRequest) => simulacionService.startSimulation(req),
-        onSuccess: (data, variables) => {
-            setSimulationId(data.simulationId);
+            if (typeof rawResponse === 'string') {
+                try {
+                    parsedPlan = JSON.parse(rawResponse);
+                } catch (e) {
+                    console.warn("⚠️ JSON roto, intentando reparar...");
+                    try {
+                        const sanitized = rawResponse.replace(/,"plan":\{.*?(?=\}\]|\}\,)/g, '');
+                        parsedPlan = JSON.parse(sanitized);
+                    } catch (e2) {
+                        console.error("❌ Imposible reparar JSON:", e2);
+                    }
+                }
+            }
+
+            if (parsedPlan) {
+                const cleanPlan: CurrentPlanResponse = {
+                    generatedAt: parsedPlan.generatedAt,
+                    fitness: parsedPlan.fitness,
+                    orderPlans: Array.isArray(parsedPlan.orderPlans) ? parsedPlan.orderPlans : []
+                };
+                setDayPlan(cleanPlan);
+                setLastUpdated(new Date());
+                setStatus('running');
+            } else {
+                setDayPlan({ generatedAt: new Date().toISOString(), fitness: 0, orderPlans: [] });
+                setStatus('idle');
+            }
+        } catch (error) {
+            console.error("Error fetch plan:", error);
+            setDayPlan(null);
+            setStatus('idle');
+        }
+    }, []);
+
+    useEffect(() => {
+        fetchRealTimePlan();
+        const interval = setInterval(fetchRealTimePlan, 30000);
+        return () => clearInterval(interval);
+    }, [fetchRealTimePlan]);
+
+    useEffect(() => {
+        const interval = setInterval(() => {
+            setSimClock(new Date(Date.now() + timeOffset));
+        }, 1000);
+        return () => clearInterval(interval);
+    }, [timeOffset]);
+
+    const runPlanningMutation = useMutation({
+        mutationFn: () => planService.runPlanning(true),
+        onMutate: () => {
+            setIsReplanning(true);
             setStatus('buffering');
-            setEventLog(['Sincronizando...', 'Obteniendo plan operativo...']);
-            const start = new Date(variables.startDate + (variables.startDate.endsWith('Z') ? '' : 'Z'));
-            setSimClock(start);
+        },
+        onSuccess: async () => {
+            await fetchRealTimePlan();
+            setIsReplanning(false);
+            setStatus('running');
+        },
+        onError: () => {
+            setIsReplanning(false);
+            setStatus('error');
         }
     });
 
-    // 3. Reloj
+    // --- CORE ---
     useEffect(() => {
-        if (status !== 'running' || !simClock) return;
-        const interval = setInterval(() => {
-            setSimClock(prev => {
-                if (!prev) return null;
-                return new Date(prev.getTime() + (speed * 1000));
-            });
-        }, 1000);
-        return () => clearInterval(interval);
-    }, [status, speed]);
+        if (!dayPlan) return;
 
-    // 4. Lógica Principal de Cálculo
-    useEffect(() => {
-        if (!dayPlan || !simClock || aeropuertos.length === 0) return;
-
+        const orders = dayPlan.orderPlans || [];
         const currentMs = simClock.getTime();
-        const airportMap = new Map(aeropuertos.map(a => [a.id, [a.latitude, a.longitude]]));
-        const segmentosMap = new Map<string, SegmentoVuelo>();
-        const vuelosActivosMap = new Map<string, VueloEnMovimiento>();
+        const airportMap = new Map((aeropuertos || []).map(a => [a.id, [a.latitude, a.longitude]]));
 
-        // Variables temporales para conteo
-        let countOrdersInTransit = 0;
-        let countOrdersDelivered = 0;
-        let countDelayedTotal = 0;
-        let countCompletedFlights = 0;
-        let countTotalFlights = 0;
+        const mapSegmentos = new Map<string, SegmentoVuelo>();
+        const mapVuelos = new Map<string, VueloEnMovimiento>();
+        const processedOrders: OrderStatusDetail[] = [];
+        const uniqueFlightsTotal = new Set<string>();
 
-        // Set para contar vuelos únicos completados (evitar duplicados por pedido)
-        const completedFlightIds = new Set<string>();
+        const tempStocks: Record<string, number> = {};
 
-        dayPlan.orderPlans.forEach(plan => {
-            // Conteo de retrasos (Estático del plan)
-            if (plan.slackMinutes <= 0) countDelayedTotal++;
+        let countDelayed = 0;
+        let countInTransit = 0;
 
-            let isOrderDelivered = true; // Asumimos entregado hasta demostrar lo contrario
-            let isOrderInTransit = false;
+        orders.forEach((plan: any) => {
+            let orderStatus: OrderStatusDetail['status'] = 'WAITING';
+            let currentFlightId = undefined;
+            let nextAirport = undefined;
+            let currentSegDep = undefined;
+            let currentSegArr = undefined;
 
-            plan.routes.forEach(route => {
-                route.segments.forEach(seg => {
-                    const depMs = new Date(seg.departureUtc).getTime();
-                    const arrMs = new Date(seg.arrivalUtc).getTime();
-                    const uniqueFlightId = `${seg.flightId}-${seg.departureUtc}`;
+            const quantity = (plan.routes || []).reduce((sum: number, r: any) => sum + (r.quantity || 0), 0);
 
-                    // Conteo total de vuelos únicos en el plan
-                    if (!completedFlightIds.has(uniqueFlightId)) {
-                        countTotalFlights++;
-                    }
+            let slackVal = 10;
+            if (typeof plan.slack === 'string') slackVal = 10;
+            else if (typeof plan.slackMinutes === 'number') slackVal = plan.slackMinutes;
 
-                    // ESTADO DEL VUELO
-                    if (currentMs > arrMs) {
-                         // El vuelo ya aterrizó
-                         if (!completedFlightIds.has(uniqueFlightId)) {
-                             countCompletedFlights++;
-                             completedFlightIds.add(uniqueFlightId);
-                         }
-                    } else if (currentMs >= depMs && currentMs <= arrMs) {
-                        // El vuelo está EN EL AIRE
-                        isOrderInTransit = true;
-                        isOrderDelivered = false;
+            const isDelayed = slackVal <= 0;
+            if (isDelayed) countDelayed++;
 
-                        // Lógica de Mapa (Solo para activos)
-                        const originCoords = airportMap.get(seg.origin);
-                        const destCoords = airportMap.get(seg.destination);
+            const routes = plan.routes || [];
 
-                        if (!segmentosMap.has(uniqueFlightId)) {
-                            segmentosMap.set(uniqueFlightId, {
-                                id: uniqueFlightId,
-                                flightId: seg.flightId,
-                                origin: seg.origin,
-                                destination: seg.destination,
-                                departureUtc: seg.departureUtc,
-                                arrivalUtc: seg.arrivalUtc,
-                                orderIds: [plan.orderId],
-                                retrasado: plan.slackMinutes <= 0
-                            });
-                        }
+            const allSegments = routes.flatMap((r: any) => r.segments || []).map((s: any) => {
+                const fixDate = (d: string) => {
+                    if (!d) return new Date().toISOString();
+                    if (d.includes('T') && !d.endsWith('Z') && !d.includes('+') && !d.includes('-')) return d + 'Z';
+                    return d;
+                };
 
-                        if (originCoords && destCoords) {
-                            const progressPct = ((currentMs - depMs) / (arrMs - depMs)) * 100;
-                            if (!vuelosActivosMap.has(uniqueFlightId)) {
-                                vuelosActivosMap.set(uniqueFlightId, {
-                                    id: uniqueFlightId,
-                                    orderId: plan.orderId,
+                const flightId = s.flight?.id || s.flightId || "FL-UNK";
+                uniqueFlightsTotal.add(flightId);
+
+                return {
+                    flightId: flightId,
+                    origin: s.flight?.origin?.code || s.flight?.originCode || s.from || s.origin,
+                    destination: s.flight?.destination?.code || s.flight?.destinationCode || s.to || s.destination,
+                    departure: fixDate(s.exactDepDateTime || s.departureUtc || s.departure),
+                    arrival: fixDate(s.exactArrDateTime || s.arrivalUtc || s.arrival),
+                    capacity: s.flight?.dailyCapacity || s.flight?.capacity || 300,
+                    routeQuantity: s.routeQuantity || quantity
+                };
+            }).filter((s: any) => s.origin && s.destination);
+
+            if (allSegments.length === 0) return;
+
+            const firstDep = new Date(allSegments[0].departure).getTime();
+            const lastArr = new Date(allSegments[allSegments.length - 1].arrival).getTime();
+
+            const totalDuration = lastArr - firstDep;
+            const elapsedTotal = currentMs - firstDep;
+            const totalProgress = totalDuration > 0
+                ? Math.min(100, Math.max(0, (elapsedTotal / totalDuration) * 100))
+                : 0;
+
+            if (currentMs < firstDep) {
+                orderStatus = 'WAITING';
+                currentFlightId = allSegments[0].flightId;
+                nextAirport = allSegments[0].destination;
+                currentSegDep = allSegments[0].departure;
+                currentSegArr = allSegments[0].arrival;
+
+                const code = allSegments[0].origin;
+                tempStocks[code] = (tempStocks[code] || 0) + quantity;
+
+            } else if (currentMs > lastArr) {
+                orderStatus = 'COMPLETED';
+                const code = allSegments[allSegments.length - 1].destination;
+                tempStocks[code] = (tempStocks[code] || 0) + quantity;
+
+            } else {
+                countInTransit++;
+                let inAir = false;
+
+                for (const seg of allSegments) {
+                    const depMs = new Date(seg.departure).getTime();
+                    const arrMs = new Date(seg.arrival).getTime();
+                    const uniqueId = `${seg.flightId}-${seg.departure}`;
+
+                    if (currentMs >= depMs && currentMs <= arrMs) {
+                        inAir = true;
+                        orderStatus = 'IN_FLIGHT';
+                        currentFlightId = seg.flightId;
+                        nextAirport = seg.destination;
+
+                        currentSegDep = seg.departure;
+                        currentSegArr = seg.arrival;
+
+                        const origin = airportMap.get(seg.origin);
+                        const dest = airportMap.get(seg.destination);
+
+                        if (origin && dest) {
+                            if (!mapSegmentos.has(uniqueId)) {
+                                mapSegmentos.set(uniqueId, {
+                                    id: uniqueId,
                                     flightId: seg.flightId,
-                                    latActual: originCoords[0] + (destCoords[0] - originCoords[0]) * (progressPct / 100),
-                                    lonActual: originCoords[1] + (destCoords[1] - originCoords[1]) * (progressPct / 100),
-                                    progreso: progressPct,
-                                    estadoVisual: plan.slackMinutes <= 0 ? 'retrasado' : 'en curso',
-                                    origen: seg.origin,
-                                    destino: seg.destination,
-                                    departureTime: seg.departureUtc,
-                                    arrivalTime: seg.arrivalUtc
+                                    origin: seg.origin,
+                                    destination: seg.destination,
+                                    departureUtc: seg.departure,
+                                    arrivalUtc: seg.arrival,
+                                    orderIds: [plan.orderId],
+                                    retrasado: isDelayed
                                 });
+                            } else {
+                                mapSegmentos.get(uniqueId)?.orderIds.push(plan.orderId);
+                            }
+
+                            const pct = ((currentMs - depMs) / (arrMs - depMs)) * 100;
+
+                            if (!mapVuelos.has(uniqueId)) {
+                                mapVuelos.set(uniqueId, {
+                                    id: uniqueId,
+                                    flightId: seg.flightId,
+                                    latActual: origin[0] + (dest[0] - origin[0]) * (pct / 100),
+                                    lonActual: origin[1] + (dest[1] - origin[1]) * (pct / 100),
+                                    progreso: pct,
+                                    estadoVisual: isDelayed ? 'retrasado' : 'en curso',
+                                    origenCode: seg.origin,
+                                    destinoCode: seg.destination,
+                                    salidaProgramada: seg.departure,
+                                    llegadaProgramada: seg.arrival,
+                                    capacidadTotal: seg.capacity,
+                                    capacidadUsada: seg.routeQuantity,
+                                    pedidos: [{
+                                        orderId: plan.orderId,
+                                        cliente: plan.customerReference || "N/A",
+                                        fechaCreacion: plan.creationUtc || "---",
+                                        cantidad: seg.routeQuantity
+                                    }]
+                                });
+                            } else {
+                                const v = mapVuelos.get(uniqueId);
+                                if(v) {
+                                    if (!v.pedidos.some(p => p.orderId === plan.orderId)) {
+                                        v.capacidadUsada += seg.routeQuantity;
+                                        v.pedidos.push({
+                                            orderId: plan.orderId,
+                                            cliente: plan.customerReference || "N/A",
+                                            fechaCreacion: plan.creationUtc || "---",
+                                            cantidad: seg.routeQuantity
+                                        });
+                                        if (isDelayed) v.estadoVisual = 'retrasado';
+                                    }
+                                }
                             }
                         }
-                    } else {
-                        // El vuelo aún no sale
-                        isOrderDelivered = false;
+                        break;
                     }
-                });
+                }
+
+                if (!inAir && currentMs <= lastArr) {
+                    orderStatus = 'LAYOVER';
+
+                    for (let i = 0; i < allSegments.length - 1; i++) {
+                        const arrCurrent = new Date(allSegments[i].arrival).getTime();
+                        const depNext = new Date(allSegments[i+1].departure).getTime();
+
+                        if (currentMs >= arrCurrent && currentMs <= depNext) {
+                            const code = allSegments[i].destination;
+                            tempStocks[code] = (tempStocks[code] || 0) + quantity;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            processedOrders.push({
+                orderId: plan.orderId,
+                status: orderStatus,
+                currentFlightId: currentFlightId,
+                nextAirport: nextAirport,
+                finalDestination: allSegments[allSegments.length - 1].destination,
+                departureTime: allSegments[0].departure,
+                arrivalTime: allSegments[allSegments.length - 1].arrival,
+                currentSegDeparture: currentSegDep,
+                currentSegArrival: currentSegArr,
+                progress: totalProgress,
+                isDelayed: isDelayed,
+                originAirport: allSegments[0].origin,
+                quantity: quantity
             });
-
-            if (isOrderInTransit) countOrdersInTransit++;
-            if (isOrderDelivered) countOrdersDelivered++;
         });
 
-        setActiveSegments(Array.from(segmentosMap.values()));
-        setVuelosEnMovimiento(Array.from(vuelosActivosMap.values()));
+        const total = processedOrders.length;
+        const sla = total > 0 ? ((total - countDelayed) / total) * 100 : 100;
 
-        // Actualizamos métricas completas
         setMetrics({
-            processed: dayPlan.processedOrders,
-            ordersInTransit: countOrdersInTransit,
-            ordersDelivered: countOrdersDelivered,
-            delayedOrders: countDelayedTotal,
-            activeFlights: vuelosActivosMap.size,
-            completedFlights: countCompletedFlights,
-            totalFlights: countCompletedFlights + vuelosActivosMap.size
+            totalOrders: total,
+            ordersInTransit: countInTransit,
+            totalFlights: uniqueFlightsTotal.size,
+            activeFlights: mapVuelos.size,
+            slaPercentage: sla,
+            delayedOrders: countDelayed
         });
+
+        setActiveSegments(Array.from(mapSegmentos.values()));
+        setVuelosEnMovimiento(Array.from(mapVuelos.values()));
+        setOrderStatusList(processedOrders);
+        setAirportStocks(tempStocks);
 
     }, [simClock, dayPlan, aeropuertos]);
-
-    const triggerReplan = () => {
-        setEventLog(prev => ['ALERTA: Iniciando protocolo de replanificación...', ...prev]);
-        const oldStatus = status;
-        setStatus('buffering');
-        setTimeout(() => {
-             setStatus(oldStatus === 'running' ? 'running' : 'idle');
-             setEventLog(prev => ['Rutas optimizadas correctamente.', ...prev]);
-        }, 1500);
-    };
-
-    const triggerBlock = (code: string) => {
-        setEventLog(prev => [`ALERTA CRÍTICA: Operaciones suspendidas en ${code}`, ...prev]);
-    };
 
     return {
         aeropuertos,
         activeSegments,
         vuelosEnMovimiento,
+        orderStatusList,
+        airportStocks,
+        metrics,
         status,
         simClock,
-        eventLog,
-        speed,
-        setSpeed,
-        metrics,
         actions: {
-            iniciar: startMutation.mutate,
-            replanificar: triggerReplan,
-            bloquear: triggerBlock
-        }
+            planificar: runPlanningMutation.mutate,
+            setManualTime,
+            resetTime
+        },
+        isReplanning,
+        lastUpdated,
     };
 };

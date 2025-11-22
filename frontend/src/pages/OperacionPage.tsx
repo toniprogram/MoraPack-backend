@@ -1,214 +1,295 @@
 import { useState } from 'react';
-import { useOperacion } from '../hooks/useOperacion';
+import { useOperacion, type OrderStatusDetail } from '../hooks/useOperacion';
 import { MapaVuelos } from '../components/mapas/MapaVuelos';
-import { Play, RefreshCw, Radio, ShieldAlert, Clock, Activity, CheckCircle, AlertTriangle, PlaneLanding, Package } from 'lucide-react';
+import {
+    Radio, Server, ArrowRight,
+    Plane, Package, MapPin, CheckCircle,
+    AlertTriangle, Activity, Calendar, RefreshCw, Box, Clock
+} from 'lucide-react';
 
 export default function OperacionPage() {
     const {
         aeropuertos,
         activeSegments,
         vuelosEnMovimiento,
+        orderStatusList,
+        metrics,
+        airportStocks,
         status,
         simClock,
-        eventLog,
-        metrics,
-        speed,
-        setSpeed,
-        actions
+        actions,
+        isReplanning,
+        lastUpdated
     } = useOperacion();
 
-    // Fecha fija para la demo (cambiar)
-    const [fechaSimulacion] = useState("2025-01-01");
+    // Estado local para el input de fecha
+    const [manualDateStr, setManualDateStr] = useState('');
 
-    const handleStart = () => {
-        actions.iniciar({
-            startDate: `${fechaSimulacion}T00:00:00`,
-            endDate: `${fechaSimulacion}T23:59:59`,
-            windowMinutes: 60
+    const handleTimeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const val = e.target.value;
+        setManualDateStr(val);
+        if (val) {
+            actions.setManualTime(new Date(val));
+        }
+    };
+
+    const handleResetTime = () => {
+        setManualDateStr('');
+        actions.resetTime();
+    };
+
+    const formatTime = (date: Date) =>
+        date.toLocaleTimeString('es-PE', { timeZone: 'UTC', hour12: false });
+
+    const formatShortTime = (isoDate: string) => {
+        if(!isoDate) return '--:--';
+        const d = new Date(isoDate);
+        return d.toLocaleTimeString('es-PE', { timeZone: 'UTC', hour12: false, hour: '2-digit', minute: '2-digit' });
+    };
+
+    const formatDateTime = (isoDate: string) => {
+        if(!isoDate) return '--/-- --:--';
+        const d = new Date(isoDate);
+        return d.toLocaleString('es-PE', {
+            timeZone: 'UTC',
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false
         });
     };
 
-    // Formateadores de fecha
-    const formatDate = (date: Date) => {
-        return date.toLocaleDateString('es-PE', {
-            weekday: 'long',
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric',
-            timeZone: 'UTC'
-        });
+
+    const getInputValue = () => {
+        if (manualDateStr) return manualDateStr;
+        const tzOffset = simClock.getTimezoneOffset() * 60000;
+        return (new Date(simClock.getTime() - tzOffset)).toISOString().slice(0, 16);
     };
 
     return (
-        <div className="flex h-screen w-full bg-gray-900 text-gray-200 overflow-hidden font-sans">
+        <div className="flex -m-8 h-[calc(100vh-4rem)] w-[calc(100%+4rem)] bg-neutral-900 text-gray-100 overflow-hidden font-sans">
 
-            {/* --- SIDEBAR --- */}
-            <div className="w-96 flex flex-col border-r border-gray-700 bg-gray-800 shadow-2xl z-20">
+            {/* SIDEBAR */}
+            <div className="w-[400px] flex flex-col border-r border-gray-800 bg-neutral-900 shadow-2xl z-20 h-full shrink-0">
 
-                {/* HEADER */}
-                <div className="p-4 bg-indigo-900 border-b border-indigo-800 shadow-md flex justify-between items-center">
-                    <div>
-                        <h1 className="text-lg font-bold flex items-center gap-2 text-white tracking-tight">
-                            <Radio className={status === 'running' ? 'animate-pulse text-green-400' : 'text-gray-400'} size={20} />
-                            TORRE DE CONTROL
+                {/* 1. HEADER & RELOJ */}
+                <div className="p-5 bg-neutral-800 border-b border-gray-700 shadow-lg shrink-0">
+                    <div className="flex justify-between items-center mb-4">
+                        <h1 className="text-lg font-bold tracking-tight flex items-center gap-2 text-white">
+                            <Radio className={status === 'running' ? 'text-green-500 animate-pulse' : 'text-gray-500'} size={20} />
+                            OPERACION DÍA A DÍA
                         </h1>
-                        <p className="text-[10px] text-indigo-200 opacity-80 uppercase tracking-widest mt-1">
-                            Operación Día a Día
-                        </p>
+                        <span className="badge badge-outline text-xs font-mono opacity-50">UTC ZONE</span>
                     </div>
-                    {status === 'running' && (
-                        <div className="badge badge-success gap-1 text-xs font-bold animate-pulse">
-                            EN VIVO
+
+                    {/* RELOJ */}
+                    <div className="bg-black/40 rounded-xl border border-gray-700 p-4 text-center relative overflow-hidden group">
+                        <div className="text-5xl font-black font-mono tracking-widest text-blue-400 tabular-nums">
+                            {formatTime(simClock)}
                         </div>
+                        <div className="text-sm text-gray-400 font-medium mt-1 uppercase tracking-widest">
+                            {simClock.toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'short', timeZone: 'UTC' })}
+                        </div>
+
+                        {/* Control Manual de Tiempo */}
+                        <div className="mt-4 flex gap-2 items-center">
+                            <div className="relative flex-1">
+                                <input
+                                    type="datetime-local"
+                                    className="input input-xs input-bordered w-full bg-neutral-900 text-gray-300 font-mono border-gray-600 focus:border-blue-500"
+                                    value={getInputValue()}
+                                    onChange={handleTimeChange}
+                                />
+                                <Calendar className="absolute right-2 top-1 text-gray-500 pointer-events-none" size={14}/>
+                            </div>
+                            <button
+                                onClick={handleResetTime}
+                                className="btn btn-xs btn-square btn-ghost text-gray-500 hover:text-white"
+                                title="Volver al presente"
+                            >
+                                <RefreshCw size={14} />
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                {/* KPIs */}
+                <div className="p-4 bg-neutral-900 border-b border-gray-800 shrink-0 grid grid-cols-2 gap-3">
+
+                    {/* Pedidos Totales */}
+                    <div className="bg-neutral-800 p-3 rounded-lg border border-gray-700">
+                        <div className="flex items-center gap-2 text-gray-400 text-[10px] uppercase font-bold mb-1">
+                            <Package size={12} className="text-blue-400"/> Pedidos Totales
+                        </div>
+                        <div className="text-2xl font-bold text-white">{metrics.totalOrders}</div>
+                    </div>
+
+                    {/* Pedidos en Tránsito */}
+                    <div className="bg-neutral-800 p-3 rounded-lg border border-gray-700">
+                        <div className="flex items-center gap-2 text-gray-400 text-[10px] uppercase font-bold mb-1">
+                            <Activity size={12} className="text-yellow-400"/> En Tránsito
+                        </div>
+                        <div className="text-2xl font-bold text-yellow-400">{metrics.ordersInTransit}</div>
+                    </div>
+
+                    {/* Vuelos Totales vs Activos */}
+                    <div className="bg-neutral-800 p-3 rounded-lg border border-gray-700 col-span-2 flex justify-between items-center">
+                        <div>
+                            <div className="flex items-center gap-2 text-gray-400 text-[10px] uppercase font-bold mb-1">
+                                <Plane size={12} className="text-purple-400"/> Vuelos (Activos / Total)
+                            </div>
+                            <div className="text-xl font-bold text-white flex items-baseline gap-1">
+                                <span className="text-purple-400">{metrics.activeFlights}</span>
+                                <span className="text-sm text-gray-500 font-normal">/ {metrics.totalFlights}</span>
+                            </div>
+                        </div>
+                        {/* SLA Mini Chart */}
+                        <div className="text-right">
+                            <div className="flex items-center gap-1 text-gray-400 text-[10px] uppercase font-bold justify-end mb-1">
+                                <CheckCircle size={12} className={metrics.slaPercentage >= 90 ? "text-green-500" : "text-red-500"}/> SLA On-Time
+                            </div>
+                            <div className={`text-xl font-bold ${metrics.slaPercentage >= 90 ? "text-green-400" : "text-red-400"}`}>
+                                {metrics.slaPercentage.toFixed(1)}%
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* 3. REPORTE DE PEDIDOS */}
+                <div className="px-4 py-3 bg-neutral-800/50 text-[11px] font-bold text-gray-400 uppercase border-b border-gray-800 flex justify-between items-center shrink-0">
+                    <span className="flex items-center gap-2"><Box size={14}/> Reporte de Pedidos</span>
+                    <span className="badge badge-xs badge-neutral border-gray-600 font-mono">{orderStatusList.length}</span>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-neutral-900 scrollbar-thin scrollbar-thumb-gray-700">
+                    {orderStatusList.length === 0 ? (
+                        <div className="text-center text-gray-500 mt-12 text-sm px-6 flex flex-col items-center">
+                            <div className="w-16 h-16 bg-neutral-800 rounded-full flex items-center justify-center mb-3">
+                                <Package size={32} className="opacity-20" />
+                            </div>
+                            <p className="font-medium">Sin pedidos operativos</p>
+                            <p className="text-xs mt-2 opacity-60">Registra pedidos como "REAL" y ejecuta el planificador.</p>
+                        </div>
+                    ) : (
+                        orderStatusList.map((order) => (
+                            <OrderCardDetail key={order.orderId} order={order} formatTime={formatShortTime} formatDateTime={formatDateTime}/>
+                        ))
                     )}
                 </div>
 
-                {/* CONTENIDO DEL PANEL */}
-                <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-600">
-                    <div className="p-4 border-b border-gray-700 bg-gray-800/50">
-                        {status === 'idle' ? (
-                            <div className="space-y-4 animate-in fade-in slide-in-from-left-4">
-                                <div className="bg-gray-700/50 p-3 rounded border border-gray-600">
-                                    <label className="text-xs text-gray-400 uppercase font-bold mb-1 block">Fecha Operativa</label>
-                                    <div className="text-white font-mono">{fechaSimulacion}</div>
-                                </div>
-
-                                <button
-                                    onClick={handleStart}
-                                    className="btn btn-primary w-full gap-2 shadow-lg shadow-indigo-500/20 border-none bg-indigo-600 hover:bg-indigo-500 text-white"
-                                >
-                                    <Play size={16} fill="currentColor" /> INICIAR TURNO
-                                </button>
-                            </div>
-                        ) : (
-                            <div className="animate-in zoom-in-95 duration-300 space-y-4">
-                                {/* 1. RELOJ PRINCIPAL */}
-                                <div className="bg-black/40 p-3 rounded-lg border border-gray-700 text-center relative overflow-hidden">
-                                    <div className="absolute top-2 right-2">
-                                        <Clock size={12} className="text-gray-500 animate-spin-slow" />
-                                    </div>
-                                    <div className="text-[10px] text-indigo-300 uppercase tracking-widest font-bold mb-1 border-b border-gray-700 pb-1">
-                                        {simClock ? formatDate(simClock) : '---'}
-                                    </div>
-                                    <div className="text-3xl font-mono font-bold text-white tracking-wider shadow-black drop-shadow-lg py-1">
-                                        {simClock ? simClock.toLocaleTimeString('es-PE', {timeZone: 'UTC'}) : '--:--'}
-                                    </div>
-                                    <div className="text-[9px] text-gray-500 font-bold tracking-[0.2em] uppercase">ZULU TIME (UTC)</div>
-                                </div>
-
-                                {/* 2. CONTROL VELOCIDAD */}
-                                <div className="form-control">
-                                    <div className="flex justify-between items-center mb-1">
-                                        <span className="text-[10px] uppercase text-gray-400 font-bold">Velocidad</span>
-                                        <span className="badge badge-xs badge-primary font-mono">{speed}x</span>
-                                    </div>
-                                    <input
-                                        type="range"
-                                        min="1"
-                                        max="3600"
-                                        value={speed}
-                                        onChange={(e) => setSpeed(Number(e.target.value))}
-                                        className="range range-xs range-primary"
-                                    />
-                                </div>
-
-                                {/* 3. GRID DE KPIs (Métricas) */}
-                                <div className="grid grid-cols-2 gap-2">
-                                    {/* Card: Total Procesado */}
-                                    <div className="bg-gray-700/30 p-2 rounded border border-gray-700 relative">
-                                        <div className="text-xs text-gray-400 uppercase mb-1 flex items-center gap-1">
-                                            <Package size={10}/> Total Pedidos
-                                        </div>
-                                        <div className="text-xl font-bold text-white">{metrics.processed}</div>
-                                    </div>
-
-                                    {/* Card: En Tránsito */}
-                                    <div className="bg-gray-700/30 p-2 rounded border border-gray-700">
-                                         <div className="text-xs text-gray-400 uppercase mb-1 flex items-center gap-1">
-                                            <Activity size={10}/> En Tránsito
-                                        </div>
-                                        <div className="text-xl font-bold text-blue-400">{metrics.ordersInTransit}</div>
-                                    </div>
-
-                                    {/* Card: Vuelos Activos */}
-                                    <div className="bg-gray-700/30 p-2 rounded border border-gray-700">
-                                         <div className="text-xs text-gray-400 uppercase mb-1 flex items-center gap-1">
-                                            <PlaneLanding size={10}/> Vuelos Activos
-                                        </div>
-                                        <div className="text-xl font-bold text-yellow-400">{metrics.activeFlights}</div>
-                                    </div>
-
-                                    {/* Card: Vuelos Completados */}
-                                    <div className="bg-gray-700/30 p-2 rounded border border-gray-700">
-                                         <div className="text-xs text-gray-400 uppercase mb-1 flex items-center gap-1">
-                                            <CheckCircle size={10}/> Vuelos Fin.
-                                        </div>
-                                        <div className="text-xl font-bold text-green-400">{metrics.completedFlights}</div>
-                                    </div>
-                                </div>
-
-                                {/* 4. BARRA DE ESTADO DE TIEMPO */}
-                                <div className="bg-gray-900 rounded p-2 border border-gray-700">
-                                    <div className="flex justify-between text-[10px] uppercase text-gray-400 font-bold mb-2">
-                                        <span>Estado de Entregas</span>
-                                    </div>
-                                    <div className="flex gap-2 items-center text-xs">
-                                        <div className="flex items-center gap-1 text-green-400 font-bold">
-                                            <CheckCircle size={14} />
-                                            {metrics.processed - metrics.delayedOrders} OK
-                                        </div>
-                                        <div className="h-4 w-px bg-gray-700"></div>
-                                        <div className="flex items-center gap-1 text-red-400 font-bold">
-                                            <AlertTriangle size={14} />
-                                            {metrics.delayedOrders} Retrasados
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
+                {/* Botón Planificar */}
+                <div className="p-4 bg-neutral-800 border-t border-gray-700 shrink-0">
+                    <div className="flex justify-between text-[10px] text-gray-500 mb-2 font-mono">
+                        <span>Last Sync: {lastUpdated ? formatShortTime(lastUpdated.toISOString()) : '--:--'}</span>
                     </div>
-
-                    {/* PANEL DE CRISIS */}
-                    {status !== 'idle' && (
-                        <div className="p-4 border-b border-gray-700 bg-red-900/5 relative overflow-hidden">
-                            <h3 className="text-[10px] font-bold text-red-400 uppercase mb-3 flex items-center gap-2 tracking-wider">
-                                <ShieldAlert size={12}/> Gestión de Crisis
-                            </h3>
-                            <div className="grid grid-cols-3 gap-2 mb-3">
-                                {['SPIM', 'EBCI', 'UBBB'].map(code => (
-                                    <button
-                                        key={code}
-                                        onClick={() => actions.bloquear(code)}
-                                        className="btn btn-xs btn-outline btn-error hover:bg-red-600 hover:text-white text-[9px]"
-                                        title={`Simular bloqueo en ${code}`}
-                                    >
-                                        {code}
-                                    </button>
-                                ))}
-                            </div>
-                            <button
-                                onClick={() => actions.replanificar()}
-                                disabled={status === 'buffering'}
-                                className={`btn btn-sm w-full border-0 text-[10px] font-bold tracking-wide ${status === 'buffering' ? 'bg-yellow-600 text-white cursor-wait' : 'bg-yellow-500 hover:bg-yellow-400 text-black'}`}
-                            >
-                                <RefreshCw size={14} className={status === 'buffering' ? 'animate-spin' : ''}/>
-                                {status === 'buffering' ? 'OPTIMIZANDO...' : 'REPLANIFICAR'}
-                            </button>
-                        </div>
-                    )}
+                    <button
+                        onClick={() => actions.planificar()}
+                        disabled={status === 'buffering' || isReplanning}
+                        className="btn btn-primary w-full gap-2 font-bold shadow-lg hover:shadow-primary/20 transition-all"
+                    >
+                        {isReplanning ? <span className="loading loading-spinner loading-xs"></span> : <Server size={16} />}
+                        {isReplanning ? 'OPTIMIZANDO...' : 'EJECUTAR PLANIFICADOR'}
+                    </button>
                 </div>
             </div>
 
-            {/* --- MAPA --- */}
-            <div className="flex-1 relative z-0 bg-gray-900">
+            {/* MAPA */}
+            <div className="flex-1 relative z-0 bg-neutral-900 h-full border-l border-gray-800">
                 <MapaVuelos
                     aeropuertos={aeropuertos}
                     activeSegments={activeSegments}
                     vuelosEnMovimiento={vuelosEnMovimiento}
-                    isLoading={false}
+                    airportStocks={airportStocks}
+                    isLoading={status === 'buffering'}
                     filtroHubActivo=""
                 />
+                 {isReplanning && (
+                    <div className="absolute inset-0 z-[100] bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center animate-in fade-in duration-300">
+                        <div className="bg-neutral-800 p-8 rounded-2xl shadow-2xl border border-gray-700 text-center max-w-md">
+                            <span className="loading loading-infinity loading-lg text-primary mb-4"></span>
+                            <h3 className="text-xl font-bold text-white">Replanificando Logística</h3>
+                            <p className="text-sm text-gray-400 mt-2">El algoritmo genético está recalculando rutas óptimas para la nueva demanda...</p>
+                        </div>
+                    </div>
+                )}
             </div>
+        </div>
+    );
+}
+
+function OrderCardDetail({ order, formatTime, formatDateTime }: { order: OrderStatusDetail, formatTime: (s: string) => string, formatDateTime: (s: string) => string }) {
+    const getStatusColor = (s: string, delayed: boolean) => {
+        if (delayed) return 'border-l-4 border-l-red-500 bg-neutral-800';
+        switch(s) {
+            case 'IN_FLIGHT': return 'border-l-4 border-l-blue-500 bg-blue-950/20';
+            case 'WAITING': return 'border-l-4 border-l-gray-500 bg-neutral-800';
+            case 'LAYOVER': return 'border-l-4 border-l-yellow-500 bg-yellow-950/20';
+            case 'COMPLETED': return 'border-l-4 border-l-green-500 bg-green-950/20 opacity-70';
+            default: return 'bg-neutral-800';
+        }
+    };
+
+    return (
+        <div className={`p-3 rounded-md border border-gray-700/50 text-xs shadow-sm transition-all hover:border-gray-500 ${getStatusColor(order.status, order.isDelayed)}`}>
+            {/* Header: ID y Cantidad */}
+            <div className="flex justify-between items-start mb-2 pb-2 border-b border-gray-700/50">
+                <div>
+                    <div className="flex items-center gap-2">
+                        <span className="font-mono font-bold text-white text-sm">#{order.orderId}</span>
+                        {order.isDelayed && <span className="badge badge-xs badge-error text-[9px]">DELAY</span>}
+                    </div>
+                    <div className="text-[10px] text-gray-400 mt-0.5">
+                        Capacidad: <span className="text-gray-200 font-bold">{order.quantity} un.</span>
+                    </div>
+                </div>
+                <div className="text-right">
+                    <span className={`badge badge-xs font-bold ${
+                        order.status === 'IN_FLIGHT' ? 'badge-primary' :
+                        order.status === 'COMPLETED' ? 'badge-success' : 'badge-ghost'
+                    }`}>
+                        {order.status === 'IN_FLIGHT' ? 'EN VUELO' :
+                         order.status === 'WAITING' ? 'EN COLA' :
+                         order.status === 'LAYOVER' ? 'ESCALA' : 'LLEGÓ'}
+                    </span>
+                </div>
+            </div>
+
+            {/* Ruta: Origen -> Destino */}
+            <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 mb-3 text-gray-300">
+                <div>
+                    <div className="text-[9px] text-gray-500 uppercase font-bold">Origen</div>
+                    <div className="font-mono font-bold text-lg leading-none">{order.originAirport}</div>
+                    <div className="text-[10px] opacity-70">{formatDateTime(order.departureTime)}</div>
+                </div>
+
+                <div className="flex flex-col items-center justify-center px-2">
+                    {order.status === 'IN_FLIGHT' ? <Plane size={14} className="text-blue-400"/> : <ArrowRight size={14} className="opacity-30"/>}
+                    <div className="text-[9px] font-mono text-gray-500 mt-1">{Math.round(order.progress)}%</div>
+                </div>
+
+                <div className="text-right">
+                    <div className="text-[9px] text-gray-500 uppercase font-bold">Destino Final</div>
+                    <div className="font-mono font-bold text-lg leading-none">{order.finalDestination}</div>
+                    <div className="text-[10px] opacity-70">{formatDateTime(order.arrivalTime)}</div>
+                </div>
+            </div>
+
+            {/* Detalle de Vuelo Actual / Próximo */}
+            {order.status !== 'COMPLETED' && (
+                <div className="bg-black/30 rounded p-2 flex justify-between items-center border border-white/5">
+                    <div className="flex items-center gap-2">
+                        <Plane size={12} className="text-gray-400"/>
+                        <span className="font-mono font-bold text-blue-300">
+                            {order.currentFlightId || "---"}
+                        </span>
+                    </div>
+                    <div className="flex items-center gap-1 text-[10px] text-gray-400">
+                        <span>Próx. Escala:</span>
+                        <span className="font-mono text-white">{order.nextAirport}</span>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
