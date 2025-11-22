@@ -3,9 +3,8 @@ import { useOperacion, type OrderStatusDetail } from '../hooks/useOperacion';
 import { MapaVuelos } from '../components/mapas/MapaVuelos';
 import {
     Radio, Server, ArrowRight,
-    Plane, Package, MapPin, CheckCircle,
-    AlertTriangle, Activity, Calendar, RefreshCw, Box, Clock
-} from 'lucide-react';
+    Plane, Package, CheckCircle,
+    Activity, Calendar, RefreshCw, Box} from 'lucide-react';
 
 export default function OperacionPage() {
     const {
@@ -218,7 +217,7 @@ export default function OperacionPage() {
     );
 }
 
-function OrderCardDetail({ order, formatTime, formatDateTime }: { order: OrderStatusDetail, formatTime: (s: string) => string, formatDateTime: (s: string) => string }) {
+function OrderCardDetail({ order, formatDateTime }: { order: OrderStatusDetail, formatTime: (s: string) => string, formatDateTime: (s: string) => string }) {
     const getStatusColor = (s: string, delayed: boolean) => {
         if (delayed) return 'border-l-4 border-l-red-500 bg-neutral-800';
         switch(s) {
