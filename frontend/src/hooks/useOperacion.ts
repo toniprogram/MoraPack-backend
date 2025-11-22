@@ -3,7 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { planService } from '../services/planService';
 import { aeropuertoService } from '../services/aeropuertoService';
 import type { Airport } from '../types/airport';
-import type { CurrentPlanResponse, OrderPlan } from '../types/plan';
+import type { CurrentPlanResponse } from '../types/plan';
 
 // --- TIPOS ---
 export interface SegmentoVuelo {
@@ -110,7 +110,7 @@ export const useOperacion = () => {
 
     const fetchRealTimePlan = useCallback(async () => {
         try {
-            const rawResponse = await planService.getCurrentPlan();
+            const rawResponse: any = await planService.getCurrentPlan();
             let parsedPlan: any = rawResponse;
 
             if (typeof rawResponse === 'string') {
@@ -318,7 +318,8 @@ export const useOperacion = () => {
                                         cliente: plan.customerReference || "N/A",
                                         fechaCreacion: plan.creationUtc || "---",
                                         cantidad: seg.routeQuantity
-                                    }]
+                                    }],
+                                    orderId: ''
                                 });
                             } else {
                                 const v = mapVuelos.get(uniqueId);

@@ -47,7 +47,10 @@ export interface SegmentoVuelo {
 }
 
 // URL de WebSocket nativo
-const BROKER_URL = 'ws://localhost:8080/ws';
+ const BROKER_URL =
+  import.meta.env.PROD
+    ? 'ws://200.16.7.179/ws'  // producción
+    : 'ws://localhost:8080/ws'; // desarrollo local
 const TOPIC_PREFIX = '/topic/simulations/';
 
 // 2000x (configuración solicitada)

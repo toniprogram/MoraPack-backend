@@ -5,7 +5,7 @@ import type { LatLngExpression } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import type { Airport } from '../../types/airport';
 import type { SegmentoVuelo, VueloEnMovimiento } from '../../hooks/useOperacion';
-import { Plane, Calendar, Box, MapPin, Building } from 'lucide-react';
+import { Plane, Box, Building } from 'lucide-react';
 
 // Iconos Default Leaflet
 delete (L.Icon.Default.prototype as any)._getIconUrl;

@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import type { ChangeEvent } from 'react';
 import { useSimulacion } from '../hooks/useSimulacion';
 import { MapaVuelos } from '../components/mapas/MapaVuelos';
-import { Check, AlertTriangle, Play, Pause, XCircle, Package, Plane, Database, Search, X } from 'lucide-react';
+import { Check, AlertTriangle, Play, Pause, XCircle, Package, Plane, Search, X } from 'lucide-react';
 import type { OrderRequest } from '../types/orderRequest';
 import type { SimulationOrderPlan, SimulationSnapshot } from '../types/simulation';
 import { orderService } from '../services/orderService';
