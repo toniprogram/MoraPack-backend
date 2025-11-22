@@ -9,16 +9,29 @@ import type { SimulationSnapshot, SimulationMessage, SimulationStartRequest, Sim
 export interface VueloEnMovimiento {
   id: string;
   orderId: string;
-   flightId: string;
-   latActual: number;
-   lonActual: number;
-   progreso: number;
-   estadoVisual: 'en curso' | 'retrasado' | 'completado';
-   origen: string;
-   destino: string;
-   destinoActual?: string;
-   departureTime?: string;
+  flightId: string;
+  latActual: number;
+  lonActual: number;
+  progreso: number;
+  estadoVisual: 'en curso' | 'retrasado' | 'completado';
+  origen: string;
+  destino: string;
+  destinoActual?: string;
+  departureTime?: string;
   arrivalTime?: string;
+
+  origenCode: string;
+  destinoCode: string;
+  salidaProgramada: string;
+  llegadaProgramada: string;
+  capacidadTotal: number;
+  capacidadUsada: number;
+  pedidos: {
+      orderId: string;
+      cliente: string;
+      fechaCreacion: string;
+      cantidad: number;
+  }[];
 }
 
 export interface SegmentoVuelo {
@@ -30,19 +43,21 @@ export interface SegmentoVuelo {
   arrivalUtc: string;
   orderIds: string[];
   retrasado: boolean;
+  capacity: number;
+  routeQuantity: number;
 }
 
 // URL de WebSocket nativo
- const BROKER_URL = 'ws://localhost:8080/ws';
- const TOPIC_PREFIX = '/topic/simulations/';
+const BROKER_URL = 'ws://localhost:8080/ws';
+const TOPIC_PREFIX = '/topic/simulations/';
 
- // 2000x (configuración solicitada)
- const DEFAULT_SPEED = 2000;
+// 2000x (configuración solicitada)
+const DEFAULT_SPEED = 2000;
 
- export const useSimulacion = () => {
-   const [simulationId, setSimulationId] = useState<string | null>(null);
-   const [stompClient, setStompClient] = useState<Client | null>(null);
-   const [latestProgress, setLatestProgress] = useState<SimulationSnapshot | null>(null);
+export const useSimulacion = () => {
+  const [simulationId, setSimulationId] = useState<string | null>(null);
+  const [stompClient, setStompClient] = useState<Client | null>(null);
+  const [latestProgress, setLatestProgress] = useState<SimulationSnapshot | null>(null);
   const [finalSnapshot, setFinalSnapshot] = useState<SimulationSnapshot | null>(null);
   const [visibleSnapshot, setVisibleSnapshot] = useState<SimulationSnapshot | null>(null);
   const [hasSnapshots, setHasSnapshots] = useState(false);
@@ -59,9 +74,9 @@ export interface SegmentoVuelo {
   const [animPaused, setAnimPaused] = useState(false);
 
   const { data: aeropuertos = [], isLoading: isLoadingAeropuertos } = useQuery<Airport[]>({
-     queryKey: ['aeropuertos'],
-     queryFn: aeropuertoService.getAll,
-   });
+    queryKey: ['aeropuertos'],
+    queryFn: aeropuertoService.getAll,
+  });
 
   const parseUtcMillis = (value?: string | null) => {
     if (!value) return null;
@@ -71,25 +86,22 @@ export interface SegmentoVuelo {
   };
 
   const adjustSnapshotTimestamp = useCallback((snapshot: SimulationSnapshot | null) => {
-    if (!snapshot?.generatedAt) {
-      return snapshot;
-    }
+    if (!snapshot?.generatedAt) return snapshot;
+
     const realMs = Date.parse(snapshot.generatedAt);
-    if (Number.isNaN(realMs)) {
-      return snapshot;
-    }
-    if (timelineStartRef.current === null) {
-      return snapshot;
-    }
+    if (Number.isNaN(realMs)) return snapshot;
+
+    if (timelineStartRef.current === null) return snapshot;
+
     if (firstSnapshotRealRef.current === null) {
       firstSnapshotRealRef.current = realMs;
     }
     const baseReal = firstSnapshotRealRef.current ?? realMs;
     const virtualMs = timelineStartRef.current + (realMs - baseReal);
     const iso = new Date(virtualMs).toISOString();
-    if (iso === snapshot.generatedAt) {
-      return snapshot;
-    }
+
+    if (iso === snapshot.generatedAt) return snapshot;
+
     return { ...snapshot, generatedAt: iso };
   }, []);
 
@@ -101,12 +113,19 @@ export interface SegmentoVuelo {
         plan.routes.forEach((ruta: SimulationRoute) => {
           ruta.segments.forEach((segmento: SimulationSegment) => {
             if (!segmento.departureUtc || !segmento.arrivalUtc) return;
+
+            // ID único por vuelo y hora
             const id = `${segmento.flightId}-${segmento.departureUtc}`;
+
             const existing = next.get(id);
             const existingOrders = existing?.orderIds ?? [];
             const orderIds = existingOrders.includes(plan.orderId)
               ? existingOrders
               : [...existingOrders, plan.orderId];
+
+            // Acumulamos la carga si es el mismo vuelo llevando varios pedidos
+            const currentQuantity = existing?.routeQuantity || 0;
+
             next.set(id, {
               id,
               flightId: segmento.flightId,
@@ -116,6 +135,8 @@ export interface SegmentoVuelo {
               arrivalUtc: segmento.arrivalUtc,
               orderIds,
               retrasado: plan.slackMinutes <= 0,
+              capacity: segmento.capacity || 0,
+              routeQuantity: currentQuantity + (segmento.routeQuantity || 0)
             });
           });
         });
@@ -165,7 +186,7 @@ export interface SegmentoVuelo {
     return ultimo?.destination ?? null;
   }, [segmentosPorOrden]);
 
-   // ===== WEBSOCKET CONNECTION =====
+  // ===== WEBSOCKET CONNECTION =====
   useEffect(() => {
     if (!simulationId) return;
 
@@ -218,20 +239,20 @@ export interface SegmentoVuelo {
     };
   }, [simulationId, adjustSnapshotTimestamp, mergeFlightSegments]);
 
-   // ===== INCREMENTO DE TIEMPO SIMULADO (ANIMACIÓN) =====
-   const shouldAnimate = !animPaused && (status === 'running' || status === 'completed');
+  // ===== INCREMENTO DE TIEMPO SIMULADO (ANIMACIÓN) =====
+  const shouldAnimate = !animPaused && (status === 'running' || status === 'completed');
 
-   useEffect(() => {
-     if (!shouldAnimate || simBaseReal === null || simBaseSimulado === null) return;
+  useEffect(() => {
+    if (!shouldAnimate || simBaseReal === null || simBaseSimulado === null) return;
 
-   const interval = setInterval(() => {
+    const interval = setInterval(() => {
       setTiempoMovimiento(Date.now() - simBaseReal);
-    }, 50);
+    }, 20);
 
-     return () => clearInterval(interval);
-   }, [shouldAnimate, simBaseReal, simBaseSimulado]);
+    return () => clearInterval(interval);
+  }, [shouldAnimate, simBaseReal, simBaseSimulado]);
 
-   // ===== CÁLCULO DE TIEMPO SIMULADO =====
+  // ===== CÁLCULO DE TIEMPO SIMULADO =====
   useEffect(() => {
     if (simBaseSimulado === null) {
       setTiempoSimulado(null);
@@ -245,7 +266,7 @@ export interface SegmentoVuelo {
     setTiempoSimulado(new Date(targetMs));
   }, [simBaseSimulado, tiempoMovimiento, simSpeed, timelineEndMs]);
 
-   // ===== CÁLCULO DE VUELOS EN MOVIMIENTO =====
+  // ===== CÁLCULO DE VUELOS EN MOVIMIENTO =====
   useEffect(() => {
     if (status === 'completed' && finalSnapshot) {
       setVisibleSnapshot(finalSnapshot);
@@ -256,12 +277,13 @@ export interface SegmentoVuelo {
   const activeSegments = useMemo(() => {
     if (!tiempoSimulado) return [];
     const currentMs = tiempoSimulado.getTime();
+
     return Array.from(segmentosVuelo.values()).filter(segmento => {
       const depMs = Date.parse(segmento.departureUtc);
       const arrMs = Date.parse(segmento.arrivalUtc);
-      if (Number.isNaN(depMs) || Number.isNaN(arrMs)) {
-        return false;
-      }
+      if (Number.isNaN(depMs) || Number.isNaN(arrMs)) return false;
+
+      // Filtra vuelos que están ocurriendo en este momento exacto
       return depMs <= currentMs && currentMs <= arrMs;
     });
   }, [segmentosVuelo, tiempoSimulado]);
@@ -273,13 +295,13 @@ export interface SegmentoVuelo {
 
     const coordsAeropuertos = new Map<string, [number, number]>();
     aeropuertos.forEach(a => {
+      // Normalizamos a.id para asegurar match
       if (a.id && typeof a.latitude === 'number' && typeof a.longitude === 'number') {
         coordsAeropuertos.set(a.id, [a.latitude, a.longitude]);
       }
     });
-    if (coordsAeropuertos.size === 0) {
-      return [];
-    }
+
+    if (coordsAeropuertos.size === 0) return [];
 
     const tiempoActualMs = tiempoSimulado.getTime();
     const vuelosEnCurso: VueloEnMovimiento[] = [];
@@ -287,16 +309,14 @@ export interface SegmentoVuelo {
     activeSegments.forEach((segmento, index) => {
       const origen = coordsAeropuertos.get(segmento.origin);
       const destino = coordsAeropuertos.get(segmento.destination);
-      if (!origen || !destino) {
-        return;
-      }
+
+      if (!origen || !destino) return;
 
       const horaSalida = Date.parse(segmento.departureUtc);
       const horaLlegada = Date.parse(segmento.arrivalUtc);
       const duracionVuelo = horaLlegada - horaSalida;
-      if (!Number.isFinite(duracionVuelo) || duracionVuelo <= 0) {
-        return;
-      }
+
+      if (!Number.isFinite(duracionVuelo) || duracionVuelo <= 0) return;
 
       let progreso = 0;
       let estadoVisual: VueloEnMovimiento['estadoVisual'] = 'en curso';
@@ -311,6 +331,8 @@ export interface SegmentoVuelo {
       }
 
       const ratio = Math.min(progreso / 100, 1);
+
+      // Offset para evitar superposición visual exacta de aviones en misma ruta
       const offsetLat = ((index % 5) - 2) * 0.15;
       const offsetLon = ((Math.floor(index / 5) % 5) - 2) * 0.15;
 
@@ -320,9 +342,10 @@ export interface SegmentoVuelo {
       const orderIdReferencia = segmento.orderIds[0];
       const destinoRuta = obtenerDestinoActualOrden(orderIdReferencia, tiempoActualMs);
 
+      // Construimos el objeto VueloEnMovimiento sin referenciar 'plan' (que no existe aquí)
       vuelosEnCurso.push({
         id: segmento.id,
-        orderId: segmento.orderIds.join(','),
+        orderId: segmento.orderIds.join(', '),
         flightId: segmento.flightId,
         latActual,
         lonActual,
@@ -333,6 +356,20 @@ export interface SegmentoVuelo {
         destinoActual: destinoRuta ?? segmento.destination,
         departureTime: segmento.departureUtc,
         arrivalTime: segmento.arrivalUtc,
+
+        origenCode: segmento.origin,
+        destinoCode: segmento.destination,
+        salidaProgramada: segmento.departureUtc,
+        llegadaProgramada: segmento.arrivalUtc,
+        capacidadTotal: segmento.capacity,
+        capacidadUsada: segmento.routeQuantity,
+
+        pedidos: segmento.orderIds.map(id => ({
+            orderId: id,
+            cliente: "---",
+            fechaCreacion: "---",
+            cantidad: 1 //hardcodeado CAMBIAR
+        }))
       });
     });
 
@@ -379,16 +416,15 @@ export interface SegmentoVuelo {
     simulationMutation.mutate(payload);
   }, [simulationMutation]);
 
-   const pausar = useCallback(() => {
-     setAnimPaused(prev => !prev);
-   }, []);
+  const pausar = useCallback(() => {
+    setAnimPaused(prev => !prev);
+  }, []);
 
   const terminar = useCallback(async () => {
     if (simulationId) {
       try {
         console.log(`[Terminar] Solicitando cancelación para simulación: ${simulationId}`);
         await simulacionService.cancelSimulation(simulationId);
-        console.log(`[Terminar] Backend confirmó cancelación.`);
       } catch (error) {
         console.error("Error al cancelar la simulación en el backend:", error);
       }
@@ -411,30 +447,29 @@ export interface SegmentoVuelo {
     setTiempoSimulado(null);
     setHasSnapshots(false);
     setAnimPaused(false);
-
   }, [stompClient, simulationId]);
 
-   // ===== KPIs =====
-   const kpis = useMemo(() => {
-     const snapshot = visibleSnapshot ?? finalSnapshot;
-     if (!snapshot?.orderPlans) return { entregas: 0, retrasados: 0 };
-     return {
-       entregas: snapshot.orderPlans.filter(p => p.slackMinutes > 0).length,
-       retrasados: snapshot.orderPlans.filter(p => p.slackMinutes <= 0).length,
-     };
-   }, [visibleSnapshot, finalSnapshot]);
+  // ===== KPIs =====
+  const kpis = useMemo(() => {
+    const snapshot = visibleSnapshot ?? finalSnapshot;
+    if (!snapshot?.orderPlans) return { entregas: 0, retrasados: 0 };
+    return {
+      entregas: snapshot.orderPlans.filter(p => p.slackMinutes > 0).length,
+      retrasados: snapshot.orderPlans.filter(p => p.slackMinutes <= 0).length,
+    };
+  }, [visibleSnapshot, finalSnapshot]);
 
-   // ===== RELOJ DE PROGRESO =====
-   const reloj = `${latestProgress?.processedOrders ?? 0} / ${latestProgress?.totalOrders ?? 0} Órdenes`;
+  // ===== RELOJ DE PROGRESO =====
+  const reloj = `${latestProgress?.processedOrders ?? 0} / ${latestProgress?.totalOrders ?? 0} Órdenes`;
 
   return {
     aeropuertos,
-     vuelosEnMovimiento,
-     activeSegments,
+    vuelosEnMovimiento,
+    activeSegments,
     isLoading: isLoadingAeropuertos,
     isStarting: simulationMutation.isPending,
-     isError: status === 'error',
-     estaActivo: status === 'running',
+    isError: status === 'error',
+    estaActivo: status === 'running',
     estaVisualizando: hasSnapshots,
     snapshotFinal: finalSnapshot,
     snapshotVisible: visibleSnapshot,
@@ -442,12 +477,12 @@ export interface SegmentoVuelo {
     tiempoSimulado,
     simSpeed,
     setSimSpeed,
-     iniciar,
-     pausar,
-     terminar,
-     kpis,
-     reloj,
-     hasSnapshots,
-     status,
+    iniciar,
+    pausar,
+    terminar,
+    kpis,
+    reloj,
+    hasSnapshots,
+    status,
   };
- };
+};
