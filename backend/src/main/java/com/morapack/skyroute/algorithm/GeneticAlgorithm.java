@@ -16,6 +16,8 @@ public class GeneticAlgorithm {
     private final Random rnd = new Random();
     private final List<Individual> population = new ArrayList<>();
     private static final int TOURNAMENT_K = 3;
+    private static final double MIN_IMPROVEMENT = 1e-6;
+    private static final int EARLY_STOP_PATIENCE = 5;
 
     public GeneticAlgorithm(World world, List<Order> demand) {
         this.world = world;
@@ -100,7 +102,9 @@ public class GeneticAlgorithm {
 
         initializePopulation(populationSize, seed);
         Individual best = bestIndividual(population);
+        double previousBestFitness = best.getFitness();
 
+        int stagnant = 0;
         for (int gen = 0; gen < generations; gen++) {
             List<Individual> nextGen = new ArrayList<>();
             // Elitismo: conservar el mejor de la generación previa
@@ -127,6 +131,18 @@ public class GeneticAlgorithm {
             population.addAll(nextGen);
             best = bestIndividual(population);
             System.out.println("Generación " + (gen + 1) + " mejor fitness=" + best.getFitness());
+
+            double improvement = best.getFitness() - previousBestFitness;
+            previousBestFitness = best.getFitness();
+            if (improvement > MIN_IMPROVEMENT) {
+                stagnant = 0;
+            } else {
+                stagnant++;
+            }
+            if (stagnant >= EARLY_STOP_PATIENCE) {
+                System.out.println("Early stop en generación " + (gen + 1) + " (sin mejora significativa por " + EARLY_STOP_PATIENCE + " generaciones)");
+                break;
+            }
         }
 
         applyToWorld(best);

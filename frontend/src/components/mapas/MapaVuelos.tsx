@@ -184,19 +184,24 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
 
       {/* LEYENDA */}
       <div className="leaflet-bottom leaflet-left m-2 z-[1000]">
-        <div className="card compact bg-base-100/90 shadow-xl border border-base-content/10 text-[10px] p-2 backdrop-blur-sm w-32">
-            <h4 className="font-bold mb-1 text-base-content uppercase tracking-wider border-b border-base-content/10 pb-1">Leyenda</h4>
-            <ul className="space-y-1 font-semibold">
-            <li className="flex items-center gap-2 text-success">
-                <span className="w-2 h-2 rounded-full bg-current"></span> Lima (SPIM)
+        <div className="card compact bg-base-100/90 shadow-xl border border-base-content/10 text-[10px] p-2 backdrop-blur-sm w-36">
+          <h4 className="font-bold mb-1 text-base-content uppercase tracking-wider border-b border-base-content/10 pb-1">
+            Leyenda
+          </h4>
+          <ul className="space-y-2 font-semibold">
+            <li className="flex items-center gap-2">
+              <span className="w-3 h-3 rounded-full bg-base-content/80 inline-block"></span>
+              <span>Aeropuerto</span>
             </li>
-            <li className="flex items-center gap-2 text-error">
-                <span className="w-2 h-2 rounded-full bg-current"></span> Bruselas (EBCI)
+            <li className="flex items-center gap-2">
+              <span className="h-[2px] w-3 border-t border-dashed border-info"></span>
+              <span>Vuelo en progreso</span>
             </li>
-            <li className="flex items-center gap-2 text-info">
-                <span className="w-2 h-2 rounded-full bg-current"></span> Baku (UBBB)
+            <li className="flex items-center gap-2">
+              <Plane size={14} className="text-base-content" />
+              <span>Avión</span>
             </li>
-            </ul>
+          </ul>
         </div>
       </div>
 

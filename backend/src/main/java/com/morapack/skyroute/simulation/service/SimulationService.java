@@ -30,6 +30,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -107,12 +108,18 @@ public class SimulationService {
         if (windowMinutes < 0) {
             windowMinutes = 0;
         }
+        log.info("[SIM] windowMinutes resolved to {} (request={}, default={})",
+                windowMinutes,
+                request != null ? request.windowMinutes() : null,
+                Config.SIMULATION_WINDOW_MINUTES);
+        boolean useHeuristicSeed = request != null && Boolean.TRUE.equals(request.useHeuristicSeed());
 
         final int finalWindowMinutes = windowMinutes;
+        final boolean heuristicSeedEnabled = useHeuristicSeed;
         if (finalWindowMinutes > 0) {
-            executorService.submit(() -> runSimulationBatched(session, projectedOrders, simulationWorld, finalWindowMinutes, range.start()));
+            executorService.submit(() -> runSimulationBatched(session, projectedOrders, simulationWorld, finalWindowMinutes, range.start(), heuristicSeedEnabled));
         } else {
-            executorService.submit(() -> runSimulationLegacy(session, projectedOrders, simulationWorld));
+            executorService.submit(() -> runSimulationLegacy(session, projectedOrders, simulationWorld, heuristicSeedEnabled));
         }
 
         return new SimulationStartResponse(simulationId.toString());
@@ -134,7 +141,7 @@ public class SimulationService {
         session.cancel();
     }
 
-    private void runSimulationLegacy(SimulationSession session, List<Order> orders, World world) {
+    private void runSimulationLegacy(SimulationSession session, List<Order> orders, World world, boolean useHeuristicSeed) {
         List<Order> demand = new ArrayList<>();
         Individual previousBest = null;
         try {
@@ -144,7 +151,7 @@ public class SimulationService {
                     log.warn("[SIM:{}] Simulation cancelled by user after processing {} orders", session.id, demand.size());
                     break;
                 }
-                previousBest = processOrder(session, world, previousBest, demand, order, orders.size(), true, order.getCreationUtc());
+                previousBest = processOrder(session, world, previousBest, demand, order, orders.size(), true, order.getCreationUtc(), useHeuristicSeed);
             }
 
             session.complete();
@@ -155,6 +162,8 @@ public class SimulationService {
                     topic(session.id),
                     SimulationMessage.completed(session.id.toString(), finalSnapshot)
             );
+        } catch (CancellationException ex) {
+            log.warn("[SIM:{}] Simulation cancelled: {}", session.id, ex.getMessage());
         } catch (Exception ex) {
             session.error(ex.getMessage());
             log.error("[SIM:{}] Simulation failed: {}", session.id, ex.getMessage(), ex);
@@ -166,35 +175,25 @@ public class SimulationService {
                                       List<Order> orders,
                                       World world,
                                       int windowMinutes,
-                                      Instant windowStart) {
+                                      Instant windowStart,
+                                      boolean useHeuristicSeed) {
         List<OrderWindow> batches = groupOrdersByWindow(orders, windowMinutes, windowStart);
         List<Order> demand = new ArrayList<>();
         Individual previousBest = null;
-        boolean cancelled = false;
         Duration windowDuration = Duration.ofMinutes(windowMinutes);
         try {
             log.info("[SIM:{}] Starting batched simulation: {} orders grouped in {} windows of {} minutes",
                     session.id, orders.size(), batches.size(), windowMinutes);
             for (int batchIndex = 0; batchIndex < batches.size(); batchIndex++) {
-                OrderWindow window = batches.get(batchIndex);
-                List<Order> batch = window.orders();
-                log.debug("[SIM:{}] Processing batch {} of {} ({} orders)",
-                        session.id, batchIndex + 1, batches.size(), batch.size());
-                Instant snapshotInstant = window.windowStart().plus(windowDuration);
-                for (int i = 0; i < batch.size(); i++) {
-                    if (session.cancelled.get()) {
-                        cancelled = true;
-                        break;
-                    }
-                    Order order = batch.get(i);
-                    boolean emitSnapshot = (i == batch.size() - 1);
-                    Instant emitInstant = emitSnapshot ? snapshotInstant : null;
-                    previousBest = processOrder(session, world, previousBest, demand, order, orders.size(), emitSnapshot, emitInstant);
-                }
-                if (cancelled) {
-                    log.warn("[SIM:{}] Simulation cancelled during batch {}", session.id, batchIndex + 1);
+                if (session.cancelled.get()) {
+                    log.warn("[SIM:{}] Simulation cancelled before batch {}", session.id, batchIndex + 1);
                     break;
                 }
+                OrderWindow window = batches.get(batchIndex);
+                List<Order> batch = window.orders();
+                log.debug("[SIM:{}] Processing batch {} of {} ({} orders)", session.id, batchIndex + 1, batches.size(), batch.size());
+                Instant snapshotInstant = window.windowStart().plus(windowDuration);
+                previousBest = processBatch(session, world, previousBest, demand, batch, orders.size(), snapshotInstant, useHeuristicSeed);
             }
 
             session.complete();
@@ -212,6 +211,69 @@ public class SimulationService {
         }
     }
 
+    private Individual processBatch(SimulationSession session,
+                                    World world,
+                                    Individual previousBest,
+                                    List<Order> demand,
+                                    List<Order> batch,
+                                    int totalOrders,
+                                    Instant snapshotInstant,
+                                    boolean useHeuristicSeed) {
+        long iterationStart = System.nanoTime();
+        // Procesamos órdenes del batch en orden cronológico para que la semilla heurística respete el timeline
+        List<Order> orderedBatch = batch.stream()
+                .sorted(Comparator.comparing(Order::getCreationUtc))
+                .toList();
+
+        Individual heuristicSeed = previousBest;
+
+        for (Order order : orderedBatch) {
+            if (session.cancelled.get()) {
+                log.warn("[SIM:{}] Cancellation requested while processing batch; aborting batch", session.id);
+                throw new CancellationException("Simulation cancelled");
+            }
+            log.debug("[SIM:{}] Adding order {} to batch demand (current demand size={})", session.id, order.getId(), demand.size());
+            demand.add(order);
+            world.advanceTo(order.getCreationUtc());
+
+            if (useHeuristicSeed && heuristicSeed != null) {
+                Individual patched = heuristicSeed.tryInsertOrder(world, order, random);
+                if (patched != null) {
+                    patched.applyToWorld(world);
+                    heuristicSeed = patched;
+                    log.debug("[SIM:{}] Order {} patched via heuristic (seed updated)", session.id, order.getId());
+                }
+            }
+        }
+
+        // Ejecutar GA una vez por batch
+        GeneticAlgorithm ga = new GeneticAlgorithm(world, List.copyOf(demand));
+        long start = System.nanoTime();
+        Individual best = ga.run(Config.POP_SIZE, Config.MAX_GEN, heuristicSeed);
+        long gaDuration = System.nanoTime() - start;
+        session.gaRuns.incrementAndGet();
+
+        log.info("[SIM:{}] GA done for batch of {} orders (took {} ms)", session.id, orderedBatch.size(), gaDuration / 1_000_000);
+        log.info("[SIM:{}] Metrics for batch: gaRun={} ms, iterationTotal={} ms",
+                session.id,
+                nanosToMillis(gaDuration),
+                nanosToMillis(System.nanoTime() - iterationStart));
+
+        if (snapshotInstant != null) {
+            Instant currentInstant = world.getCurrentInstant();
+            if (currentInstant == null || snapshotInstant.isAfter(currentInstant)) {
+                world.advanceTo(snapshotInstant);
+            }
+        }
+        SimulationSnapshot snapshot = toSnapshot(session.id, demand.size(), totalOrders, best, world, demand);
+        session.update(snapshot);
+        persistSnapshot(session, snapshot);
+        log.trace("[SIM:{}] Snapshot created: processed={}/{}", session.id, demand.size(), totalOrders);
+        messagingTemplate.convertAndSend(topic(session.id), SimulationMessage.progress(session.id.toString(), snapshot));
+
+        return best;
+    }
+
     private Individual processOrder(SimulationSession session,
                                     World world,
                                     Individual previousBest,
@@ -219,58 +281,10 @@ public class SimulationService {
                                     Order order,
                                     int totalOrders,
                                     boolean emitSnapshot,
-                                    Instant snapshotInstant) {
-        long iterationStart = System.nanoTime();
-        log.debug("[SIM:{}] Processing order {} (current demand size={})", session.id, order.getId(), demand.size());
-        demand.add(order);
-
-        world.advanceTo(order.getCreationUtc());
-        Individual best = null;
-        if (previousBest != null) {
-            best = previousBest.tryInsertOrder(world, order, random);
-            if (best != null) {
-                best.applyToWorld(world);
-                log.debug("[SIM:{}] Order {} patched via heuristic", session.id, order.getId());
-            }
-        }
-
-        long gaDuration = 0;
-        if (best == null) {
-            GeneticAlgorithm ga = new GeneticAlgorithm(world, List.copyOf(demand));
-            long start = System.nanoTime();
-            best = ga.run(Config.POP_SIZE, Config.MAX_GEN, previousBest);
-            gaDuration = System.nanoTime() - start;
-            log.info("[SIM:{}] GA done for {} (took {} ms)", session.id, order.getId(), gaDuration / 1_000_000);
-            session.gaRuns.incrementAndGet();
-        }
-
-        log.info("[SIM:{}] Metrics for {}: gaRun={} ms, iterationTotal={} ms",
-                session.id,
-                order.getId(),
-                nanosToMillis(gaDuration),
-                nanosToMillis(System.nanoTime() - iterationStart));
-
-        log.debug("[SIM:{}] Plan ready for order {} (fitness={}, gaTime={} ms)",
-                session.id,
-                order.getId(),
-                best.getFitness(),
-                gaDuration / 1_000_000);
-
-        if (emitSnapshot) {
-            if (snapshotInstant != null) {
-                Instant currentInstant = world.getCurrentInstant();
-                if (currentInstant == null || snapshotInstant.isAfter(currentInstant)) {
-                    world.advanceTo(snapshotInstant);
-                }
-            }
-            SimulationSnapshot snapshot = toSnapshot(session.id, demand.size(), totalOrders, best, world, demand);
-            session.update(snapshot);
-            persistSnapshot(session, snapshot);
-            log.trace("[SIM:{}] Snapshot created: processed={}/{}", session.id, demand.size(), totalOrders);
-            messagingTemplate.convertAndSend(topic(session.id), SimulationMessage.progress(session.id.toString(), snapshot));
-        }
-
-        return best;
+                                    Instant snapshotInstant,
+                                    boolean useHeuristicSeed) {
+        Instant instant = emitSnapshot ? snapshotInstant : null;
+        return processBatch(session, world, previousBest, demand, List.of(order), totalOrders, instant, useHeuristicSeed);
     }
 
     private SimulationSnapshot toSnapshot(UUID simulationId,

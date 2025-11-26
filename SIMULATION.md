@@ -19,11 +19,13 @@ Inicia una nueva sesión tomando todos los pedidos `PROJECTED` almacenados entre
 {
   "startDate": "2025-01-02T00:00:00",
   "endDate": "2025-01-09T23:59:59",
-  "windowMinutes": 5
+  "windowMinutes": 5,
+  "useHeuristicSeed": false
 
 ```
 
-`windowMinutes` controla el tamaño de cada lote temporal (por defecto 10 minutos). Usa `0` para habilitar el modo legacy que procesa pedido por pedido.
+`windowMinutes` controla el tamaño de cada lote temporal (por defecto **1 hora = 60 minutos**). Usa `0` para habilitar el modo legacy que procesa pedido por pedido.
+`useHeuristicSeed` permite intentar una inserción heurística previa a cada corrida del GA; el GA se ejecuta siempre.
 
 Respuesta (`202 Accepted`):
 

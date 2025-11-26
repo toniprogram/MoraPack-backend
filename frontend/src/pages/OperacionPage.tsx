@@ -68,10 +68,10 @@ export default function OperacionPage() {
     };
 
     return (
-        <div className="flex -m-8 h-[calc(100vh-4rem)] w-[calc(100%+4rem)] bg-base-200 text-base-content overflow-hidden font-sans">
+        <div className="flex h-[calc(100vh-4rem)] w-full bg-base-200 text-base-content overflow-hidden font-sans">
 
             {/* SIDEBAR */}
-            <div className="w-[400px] flex flex-col border-r border-base-300 bg-base-200 shadow-2xl z-20 h-full shrink-0">
+            <div className="w-[400px] max-w-full flex flex-col bg-base-200 z-20 h-full shrink-0 overflow-y-auto">
 
                 {/* 1. HEADER & RELOJ */}
                 <div className="p-5 bg-base-100 border-b border-base-300 shadow-lg shrink-0">
@@ -195,7 +195,7 @@ export default function OperacionPage() {
             </div>
 
             {/* MAPA */}
-            <div className="flex-1 relative z-0 bg-base-200 h-full border-l border-base-300">
+            <div className="flex-1 relative z-0 bg-base-200 h-full">
                 <MapaVuelos
                     aeropuertos={aeropuertos}
                     activeSegments={activeSegments}

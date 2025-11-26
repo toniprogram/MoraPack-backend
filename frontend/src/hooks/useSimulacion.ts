@@ -50,7 +50,7 @@ export interface SegmentoVuelo {
 const BROKER_URL = 'ws://localhost:8080/ws';
 const TOPIC_PREFIX = '/topic/simulations/';
 
-// 2000x (configuración solicitada)
+// Velocidad base; se puede ajustar desde el panel
 const DEFAULT_SPEED = 2000;
 
 export const useSimulacion = () => {
@@ -267,11 +267,11 @@ export const useSimulacion = () => {
 
   // ===== CÁLCULO DE VUELOS EN MOVIMIENTO =====
   useEffect(() => {
-    if (status === 'completed' && finalSnapshot) {
+    if (status === 'completed' && finalSnapshot && visibleSnapshot !== finalSnapshot) {
       setVisibleSnapshot(finalSnapshot);
       mergeFlightSegments(finalSnapshot);
     }
-  }, [status, finalSnapshot, mergeFlightSegments]);
+  }, [status, finalSnapshot, visibleSnapshot, mergeFlightSegments]);
 
   const activeSegments = useMemo(() => {
     if (!tiempoSimulado) return [];
@@ -404,8 +404,10 @@ export const useSimulacion = () => {
     firstSnapshotRealRef.current = null;
     setTiempoMovimiento(0);
     if (startMs !== null) {
+      // Esperamos a que llegue el primer snapshot para anclar el reloj real,
+      // evitando que la animación se adelante antes de tener datos.
       setSimBaseSimulado(startMs);
-      setSimBaseReal(Date.now());
+      setSimBaseReal(null);
       setTiempoSimulado(new Date(startMs));
     } else {
       setSimBaseSimulado(null);
