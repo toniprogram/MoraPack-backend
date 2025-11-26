@@ -9,9 +9,10 @@ import java.util.Objects;
 import java.util.TreeMap;
 
 public class AirportSchedule {
-        private final Map<String, Integer> capacityByAirport;
-    private final NavigableMap<Key, Integer> transitDeltas = new TreeMap<>();
-    private final NavigableMap<Key, Integer> finalDeltas = new TreeMap<>();
+    private final Map<String, Integer> capacityByAirport;
+    private NavigableMap<Key, Integer> transitDeltas = new TreeMap<>();
+    private NavigableMap<Key, Integer> finalDeltas = new TreeMap<>();
+    private boolean shared = false;
 
     public AirportSchedule(Map<String, Airport> airports) {
         Map<String, Integer> capacities = new HashMap<>();
@@ -23,10 +24,20 @@ public class AirportSchedule {
 
     private AirportSchedule(Map<String, Integer> capacities,
                              NavigableMap<Key, Integer> transit,
-                             NavigableMap<Key, Integer> finals) {
+                             NavigableMap<Key, Integer> finals,
+                             boolean shared) {
         this.capacityByAirport = capacities;
-        this.transitDeltas.putAll(transit);
-        this.finalDeltas.putAll(finals);
+        this.transitDeltas = transit;
+        this.finalDeltas = finals;
+        this.shared = shared;
+    }
+
+    private void ensureMutable() {
+        if (shared) {
+            transitDeltas = new TreeMap<>(transitDeltas);
+            finalDeltas = new TreeMap<>(finalDeltas);
+            shared = false;
+        }
     }
 
     public synchronized boolean tryReserveTransit(String airportId, LocalDateTime start, LocalDateTime end, int qty) {
@@ -35,6 +46,7 @@ public class AirportSchedule {
         Objects.requireNonNull(start, "start");
         Objects.requireNonNull(end, "end");
 
+        ensureMutable();
         mergeDelta(transitDeltas, new Key(start, airportId), qty);
         mergeDelta(transitDeltas, new Key(end, airportId), -qty);
         if (violatesCapacity()) {
@@ -52,6 +64,7 @@ public class AirportSchedule {
         Objects.requireNonNull(airportId, "airportId");
         Objects.requireNonNull(start, "start");
 
+        ensureMutable();
         mergeDelta(finalDeltas, new Key(start, airportId), qty);
         if (violatesCapacity()) {
             mergeDelta(finalDeltas, new Key(start, airportId), -qty);
@@ -64,6 +77,7 @@ public class AirportSchedule {
 
     public synchronized void releaseTransit(String airportId, LocalDateTime start, LocalDateTime end, int qty) {
         if (qty <= 0) return;
+        ensureMutable();
         mergeDelta(transitDeltas, new Key(start, airportId), -qty);
         mergeDelta(transitDeltas, new Key(end, airportId), +qty);
         cleanup(transitDeltas);
@@ -71,6 +85,7 @@ public class AirportSchedule {
 
     public synchronized void releaseFinal(String airportId, LocalDateTime start, int qty) {
         if (qty <= 0) return;
+        ensureMutable();
         mergeDelta(finalDeltas, new Key(start, airportId), -qty);
         cleanup(finalDeltas);
     }
@@ -103,25 +118,29 @@ public class AirportSchedule {
     public synchronized void cleanupUntil(String airportId, LocalDateTime instant) {
         Objects.requireNonNull(airportId, "airportId");
         Objects.requireNonNull(instant, "instant");
+        ensureMutable();
         cleanupMapUntil(transitDeltas, airportId, instant);
         cleanupMapUntil(finalDeltas, airportId, instant);
     }
 
     public synchronized void purgeBefore(LocalDateTime instant) {
         Objects.requireNonNull(instant, "instant");
+        ensureMutable();
         transitDeltas.keySet().removeIf(key -> key.instant.isBefore(instant));
         finalDeltas.keySet().removeIf(key -> key.instant.isBefore(instant));
     }
 
     public AirportSchedule copy() {
-        return new AirportSchedule(capacityByAirport, new TreeMap<>(transitDeltas), new TreeMap<>(finalDeltas));
+        return new AirportSchedule(capacityByAirport, transitDeltas, finalDeltas, true);
     }
 
     public synchronized void applyFrom(AirportSchedule other) {
+        ensureMutable();
         transitDeltas.clear();
         finalDeltas.clear();
         transitDeltas.putAll(other.transitDeltas);
         finalDeltas.putAll(other.finalDeltas);
+        shared = false;
     }
 
     private void cleanupMapUntil(Map<Key, Integer> map, String airportId, LocalDateTime instant) {

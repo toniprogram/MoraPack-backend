@@ -9,7 +9,7 @@ public class Config {
     public static final int INTERCONTINENTAL_SLA_HOURS = 72;
     public static final Duration TRANSFER_BUFFER = Duration.ofMinutes(30); // Nota: Revisar si duration es necesario
     public static final Duration WAREHOUSE_DWELL = Duration.ofHours(2); // Nota: Revisar si duration es necesario
-    public static final int SIMULATION_WINDOW_MINUTES = 60; // 1 hora por defecto
+    public static final int SIMULATION_WINDOW_MINUTES = 180; // 3 horas por defecto
 
     public static final Path PATH_AIRPORTS = Paths.get("src/com/morapack/config/data/aeropuertos.txt");
     public static final Path PATH_FLIGHTS = Paths.get("src/com/morapack/config/data/vuelos.txt");

@@ -248,9 +248,18 @@ public class SimulationService {
 
         // Ejecutar GA una vez por batch
         GeneticAlgorithm ga = new GeneticAlgorithm(world, List.copyOf(demand));
+        Instant simInstant = world.getCurrentInstant();
+        log.info("[SIM:{}] Starting GA for batch (simTime={})", session.id, simInstant);
         long start = System.nanoTime();
-        Individual best = ga.run(Config.POP_SIZE, Config.MAX_GEN, heuristicSeed);
+        Individual best = ga.run(
+                Config.POP_SIZE,
+                Config.MAX_GEN,
+                heuristicSeed,
+                session.lastPopulation,
+                batch
+        );
         long gaDuration = System.nanoTime() - start;
+        session.lastPopulation = ga.snapshotPopulation();
         session.gaRuns.incrementAndGet();
 
         log.info("[SIM:{}] GA done for batch of {} orders (took {} ms)", session.id, orderedBatch.size(), gaDuration / 1_000_000);
@@ -448,6 +457,7 @@ public class SimulationService {
         private volatile String error;
         private volatile Path snapshotFile;
         private final AtomicInteger gaRuns = new AtomicInteger();
+        private volatile List<Individual> lastPopulation = List.of();
 
         private SimulationSession(UUID id, int totalOrders) {
             this.id = id;

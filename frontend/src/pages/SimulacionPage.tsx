@@ -246,7 +246,7 @@ export default function SimulacionPage() {
     const payload = {
       startDate: startUtc,
       endDate: endUtc,
-      windowMinutes: 60,
+      windowMinutes: 180,
     };
     iniciar(payload, { start: startUtc, end: endUtc });
   };
