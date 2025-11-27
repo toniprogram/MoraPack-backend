@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 
 export default function Navbar() {
-  const [status, setStatus] = useState(true);
+  const [status] = useState(true);
   const [time, setTime] = useState("");
 
   useEffect(() => {
@@ -64,6 +64,16 @@ export default function Navbar() {
               Simulación
             </NavLink>
           </li>
+          <li>
+              <NavLink
+                to="/operacion"
+                className={({ isActive }) =>
+                  `btn btn-ghost ${isActive ? "btn-active" : ""}`
+                }
+              >
+                Operación
+              </NavLink>
+           </li>
         </ul>
       </div>
 

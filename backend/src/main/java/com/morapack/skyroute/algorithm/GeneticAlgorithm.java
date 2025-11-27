@@ -16,6 +16,8 @@ public class GeneticAlgorithm {
     private final Random rnd = new Random();
     private final List<Individual> population = new ArrayList<>();
     private static final int TOURNAMENT_K = 3;
+    private static final double MIN_IMPROVEMENT = 1e-6;
+    private static final int EARLY_STOP_PATIENCE = 3;
 
     public GeneticAlgorithm(World world, List<Order> demand) {
         this.world = world;
@@ -23,7 +25,26 @@ public class GeneticAlgorithm {
     }
 
     public void initializePopulation(int size) {
-        for (int i = 0; i < size; i++) {
+        initializePopulation(size, null);
+    }
+
+    public void initializePopulation(int size, Individual seed) {
+        population.clear();
+        if (seed != null) {
+            try {
+                population.add(seed.copy());
+            } catch (Exception ex) {
+                // ignore copy failure
+            }
+            if (population.size() < size) {
+                try {
+                    population.add(Individual.mutate(world, demand, seed, rnd));
+                } catch (Exception ex) {
+                    // ignore mutation failure
+                }
+            }
+        }
+        while (population.size() < size) {
             population.add(Individual.randomIndividual(world, demand, rnd));
         }
     }
@@ -71,14 +92,31 @@ public class GeneticAlgorithm {
     }
 
     public Individual run(int populationSize, int generations) {
+        return run(populationSize, generations, null, null, List.of());
+    }
+
+    public Individual run(int populationSize, int generations, Individual seed) {
+        return run(populationSize, generations, seed, null, List.of());
+    }
+
+    public Individual run(int populationSize, int generations, Individual seed, List<Individual> carryOver, List<Order> newOrders) {
         if (demand.isEmpty()) {
             throw new IllegalStateException("No orders available for GA");
         }
 
-        population.clear();
-        initializePopulation(populationSize);
-        Individual best = bestIndividual(population);
+        initializePopulationWithCarryOver(populationSize, seed, carryOver, newOrders);
+        int reusedCount = population.size();
+        if (population.isEmpty()) {
+            initializePopulation(populationSize, seed);
+        } else {
+            fillPopulation(populationSize, seed);
+        }
+        System.out.println("[GA] Population reuse: " + reusedCount + "/" + population.size() + " carried over");
 
+        Individual best = bestIndividual(population);
+        double previousBestFitness = best.getFitness();
+
+        int stagnant = 0;
         for (int gen = 0; gen < generations; gen++) {
             List<Individual> nextGen = new ArrayList<>();
             // Elitismo: conservar el mejor de la generación previa
@@ -105,10 +143,79 @@ public class GeneticAlgorithm {
             population.addAll(nextGen);
             best = bestIndividual(population);
             System.out.println("Generación " + (gen + 1) + " mejor fitness=" + best.getFitness());
+
+            double improvement = best.getFitness() - previousBestFitness;
+            previousBestFitness = best.getFitness();
+            if (improvement > MIN_IMPROVEMENT) {
+                stagnant = 0;
+            } else {
+                stagnant++;
+            }
+            if (stagnant >= EARLY_STOP_PATIENCE) {
+                System.out.println("Early stop en generación " + (gen + 1) + " (sin mejora significativa por " + EARLY_STOP_PATIENCE + " generaciones)");
+                break;
+            }
         }
 
         applyToWorld(best);
         return best;
+    }
+
+    private void initializePopulationWithCarryOver(int desiredSize, Individual seed, List<Individual> carryOver, List<Order> newOrders) {
+        population.clear();
+        if (carryOver == null || carryOver.isEmpty()) {
+            return;
+        }
+        for (Individual individual : carryOver) {
+            Individual candidate = applyNewOrders(individual, newOrders);
+            if (candidate != null) {
+                population.add(candidate);
+            }
+            if (population.size() >= desiredSize) {
+                break;
+            }
+        }
+    }
+
+    private Individual applyNewOrders(Individual base, List<Order> newOrders) {
+        try {
+            return base.tryInsertOrders(world, newOrders, rnd);
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    private void fillPopulation(int desiredSize, Individual seed) {
+        Individual base = seed;
+        if (base == null && !population.isEmpty()) {
+            base = bestIndividual(population);
+        }
+        if (base != null) {
+            try {
+                population.add(base.copy());
+            } catch (Exception ignored) {}
+            if (population.size() < desiredSize) {
+                try {
+                    population.add(Individual.mutate(world, demand, base, rnd));
+                } catch (Exception ignored) {}
+            }
+        }
+        while (population.size() < desiredSize) {
+            population.add(Individual.randomIndividual(world, demand, rnd));
+        }
+    }
+
+    public List<Individual> snapshotPopulation() {
+        return population.stream()
+                .map(ind -> {
+                    try {
+                        return ind.copy();
+                    } catch (Exception ex) {
+                        return null;
+                    }
+                })
+                .filter(ind -> ind != null)
+                .toList();
     }
 
     private Individual bestIndividual(List<Individual> individuals) {

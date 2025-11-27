@@ -48,6 +48,8 @@ export interface SimulationMessage {
 export interface SimulationStartRequest {
   startDate?: string; // ISO 8601 sin zona
   endDate?: string;
+  windowMinutes?: number;
+  useHeuristicSeed?: boolean;
 }
 
 // Corresponde a SimulationStartResponse.java

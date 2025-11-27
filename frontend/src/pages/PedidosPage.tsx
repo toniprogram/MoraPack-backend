@@ -1,15 +1,21 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
+import type { ChangeEvent } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   Plus,
   Trash2,
   RefreshCw,
   ChevronLeft,
   ChevronRight,
+  Package,
+  Database,
 } from "lucide-react";
 import { usePedidos, type PedidoScope } from "../hooks/usePedidos";
 import type { Order } from "../types/order";
 import type { OrderRequest } from "../types/orderRequest";
+import { aeropuertoService } from "../services/aeropuertoService";
 import PedidosSummary from "../components/PedidosSummary";
+import { orderService } from "../services/orderService";
 
 const PAGE_SIZE_OPTIONS = [20, 50, 100, 250, 500];
 const DEFAULT_PAGE_SIZE = 50;
@@ -22,6 +28,10 @@ const buildDefaultForm = (projected: boolean): OrderRequest => ({
   creationLocal: new Date().toISOString().slice(0, 16),
   projected,
 });
+
+interface OrderRequestExtended extends OrderRequest {
+  fechaOriginal: string;
+}
 
 const formatUtc = (value: string) =>
   new Date(value).toLocaleString("es-PE", {
@@ -40,6 +50,14 @@ export default function PedidosPage() {
   const [jumpValue, setJumpValue] = useState<string>("1");
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<OrderRequest>(buildDefaultForm(scope === "PROJECTED"));
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [ordenesArchivo, setOrdenesArchivo] = useState<OrderRequestExtended[]>([]);
+  const [estaSincronizandoArchivo, setEstaSincronizandoArchivo] = useState(false);
+
+  const { data: aeropuertos = [] } = useQuery({
+    queryKey: ["aeropuertos"],
+    queryFn: aeropuertoService.getAll,
+  });
 
   const { list, create, remove } = usePedidos(scope, page, pageSize);
 
@@ -50,6 +68,10 @@ export default function PedidosPage() {
 
   useEffect(() => {
     setForm(buildDefaultForm(scope === "PROJECTED"));
+    setOrdenesArchivo([]);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
   }, [scope]);
 
   const pageData = list.data;
@@ -64,18 +86,27 @@ export default function PedidosPage() {
     }
   }, [page, totalPages]);
 
-  const visiblePages = useMemo(() => {
-    const pages = new Set<number>();
-    pages.add(0);
-    pages.add(totalPages - 1);
-    for (let offset = -2; offset <= 2; offset++) {
-      const candidate = currentPage + offset;
-      if (candidate > 0 && candidate < totalPages - 1) {
-        pages.add(candidate);
+  useEffect(() => {
+    setJumpValue(String(currentPage + 1));
+  }, [currentPage]);
+
+  const getPageButtons = useMemo(() => {
+    return (page: number, total: number) => {
+      if (total <= 7) {
+        return Array.from({ length: total }, (_, idx) => idx);
       }
-    }
-    return Array.from(pages).sort((a, b) => a - b);
-  }, [currentPage, totalPages]);
+      const buttons = new Set<number>();
+      buttons.add(0);
+      buttons.add(total - 1);
+      for (let offset = -2; offset <= 2; offset++) {
+        const candidate = page + offset;
+        if (candidate > 0 && candidate < total - 1) {
+          buttons.add(candidate);
+        }
+      }
+      return Array.from(buttons).sort((a, b) => a - b);
+    };
+  }, []);
 
   const handleJump = () => {
     const numeric = Number(jumpValue);
@@ -104,6 +135,80 @@ export default function PedidosPage() {
     );
     if (!confirmed) return;
     remove.mutate(order.id);
+  };
+
+  const handleArchivoCargado = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const text = await file.text();
+    const lines = text.split("\n").filter((line) => line.trim() !== "");
+
+    try {
+      const ordenesParseadas: OrderRequestExtended[] = lines.map((line) => {
+        const parts = line.split("-");
+
+        if (parts.length < 7) throw new Error(`Línea inválida: "${line}"`);
+
+        const id = parts[0].trim();
+        const datePart = parts[1].trim();
+        const hourPart = parts[2].trim();
+        const minutePart = parts[3].trim();
+        const dest = parts[4].trim();
+        const qty = parts[5].trim();
+        const ref = parts[6].trim();
+
+        const year = datePart.substring(0, 4);
+        const month = datePart.substring(4, 6);
+        const day = datePart.substring(6, 8);
+
+        const isoDate = `${year}-${month}-${day}`;
+        const isoTime = `${hourPart.padStart(2, "0")}:${minutePart.padStart(2, "0")}:00`;
+        const creationLocal = `${isoDate}T${isoTime}`;
+
+        const quantity = parseInt(qty, 10);
+        if (Number.isNaN(quantity)) throw new Error(`Cantidad inválida: "${qty}"`);
+
+        return {
+          id,
+          customerReference: ref,
+          destinationAirportCode: dest,
+          quantity,
+          creationLocal,
+          fechaOriginal: creationLocal,
+          projected: true,
+        };
+      });
+      setOrdenesArchivo(ordenesParseadas);
+      window.alert(`Se cargaron ${ordenesParseadas.length} órdenes correctamente`);
+    } catch (error: any) {
+      console.error("❌ Error al parsear archivo:", error);
+      window.alert(`❌ Error: ${error.message ?? error}`);
+      setOrdenesArchivo([]);
+    } finally {
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  };
+
+  const handleGuardarProyeccion = async () => {
+    if (ordenesArchivo.length === 0) {
+      window.alert("Carga un archivo con órdenes proyectadas antes de sincronizar.");
+      return;
+    }
+    setEstaSincronizandoArchivo(true);
+    try {
+      await orderService.createProjectedBatch(ordenesArchivo);
+      setOrdenesArchivo([]);
+      window.alert(`Se guardaron ${ordenesArchivo.length} órdenes proyectadas.`);
+      list.refetch();
+    } catch (error) {
+      console.error("Error guardando pedidos proyectados:", error);
+      window.alert("❌ No se pudieron guardar todos los pedidos proyectados. Revisa la consola para más detalles.");
+    } finally {
+      setEstaSincronizandoArchivo(false);
+    }
   };
 
   if (list.isLoading) {
@@ -150,6 +255,36 @@ export default function PedidosPage() {
               ))}
             </select>
           </div>
+          {scope === "PROJECTED" && (
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-wrap gap-2 items-center">
+                <label className="flex items-center gap-2 text-sm font-semibold">
+                  <Package size={16} /> Cargar pedidos (.txt)
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".txt"
+                    className="file-input file-input-bordered file-input-sm w-full max-w-xs"
+                    onChange={handleArchivoCargado}
+                    disabled={estaSincronizandoArchivo}
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline flex items-center gap-2"
+                  onClick={handleGuardarProyeccion}
+                  disabled={estaSincronizandoArchivo || ordenesArchivo.length === 0}
+                >
+                  <Database size={16} /> Guardar pedidos proyectados
+                </button>
+              </div>
+              {ordenesArchivo.length > 0 && (
+                <p className="text-xs text-success">
+                  {ordenesArchivo.length} pedidos listos para sincronizar.
+                </p>
+              )}
+            </div>
+          )}
         </div>
         <div className="flex gap-2">
           <button className="btn btn-outline btn-sm" onClick={() => list.refetch()}>
@@ -174,14 +309,15 @@ export default function PedidosPage() {
           className="card bg-base-200 p-4 shadow-md border border-base-300"
         >
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <input
-              type="text"
-              placeholder="ID"
-              className="input input-bordered input-sm w-full"
-              value={form.id}
-              onChange={(e) => setForm({ ...form, id: e.target.value })}
-              required
-            />
+            <div className="form-control">
+              <input
+                type="text"
+                placeholder="ID (dejar vacío para autogenerar)"
+                className="input input-bordered input-sm w-full"
+                value={form.id}
+                onChange={(e) => setForm({ ...form, id: e.target.value })}
+              />
+            </div>
             <input
               type="text"
               placeholder="Referencia cliente"
@@ -192,19 +328,31 @@ export default function PedidosPage() {
               }
               required
             />
-            <input
-              type="text"
-              placeholder="Aeropuerto destino (código)"
-              className="input input-bordered input-sm w-full"
-              value={form.destinationAirportCode}
-              onChange={(e) =>
-                setForm({
-                  ...form,
-                  destinationAirportCode: e.target.value.toUpperCase(),
-                })
-              }
-              required
-            />
+            <div className="form-control">
+              <label className="label">
+                <span className="label-text">Aeropuerto destino</span>
+              </label>
+              <select
+                className="select select-bordered select-sm w-full"
+                value={form.destinationAirportCode}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    destinationAirportCode: e.target.value,
+                  })
+                }
+                required
+              >
+                <option value="" disabled>
+                  Selecciona aeropuerto
+                </option>
+                {aeropuertos.map((ap) => (
+                  <option key={ap.code ?? ap.id} value={ap.code ?? ap.id}>
+                    {(ap.code ?? ap.id) ?? ""} - {ap.name}
+                  </option>
+                ))}
+              </select>
+            </div>
             <input
               type="number"
               min={1}
@@ -271,7 +419,20 @@ export default function PedidosPage() {
             </tr>
           </thead>
           <tbody>
-            {items.length === 0 ? (
+            {list.isFetching ? (
+              Array.from({ length: Math.min(pageSize, 10) }).map((_, idx) => (
+                <tr key={`sk-${idx}`} className="h-12">
+                  <td><div className="skeleton h-4 w-20"></div></td>
+                  <td><div className="skeleton h-4 w-24"></div></td>
+                  <td><div className="skeleton h-4 w-28"></div></td>
+                  <td><div className="skeleton h-4 w-10"></div></td>
+                  <td><div className="skeleton h-4 w-16"></div></td>
+                  <td><div className="skeleton h-4 w-24"></div></td>
+                  <td><div className="skeleton h-4 w-24"></div></td>
+                  <td><div className="skeleton h-6 w-8"></div></td>
+                </tr>
+              ))
+            ) : items.length === 0 ? (
               <tr>
                 <td colSpan={8} className="text-center opacity-60 py-4">
                   No hay pedidos registrados
@@ -330,11 +491,11 @@ export default function PedidosPage() {
             <button
               className="btn btn-sm"
               onClick={() => setPage((prev) => Math.max(prev - 1, 0))}
-              disabled={currentPage === 0}
+              disabled={currentPage === 0 || list.isFetching}
             >
               <ChevronLeft size={16} />
             </button>
-            {visiblePages.map((pageIndex) => (
+            {getPageButtons(currentPage, totalPages).map((pageIndex) => (
               <button
                 key={pageIndex}
                 className={`btn btn-sm ${
@@ -344,6 +505,7 @@ export default function PedidosPage() {
                   setPage(pageIndex);
                   setJumpValue(String(pageIndex + 1));
                 }}
+                disabled={list.isFetching}
               >
                 {pageIndex + 1}
               </button>
@@ -353,7 +515,7 @@ export default function PedidosPage() {
               onClick={() =>
                 setPage((prev) => Math.min(prev + 1, totalPages - 1))
               }
-              disabled={currentPage >= totalPages - 1}
+              disabled={currentPage >= totalPages - 1 || list.isFetching}
             >
               <ChevronRight size={16} />
             </button>
@@ -365,8 +527,9 @@ export default function PedidosPage() {
                 className="input input-bordered input-xs w-20"
                 value={jumpValue}
                 onChange={(event) => setJumpValue(event.target.value)}
+                disabled={list.isFetching}
               />
-              <button className="btn btn-xs" onClick={handleJump}>
+              <button className="btn btn-xs" onClick={handleJump} disabled={list.isFetching}>
                 Ir
               </button>
             </div>

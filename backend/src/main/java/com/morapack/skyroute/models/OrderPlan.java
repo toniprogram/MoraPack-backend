@@ -2,6 +2,7 @@ package com.morapack.skyroute.models;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -28,6 +29,7 @@ public class OrderPlan {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "current_plan_id")
+    @JsonIgnore
     private CurrentPlan plan;
 
     // Constructor adicional (para uso de lógica)

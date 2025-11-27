@@ -6,12 +6,21 @@ import java.util.Map;
 import java.util.Objects;
 
 public class FlightSchedule {
-    private final Map<Key, Integer> remainingCapacity = new HashMap<>();
+    private Map<Key, Integer> remainingCapacity = new HashMap<>();
+    private boolean shared = false;
 
     public FlightSchedule() {}
 
-    private FlightSchedule(Map<Key, Integer> snapshot) {
-        this.remainingCapacity.putAll(snapshot);
+    private FlightSchedule(Map<Key, Integer> snapshot, boolean shared) {
+        this.remainingCapacity = snapshot;
+        this.shared = shared;
+    }
+
+    private void ensureMutable() {
+        if (shared) {
+            remainingCapacity = new HashMap<>(remainingCapacity);
+            shared = false;
+        }
     }
 
     public boolean tryReserve(Flight flight, LocalDate date, int quantity) {
@@ -23,6 +32,7 @@ public class FlightSchedule {
         if (flight.isCancelled(date)) {
             return false;
         }
+        ensureMutable();
         Key key = new Key(flight.getId(), date);
         int available = remainingCapacity.getOrDefault(key, flight.getDailyCapacity());
         if (available < quantity) {
@@ -41,6 +51,7 @@ public class FlightSchedule {
         if (quantity <= 0) {
             return;
         }
+        ensureMutable();
         Key key = new Key(flight.getId(), date);
         int available = remainingCapacity.getOrDefault(key, flight.getDailyCapacity());
         int updated = available + quantity;
@@ -73,10 +84,11 @@ public class FlightSchedule {
     public void applyFrom(FlightSchedule other) {
         remainingCapacity.clear();
         remainingCapacity.putAll(other.remainingCapacity);
+        shared = false;
     }
 
     public FlightSchedule copy() {
-        return new FlightSchedule(this.remainingCapacity);
+        return new FlightSchedule(this.remainingCapacity, true);
     }
 
     private record Key(String flightId, LocalDate date) {}

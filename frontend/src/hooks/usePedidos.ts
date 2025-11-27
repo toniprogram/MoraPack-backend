@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { orderService } from "../services/orderService";
 import type { OrderRequest } from "../types/orderRequest";
+import type { OrderPage } from "../types/order";
 
 export type PedidoScope = "REAL" | "PROJECTED";
 
@@ -13,10 +14,9 @@ export function usePedidos(scope: PedidoScope, page: number, size: number) {
   const queryClient = useQueryClient();
   const queryKey = keys.list(scope, page, size);
 
-  const list = useQuery({
+  const list = useQuery<OrderPage>({
     queryKey,
     queryFn: () => orderService.getPage(scope, page, size),
-    keepPreviousData: true,
   });
 
   const create = useMutation({

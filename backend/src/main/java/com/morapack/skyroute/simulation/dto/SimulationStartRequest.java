@@ -4,5 +4,7 @@ import java.time.LocalDateTime;
 
 public record SimulationStartRequest(
         LocalDateTime startDate,
-        LocalDateTime endDate
+        LocalDateTime endDate,
+        Integer windowMinutes,
+        Boolean useHeuristicSeed
 ) {}

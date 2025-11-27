@@ -1,8 +1,13 @@
 import React, { useState, useMemo } from "react";
-import { Eye, Plus, Trash2, RefreshCw, Plane } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Eye, Plus, RefreshCw, ChevronLeft, ChevronRight } from "lucide-react";
 import { useFlights } from "../hooks/useFlights";
 import type { Vuelo, EstadoVuelo } from "../types/vuelo";
 import VuelosSummary from "../components/VuelosSummary";
+import { aeropuertoService } from "../services/aeropuertoService";
+
+const PAGE_SIZE_OPTIONS = [20, 50, 100, 200];
+const DEFAULT_PAGE_SIZE = 50;
 
 // --- FUNCIONES AUXILIARES ---
 const formatMinutes = (minutes: number) => {
@@ -20,19 +25,22 @@ const formatDuration = (startMin: number, endMin: number) => {
   return `${h}h ${m}m`;
 };
 
-const getStatusBadgeClass = (status: EstadoVuelo) => {
-  const statusClasses: Record<EstadoVuelo, string> = {
-    "en vuelo": "badge-info",
-    "programado": "badge-success",
-    "completado": "badge-ghost",
-    "retrasado": "badge-error"
-  };
-  return statusClasses[status] || "badge-ghost";
+const formatGmtOffset = (offset?: number) => {
+  if (offset === undefined || offset === null) return "GMT";
+  const sign = offset >= 0 ? "+" : "";
+  return `GMT${sign}${offset}`;
 };
 
 export default function FlightsPage() {
   const { list, create } = useFlights();
   const [showForm, setShowForm] = useState(false);
+  const { data: aeropuertos = [] } = useQuery({
+    queryKey: ["aeropuertos"],
+    queryFn: aeropuertoService.getAll,
+  });
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [page, setPage] = useState(0);
+  const [jumpValue, setJumpValue] = useState("1");
 
   const [form, setForm] = useState<Omit<Vuelo, "id">>({
     origen: "",
@@ -61,18 +69,20 @@ export default function FlightsPage() {
   const handleClearFilters = () => {
     setSearchTerm("");
     setStatusFilter("todos");
+    setPage(0);
   };
 
   // Filtrado
   const filteredFlights = useMemo(() => {
     if (!list.data) return [];
     return list.data.filter((flight) => {
-      if (statusFilter !== "todos" && flight.estado !== statusFilter) return false;
+      const flightStatus = flight.estado ?? "programado";
+      if (statusFilter !== "todos" && flightStatus !== statusFilter) return false;
       if (searchTerm) {
         const lowerSearchTerm = searchTerm.toLowerCase();
-        // Se asume que el tipo 'Vuelo' tiene 'codigoVuelo'
+        const flightCode = flight.codigoVuelo ?? "";
         return (
-          flight.codigoVuelo.toLowerCase().includes(lowerSearchTerm) ||
+          flightCode.toLowerCase().includes(lowerSearchTerm) ||
           flight.origen.toLowerCase().includes(lowerSearchTerm) ||
           flight.destino.toLowerCase().includes(lowerSearchTerm)
         );
@@ -80,6 +90,55 @@ export default function FlightsPage() {
       return true;
     });
   }, [list.data, searchTerm, statusFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredFlights.length / pageSize));
+  const currentPage = Math.min(page, totalPages - 1);
+
+  const getPageButtons = useMemo(() => {
+    return (current: number, total: number) => {
+      if (total <= 7) return Array.from({ length: total }, (_, idx) => idx);
+      const buttons = new Set<number>();
+      buttons.add(0);
+      buttons.add(total - 1);
+      for (let offset = -2; offset <= 2; offset++) {
+        const candidate = current + offset;
+        if (candidate > 0 && candidate < total - 1) {
+          buttons.add(candidate);
+        }
+      }
+      return Array.from(buttons).sort((a, b) => a - b);
+    };
+  }, []);
+
+  React.useEffect(() => {
+    if (page >= totalPages) {
+      setPage(totalPages - 1);
+      setJumpValue(String(totalPages));
+    }
+  }, [page, totalPages]);
+
+  React.useEffect(() => {
+    setJumpValue(String(currentPage + 1));
+  }, [currentPage]);
+
+  const pagedFlights = useMemo(() => {
+    const start = currentPage * pageSize;
+    return filteredFlights.slice(start, start + pageSize);
+  }, [filteredFlights, currentPage, pageSize]);
+
+  const airportLookup = useMemo(() => {
+    const map = new Map<string, typeof aeropuertos[number]>();
+    aeropuertos.forEach((ap) => {
+      const key = ap.code || ap.id;
+      if (key) {
+        map.set(key, ap);
+      }
+      if (ap.id && ap.id !== key) {
+        map.set(ap.id, ap);
+      }
+    });
+    return map;
+  }, [aeropuertos]);
 
   // --- ESTADOS DE CARGA ---
   if (list.isLoading)
@@ -99,7 +158,23 @@ export default function FlightsPage() {
     <div className="p-6 space-y-4">
       {/* Encabezado */}
       <div className="flex justify-between items-center">
-        <h1 className="text-xl font-semibold">Gestión de Vuelos</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-semibold">Gestión de Vuelos</h1>
+          <select
+            className="select select-bordered select-sm"
+            value={pageSize}
+            onChange={(e) => {
+              setPageSize(Number(e.target.value));
+              setPage(0);
+            }}
+          >
+            {PAGE_SIZE_OPTIONS.map((value) => (
+              <option key={value} value={value}>
+                {value} por página
+              </option>
+            ))}
+          </select>
+        </div>
         <div className="flex gap-2">
           <button
             className="btn btn-outline btn-sm"
@@ -126,8 +201,46 @@ export default function FlightsPage() {
           className="card bg-base-200 p-4 shadow-md border border-base-300"
         >
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-            <input type="text" placeholder="Origen (ej. SPIM)" className="input input-bordered input-sm w-full" value={form.origen} onChange={(e) => setForm({ ...form, origen: e.target.value.toUpperCase() })} required />
-            <input type="text" placeholder="Destino (ej. UBBB)" className="input input-bordered input-sm w-full" value={form.destino} onChange={(e) => setForm({ ...form, destino: e.target.value.toUpperCase() })} required />
+            <div className="form-control">
+              <label className="label">
+                <span className="label-text">Origen</span>
+              </label>
+              <select
+                className="select select-bordered select-sm w-full"
+                value={form.origen}
+                onChange={(e) => setForm({ ...form, origen: e.target.value })}
+                required
+              >
+                <option value="" disabled>
+                  Selecciona aeropuerto
+                </option>
+                {aeropuertos.map((ap) => (
+                  <option key={ap.code ?? ap.id} value={ap.code ?? ap.id}>
+                    {(ap.code ?? ap.id) ?? ""} - {ap.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="form-control">
+              <label className="label">
+                <span className="label-text">Destino</span>
+              </label>
+              <select
+                className="select select-bordered select-sm w-full"
+                value={form.destino}
+                onChange={(e) => setForm({ ...form, destino: e.target.value })}
+                required
+              >
+                <option value="" disabled>
+                  Selecciona aeropuerto
+                </option>
+                {aeropuertos.map((ap) => (
+                  <option key={ap.code ?? ap.id} value={ap.code ?? ap.id}>
+                    {(ap.code ?? ap.id) ?? ""} - {ap.name}
+                  </option>
+                ))}
+              </select>
+            </div>
             <input type="number" placeholder="Minuto Salida" className="input input-bordered input-sm w-full" value={form.salidaLocalMin} onChange={(e) => setForm({ ...form, salidaLocalMin: parseInt(e.target.value) || 0 })} required />
             <input type="number" placeholder="Minuto Llegada" className="input input-bordered input-sm w-full" value={form.llegadaLocalMin} onChange={(e) => setForm({ ...form, llegadaLocalMin: parseInt(e.target.value) || 0 })} required />
             <input type="number" placeholder="Capacidad" className="input input-bordered input-sm w-full" value={form.capacidad} onChange={(e) => setForm({ ...form, capacidad: parseInt(e.target.value) || 250 })} required />
@@ -176,11 +289,11 @@ export default function FlightsPage() {
           <thead>
             <tr>
               <th>Vuelo</th>
-              <th>Ruta</th>
-              <th>Aeronave</th>
-              <th>Horarios</th>
-              <th>Ocupación</th>
-              <th>Estado</th>
+              <th>Origen</th>
+              <th>Destino</th>
+              <th>Horario Local</th>
+              <th>Duración</th>
+              <th>Capacidad</th>
               <th>Acciones</th>
             </tr>
           </thead>
@@ -188,24 +301,47 @@ export default function FlightsPage() {
             {!list.data || filteredFlights.length === 0 ? (
               <tr><td colSpan={7} className="text-center opacity-60 py-4">No se encontraron vuelos.</td></tr>
             ) : (
-              filteredFlights.map((flight) => {
-                const ocupacionPct = Math.round((flight.ocupacionActual / flight.capacidad) * 100);
+              pagedFlights.map((flight) => {
+                const origenAirport = airportLookup.get(flight.origen);
+                const destinoAirport = airportLookup.get(flight.destino);
+                const origenNombre = origenAirport
+                  ? `${origenAirport.name} (${origenAirport.id})`
+                  : flight.origen;
+                const destinoNombre = destinoAirport
+                  ? `${destinoAirport.name} (${destinoAirport.id})`
+                  : flight.destino;
                 return (
                   <tr key={flight.id}>
-                    <td><strong>{flight.codigoVuelo}</strong></td>
-                    <td><div>{flight.origen} ✈️ {flight.destino}</div><div className="text-xs opacity-60">{flight.distanciaKm} km</div></td>
-                    <td>{flight.aeronave}</td>
+                    <td><strong>{flight.codigoVuelo ?? `FL-${flight.id}`}</strong></td>
                     <td>
-                      <div>{formatMinutes(flight.salidaLocalMin)} - {formatMinutes(flight.llegadaLocalMin)}</div>
-                      <div className="text-xs opacity-60">{formatDuration(flight.salidaLocalMin, flight.llegadaLocalMin)}</div>
+                      <div>{origenNombre}</div>
+                      {origenAirport && (
+                        <div className="text-xs opacity-60">
+                          {formatGmtOffset(origenAirport.gmtOffsetHours)}
+                        </div>
+                      )}
                     </td>
                     <td>
-                      <div className="flex items-center gap-2">
-                        <span>{flight.ocupacionActual}/{flight.capacidad}</span>
-                        <progress className={`progress ${ocupacionPct > 90 ? 'progress-error' : 'progress-success'}`} value={ocupacionPct} max="100"></progress>
+                      <div>{destinoNombre}</div>
+                      {destinoAirport && (
+                        <div className="text-xs opacity-60">
+                          {formatGmtOffset(destinoAirport.gmtOffsetHours)}
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      <div className="font-mono">
+                        {formatMinutes(flight.salidaLocalMin)} → {formatMinutes(flight.llegadaLocalMin)}
+                      </div>
+                      <div className="text-xs opacity-60">
+                        Origen: {formatGmtOffset(origenAirport?.gmtOffsetHours)} / Destino: {formatGmtOffset(destinoAirport?.gmtOffsetHours)}
                       </div>
                     </td>
-                    <td><span className={`badge ${getStatusBadgeClass(flight.estado)} capitalize`}>{flight.estado}</span></td>
+                    <td>{formatDuration(flight.salidaLocalMin, flight.llegadaLocalMin)}</td>
+                    <td>
+                      <div>{flight.capacidad} pax/día</div>
+                      {flight.aeronave && <div className="text-xs opacity-60">Aeronave: {flight.aeronave}</div>}
+                    </td>
                     <td className="flex gap-2">
                       <button className="btn btn-ghost btn-xs" title="Ver detalle"><Eye size={16} /></button>
                       {/* botones de Editar/Eliminar */}
@@ -217,6 +353,65 @@ export default function FlightsPage() {
           </tbody>
         </table>
       </div>
+
+      {pagedFlights.length > 0 && (
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div className="text-sm opacity-70">
+            Página {currentPage + 1} de {totalPages}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              className="btn btn-sm"
+              onClick={() => setPage((prev) => Math.max(prev - 1, 0))}
+              disabled={currentPage === 0}
+            >
+              <ChevronLeft size={16} />
+            </button>
+            {getPageButtons(currentPage, totalPages).map((pageIndex) => (
+              <button
+                key={pageIndex}
+                className={`btn btn-sm ${
+                  pageIndex === currentPage ? "btn-primary" : "btn-outline"
+                }`}
+                onClick={() => {
+                  setPage(pageIndex);
+                  setJumpValue(String(pageIndex + 1));
+                }}
+              >
+                {pageIndex + 1}
+              </button>
+            ))}
+            <button
+              className="btn btn-sm"
+              onClick={() =>
+                setPage((prev) => Math.min(prev + 1, totalPages - 1))
+              }
+              disabled={currentPage >= totalPages - 1}
+            >
+              <ChevronRight size={16} />
+            </button>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={1}
+                max={totalPages}
+                className="input input-bordered input-xs w-20"
+                value={jumpValue}
+                onChange={(event) => setJumpValue(event.target.value)}
+              />
+              <button className="btn btn-xs" onClick={() => {
+                const numeric = Number(jumpValue);
+                if (Number.isNaN(numeric) || numeric < 1 || numeric > totalPages) {
+                  return;
+                }
+                setPage(numeric - 1);
+              }}>
+                Ir
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

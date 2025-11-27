@@ -57,7 +57,8 @@ public class OrderService {
     }
 
     public Order create(OrderRequest request) {
-        validateRequest(request, true);
+        request = ensureId(request);
+        validateRequest(request, false);
         if (orderRepository.existsById(request.id())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Order " + request.id() + " already exists");
         }
@@ -71,14 +72,17 @@ public class OrderService {
         }
 
         Set<String> seenIds = new HashSet<>();
-        for (OrderRequest request : requests) {
-            validateRequest(request, true);
+        List<OrderRequest> withIds = new ArrayList<>(requests.size());
+        for (OrderRequest original : requests) {
+            OrderRequest request = ensureId(original);
+            validateRequest(request, false);
             if (!seenIds.add(request.id())) {
                 throw new ResponseStatusException(
                         HttpStatus.BAD_REQUEST,
                         "Duplicated order id in payload: " + request.id()
                 );
             }
+            withIds.add(request);
         }
 
         var existing = orderRepository.findAllById(seenIds);
@@ -90,8 +94,8 @@ public class OrderService {
             );
         }
 
-        List<Order> toPersist = new ArrayList<>(requests.size());
-        for (OrderRequest request : requests) {
+        List<Order> toPersist = new ArrayList<>(withIds.size());
+        for (OrderRequest request : withIds) {
             toPersist.add(buildOrderFromRequest(request));
         }
         return orderRepository.saveAll(toPersist);
@@ -125,6 +129,9 @@ public class OrderService {
     }
 
     private Order buildOrderFromRequest(OrderRequest request) {
+        if (isBlank(request.id())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "id generation failed");
+        }
         Airport destination = airportRepository.findById(request.destinationAirportCode())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "Destination airport not found: " + request.destinationAirportCode()));
@@ -173,6 +180,40 @@ public class OrderService {
 
     private OrderScope resolveScope(Boolean projectedFlag) {
         return Boolean.TRUE.equals(projectedFlag) ? OrderScope.PROJECTED : OrderScope.REAL;
+    }
+
+    private OrderRequest ensureId(OrderRequest request) {
+        if (request == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Request body is required");
+        }
+        if (!isBlank(request.id())) {
+            return request;
+        }
+        if (isBlank(request.destinationAirportCode())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "destinationAirportCode is required to generate id");
+        }
+        String generatedId = generateOrderId(request);
+        return new OrderRequest(
+                generatedId,
+                request.customerReference(),
+                request.destinationAirportCode(),
+                request.quantity(),
+                request.creationLocal(),
+                request.projected()
+        );
+    }
+
+    private String generateOrderId(OrderRequest request) {
+        OrderScope scope = resolveScope(request.projected());
+        String prefix = scope == OrderScope.REAL ? "1" : "0";
+        String destination = request.destinationAirportCode().toUpperCase();
+        long next = orderRepository.countByScope(scope) + 1;
+        String candidate;
+        do {
+            candidate = String.format("%s%08d_%s", prefix, next, destination);
+            next++;
+        } while (orderRepository.existsById(candidate));
+        return candidate;
     }
 
     private int normalizeLimit(Integer limit) {

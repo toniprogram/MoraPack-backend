@@ -1,5 +1,5 @@
 import { API } from "../api/api";
-import type { Flight } from "../types/flight";
+import type { Vuelo } from "../types/vuelo";
 
 export const flightService = {
   getAll: () => API.get<Vuelo[]>("/base/flights").then(res => res.data),
