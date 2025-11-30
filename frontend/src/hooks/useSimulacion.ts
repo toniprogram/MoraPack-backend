@@ -45,7 +45,7 @@ export interface SegmentoVuelo {
   arrivalUtc: string;
   orderIds: string[];
   retrasado: boolean;
-  routeQuantity: number;
+  routeQuantity?: number;
   capacityTotal?: number;
   orderLoads?: { orderId: string; quantity: number }[];
 }

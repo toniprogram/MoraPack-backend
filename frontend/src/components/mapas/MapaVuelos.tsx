@@ -233,7 +233,7 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
     return () => observer.disconnect();
   }, []);
 
-  const coordsAeropuertos = new Map<string, LatLngExpression>(
+  const coordsAeropuertos = new Map<string, [number, number]>(
     aeropuertos
       .filter((a) => typeof a.latitude === 'number' && typeof a.longitude === 'number')
       .map((a) => [a.id, [a.latitude, a.longitude]])
