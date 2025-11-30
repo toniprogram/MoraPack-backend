@@ -2,10 +2,9 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import type { ChangeEvent } from 'react';
 import { useSimulacion } from '../hooks/useSimulacion';
 import { MapaVuelos } from '../components/mapas/MapaVuelos';
-import { Check, AlertTriangle, Play, Pause, XCircle, Package, Plane, Database, Search, X } from 'lucide-react';
+import { Check, AlertTriangle, Play, Pause, XCircle, Package, Plane } from 'lucide-react';
 import type { OrderRequest } from '../types/orderRequest';
 import type { SimulationOrderPlan, SimulationSnapshot } from '../types/simulation';
-import { orderService } from '../services/orderService';
 
 // Interfaz extendida para mantener fechas originales del archivo TXT
 interface OrderRequestExtended extends OrderRequest {
@@ -16,7 +15,6 @@ export default function SimulacionPage() {
   const {
       aeropuertos,
       activeSegments,
-      kpis,
       reloj,
       isLoading,
       isStarting,
@@ -42,12 +40,13 @@ export default function SimulacionPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
-  const [estaSincronizando, setEstaSincronizando] = useState(false);
-  const [proyeccionGuardada, setProyeccionGuardada] = useState(false);
+  const [estaSincronizando] = useState(false);
+  const [, setProyeccionGuardada] = useState(false);
 
-  const [searchTerm, setSearchTerm] = useState<string>('');
   const [filtroHub, setFiltroHub] = useState<string>('');
   const [dialogInfo, setDialogInfo] = useState<{ titulo: string; mensaje: string } | null>(null);
+  const startSimRef = useRef<number | null>(null);
+  const startRealRef = useRef<number | null>(null);
 
   const formatoInputDesdeIso = (iso: string) => iso.slice(0, 16);
   const ensureSeconds = (value?: string) => {
@@ -81,6 +80,13 @@ export default function SimulacionPage() {
 
   const panelSnapshot: SimulationSnapshot | null =
     snapshotVisible ?? snapshotProgreso ?? snapshotFinal ?? null;
+  type EnvioInfo = {
+    plan: SimulationOrderPlan;
+    estado: 'A tiempo' | 'Retrasado' | 'En proceso';
+    creationMs: number;
+    arrivalMs: number;
+  };
+  const enviosHistoricos = useRef<Map<string, EnvioInfo>>(new Map());
 
   // Agrupa pedidos por vuelo, mostrando horas UTC
   type FlightGroup = {
@@ -146,26 +152,81 @@ export default function SimulacionPage() {
     return mapa;
   }, [panelSnapshot]);
 
-  // --- LÓGICA DE FILTRADO PARA LOS PANELES ---
-  const enviosFiltrados = useMemo<SimulationOrderPlan[]>(() => {
+  // --- LÓGICA DE FILTRADO Y ORDEN PARA LOS PANELES ---
+  const enviosFiltrados = useMemo(() => {
     if (!panelSnapshot) return [];
-    const term = searchTerm.toLowerCase();
+    const term = '';
+    const currentMs = tiempoSimulado
+      ? tiempoSimulado.getTime()
+      : panelSnapshot?.generatedAt
+        ? Date.parse(panelSnapshot.generatedAt)
+        : 0;
 
-    return panelSnapshot.orderPlans.filter(plan => {
-      // Filtro por término de búsqueda (ID de pedido)
+    const prev = enviosHistoricos.current;
+    const next = new Map(prev);
+    const vistos = new Set<string>();
+
+    panelSnapshot.orderPlans.forEach(plan => {
       const matchSearch = term === '' || plan.orderId.toLowerCase().includes(term);
-
-      // Filtro por Hub de origen
       const matchHub = filtroHub === '' || plan.routes.some(ruta =>
         ruta.segments.some(seg => seg.origin === filtroHub)
       );
+      if (!matchSearch || !matchHub) return;
 
-      return matchSearch && matchHub;
+      const idBase = plan.orderId.split('_')[0];
+      const fechaOriginalData = fechasOriginalesPorOrden.get(plan.orderId) || fechasOriginalesPorOrden.get(idBase);
+      const creationMs = fechaOriginalData?.fecha.getTime() ?? 0;
+      const segmentos = plan.routes?.flatMap(r => r.segments ?? []) ?? [];
+      const arrivalMs = segmentos.reduce((max, seg) => {
+        const arr = seg?.arrivalUtc ? Date.parse(seg.arrivalUtc) : NaN;
+        return Number.isNaN(arr) ? max : Math.max(max, arr);
+      }, 0);
+
+      let estado: EnvioInfo['estado'] = 'En proceso';
+      if (arrivalMs && currentMs >= arrivalMs) {
+        estado = plan.slackMinutes <= 0 ? 'Retrasado' : 'A tiempo';
+      }
+      next.set(plan.orderId, { plan, estado, creationMs, arrivalMs });
+      vistos.add(plan.orderId);
     });
-  }, [panelSnapshot, searchTerm, filtroHub]);
+
+    // Mantener los pedidos que ya no llegan en el snapshot (posiblemente completados)
+    prev.forEach((info, id) => {
+      if (vistos.has(id)) return;
+      let estado: EnvioInfo['estado'] = info.estado;
+      if (info.arrivalMs && currentMs >= info.arrivalMs) {
+        estado = info.plan.slackMinutes <= 0 ? 'Retrasado' : 'A tiempo';
+      }
+      next.set(id, { ...info, estado });
+    });
+
+    enviosHistoricos.current = next;
+
+    const lista: EnvioInfo[] = Array.from(next.values());
+
+    lista.sort((a, b) => {
+      // Entregados al final
+      const deliveredA = a.estado !== 'En proceso';
+      const deliveredB = b.estado !== 'En proceso';
+      if (deliveredA !== deliveredB) return deliveredA ? 1 : -1;
+      // Activos: más recientes arriba
+      if (!deliveredA) return b.creationMs - a.creationMs;
+      // Entregados: más recientes arriba
+      return b.arrivalMs - a.arrivalMs;
+    });
+
+    return lista;
+  }, [panelSnapshot, filtroHub, fechasOriginalesPorOrden, tiempoSimulado]);
+
+  // KPIs basados en lo que se muestra actualmente
+  const kpisVista = useMemo(() => {
+    const entregas = enviosFiltrados.filter(e => e.estado === 'A tiempo').length;
+    const retrasados = enviosFiltrados.filter(e => e.estado === 'Retrasado').length;
+    return { entregas, retrasados };
+  }, [enviosFiltrados]);
 
   const vuelosFiltrados = useMemo<FlightGroup[]>(() => {
-    const term = searchTerm.toLowerCase();
+    const term = '';
 
     return Array.from(vuelosPorFlightId.values())
       .filter(vuelo => {
@@ -182,7 +243,7 @@ export default function SimulacionPage() {
         const dateB = b.departureUtc ? new Date(b.departureUtc).getTime() : 0;
         return dateA - dateB;
       });
-  }, [vuelosPorFlightId, searchTerm, filtroHub]);
+  }, [vuelosPorFlightId, filtroHub]);
 
   // Lógica de carga de archivo
   const handleArchivoCargado = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -231,9 +292,10 @@ export default function SimulacionPage() {
       setProyeccionGuardada(false);
       alert(`Se cargaron ${ordenesParseadas.length} órdenes correctamente`);
 
-    } catch (e: any) {
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
       console.error('❌ Error al parsear archivo:', e);
-      alert(`❌ Error: ${e.message}`);
+      alert(`❌ Error: ${message}`);
       setOrdenesParaSimular([]);
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -243,6 +305,7 @@ export default function SimulacionPage() {
   const handleIniciarSimulacion = () => {
     const startUtc = ensureSeconds(startDate);
     const endUtc = ensureSeconds(endDate);
+    startSimRef.current = startUtc ? Date.parse(startUtc) : null;
     const payload = {
       startDate: startUtc,
       endDate: endUtc,
@@ -251,27 +314,9 @@ export default function SimulacionPage() {
     iniciar(payload, { start: startUtc, end: endUtc });
   };
 
-  const handleGuardarProyeccion = async () => {
-    if (ordenesParaSimular.length === 0) {
-      alert('Carga un archivo con órdenes proyectadas antes de sincronizar.');
-      return;
-    }
-    setEstaSincronizando(true);
-    setProyeccionGuardada(false);
-    try {
-      await orderService.createProjectedBatch(ordenesParaSimular);
-      setProyeccionGuardada(true);
-      alert(`Se guardaron ${ordenesParaSimular.length} órdenes proyectadas en el backend`);
-    } catch (error) {
-      console.error('Error guardando pedidos proyectados:', error);
-      alert('❌ No se pudieron guardar todos los pedidos proyectados. Revisa la consola para más detalles.');
-    } finally {
-      setEstaSincronizando(false);
-    }
-  };
-
   const handleTerminarSimulacion = async () => {
     await terminar();
+    startSimRef.current = null;
     setDialogInfo({
       titulo: 'Simulación terminada',
       mensaje: 'Se detuvo la simulación actual. Ahora puedes modificar los datos o iniciar una nueva corrida.',
@@ -288,6 +333,15 @@ export default function SimulacionPage() {
       });
     }
   }, [status]);
+
+  const formatElapsed = (elapsedMs: number) => {
+    if (elapsedMs < 0 || !Number.isFinite(elapsedMs)) return '--:--:--';
+    const hours = Math.floor(elapsedMs / 3_600_000);
+    const minutes = Math.floor((elapsedMs % 3_600_000) / 60_000);
+    const seconds = Math.floor((elapsedMs % 60_000) / 1000);
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+  };
 
   if (isLoading) {
     return <div className="p-6 text-center">Cargando datos base...</div>;
@@ -306,7 +360,7 @@ export default function SimulacionPage() {
 
         {/* Header del Panel */}
         <div className="bg-primary text-primary-content p-4">
-          <h1 className="text-xl font-bold mb-2">Simulación Semanal</h1>
+          {/*En esta posición un toggle para simulación semanal o hasta el colapso */}
           {/* Controles */}
           <div className="space-y-2">
             {ordenesParaSimular.length > 0 && (
@@ -355,102 +409,52 @@ export default function SimulacionPage() {
 
             <div className="flex gap-2">
               <button
-                className="btn btn-sm btn-primary flex-1"
-                onClick={handleIniciarSimulacion}
-                disabled={estaActivo || estaSincronizando || isStarting}
+                className={`btn btn-sm flex-1 ${estaActivo ? 'btn-warning' : 'btn-primary'}`}
+                onClick={() => {
+                  if (!estaActivo && !estaVisualizando) {
+                    handleIniciarSimulacion();
+                  } else {
+                    pausar();
+                  }
+                }}
+                disabled={estaSincronizando || isStarting}
               >
-                <Play size={16} /> {isStarting ? 'Preparando...' : 'Iniciar'}
+                {estaActivo ? (
+                  <>
+                    <Pause size={16} /> Pausar
+                  </>
+                ) : (
+                  <>
+                    <Play size={16} /> {isStarting ? 'Preparando...' : (estaVisualizando ? 'Reanudar' : 'Iniciar')}
+                  </>
+                )}
               </button>
-              <button
-                className="btn btn-sm btn-warning flex-1"
-                onClick={pausar}
-                disabled={!estaActivo && !estaVisualizando}
-              >
-                <Pause size={16} /> Pausar
+
+              <button className="btn btn-sm btn-error flex-1" onClick={handleTerminarSimulacion}>
+                <XCircle size={16} /> Terminar
               </button>
             </div>
-
-            <button className="btn btn-sm btn-error w-full" onClick={handleTerminarSimulacion}>
-              <XCircle size={16} /> Terminar
-            </button>
           </div>
         </div>
-        <div className="px-3 py-2 bg-base-200 border-b border-base-300 text-xs text-base-content">
-          <label className="block uppercase tracking-wide text-[10px] text-base-content/70 mb-1">
-            Velocidad de simulación (x)
-          </label>
-          <input
-            type="number"
-            className="input input-sm w-full"
-            min={1}
-            max={86400}
-            value={simSpeed}
-            onChange={(e) => {
-              const parsed = Number(e.target.value);
-              setSimSpeed(Math.max(1, isNaN(parsed) ? (simSpeed || 1) : parsed));
-            }}
-          />
-          <p className="text-[10px] text-base-content/70 mt-1">
-            Controla cuántas veces más rápido avanza el reloj simulado.
-          </p>
-        </div>
-
         <div className="p-3 bg-base-200 border-b border-base-300 space-y-3">
           <h3 className="text-sm font-semibold text-base-content">Filtros de Visualización</h3>
-
-          {/* Barra de Búsqueda */}
-          <div className="relative">
-            <input
-              type="text"
-              placeholder="Buscar por ID de pedido..."
-              className="input input-sm w-full pl-8"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              disabled={!panelSnapshot}
-            />
-            <Search size={16} className="absolute left-2 top-1/2 -translate-y-1/2 text-base-content/50" />
-            {searchTerm && (
-              <button onClick={() => setSearchTerm('')} className="absolute right-2 top-1/2 -translate-y-1/2">
-                <X size={16} className="text-base-content/60 hover:text-error" />
-              </button>
-            )}
-          </div>
 
           {/* Filtros de Hub */}
           <div>
             <label className="block uppercase tracking-wide text-[10px] text-base-content/70 mb-2">
               Hub de Origen
             </label>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                className={`btn btn-xs ${filtroHub === 'SPIM' ? 'btn-warning' : 'btn-outline btn-ghost text-base-content/70'}`}
-                onClick={() => setFiltroHub(f => f === 'SPIM' ? '' : 'SPIM')}
-                disabled={!panelSnapshot}
-              >
-                Lima (SPIM)
-              </button>
-              <button
-                className={`btn btn-xs ${filtroHub === 'EBCI' ? 'btn-warning' : 'btn-outline btn-ghost text-base-content/70'}`}
-                onClick={() => setFiltroHub(f => f === 'EBCI' ? '' : 'EBCI')}
-                disabled={!panelSnapshot}
-              >
-                Bruselas (EBCI)
-              </button>
-              <button
-                className={`btn btn-xs ${filtroHub === 'UBBB' ? 'btn-warning' : 'btn-outline btn-ghost text-base-content/70'}`}
-                onClick={() => setFiltroHub(f => f === 'UBBB' ? '' : 'UBBB')}
-                disabled={!panelSnapshot}
-              >
-                Baku (UBBB)
-              </button>
-              <button
-                className={`btn btn-xs ${filtroHub === '' ? 'btn-active' : 'btn-outline btn-ghost text-base-content/70'}`}
-                onClick={() => setFiltroHub('')}
-                disabled={!panelSnapshot}
-              >
-                Todos
-              </button>
-            </div>
+            <select
+              className="select select-sm w-full"
+              value={filtroHub}
+              onChange={(e) => setFiltroHub(e.target.value)}
+              disabled={!panelSnapshot}
+            >
+              <option value="">Todos</option>
+              <option value="SPIM">Lima (SPIM)</option>
+              <option value="EBCI">Bruselas (EBCI)</option>
+              <option value="UBBB">Baku (UBBB)</option>
+            </select>
           </div>
         </div>
 
@@ -465,7 +469,7 @@ export default function SimulacionPage() {
             onClick={() => setVistaPanel('envios')}
           >
             <Package size={16} className="inline mr-1" />
-            Envíos ({enviosFiltrados.length})
+            Peds. ({enviosFiltrados.length})
           </button>
           <button
             className={`flex-1 py-2 text-sm font-medium transition-colors ${
@@ -510,58 +514,62 @@ export default function SimulacionPage() {
               )}
 
               {/* USAMOS enviosFiltrados en lugar de panelSnapshot.orderPlans */}
-              {enviosFiltrados.map((plan) => {
-                  const primerSegmento = plan.routes[0]?.segments[0];
-                  const ultimoSegmento = plan.routes[plan.routes.length - 1]?.segments[
-                    plan.routes[plan.routes.length - 1].segments.length - 1
-                  ];
+              {enviosFiltrados.map(({ plan, estado }) => {
+                const primerSegmento = plan.routes[0]?.segments[0];
+                const ultimoSegmento = plan.routes[plan.routes.length - 1]?.segments[
+                  plan.routes[plan.routes.length - 1].segments.length - 1
+                ];
 
-                  const esRetrasado = plan.slackMinutes <= 0;
-                  const estado = esRetrasado ? 'error' : 'success';
-                  const estadoTexto = esRetrasado ? 'Retrasado' : 'A tiempo';
+                const estadoClase =
+                  estado === 'A tiempo'
+                    ? 'badge-success'
+                    : estado === 'Retrasado'
+                      ? 'badge-error'
+                      : 'badge-warning';
 
-                  // Intenta buscar el ID completo, y si falla, busca el ID base
-                  const idBase = plan.orderId.split('_')[0];
-                  const fechaOriginalData = fechasOriginalesPorOrden.get(plan.orderId) || fechasOriginalesPorOrden.get(idBase);
+                const idBase = plan.orderId.split('_')[0];
+                const fechaOriginalData = fechasOriginalesPorOrden.get(plan.orderId) || fechasOriginalesPorOrden.get(idBase);
 
-                  let fechaRegistro = 'N/A';
-                  let horaRegistro = 'N/A';
+                let fechaRegistro = 'N/A';
+                let horaRegistro = 'N/A';
 
-                  if (fechaOriginalData) {
-                    fechaRegistro = fechaOriginalData.fecha.toLocaleDateString('es-PE', {
-                      day: '2-digit',
-                      month: 'short',
-                      year: 'numeric'
-                    });
-                    horaRegistro = fechaOriginalData.fecha.toLocaleTimeString('es-PE', {
-                      hour: '2-digit',
-                      minute: '2-digit'
-                    });
-                  }
+                if (fechaOriginalData) {
+                  fechaRegistro = fechaOriginalData.fecha.toLocaleDateString('es-PE', {
+                    day: '2-digit',
+                    month: 'short',
+                    year: 'numeric'
+                  });
+                  horaRegistro = fechaOriginalData.fecha.toLocaleTimeString('es-PE', {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  });
+                }
 
-                  return (
-                    <div
-                      key={plan.orderId}
-                      className={`card bg-base-200 border-l-4 ${
-                        estado === 'success' ? 'border-success' : 'border-error'
-                      } shadow-sm hover:shadow-md transition-shadow`}
-                    >
-                      <div className="card-body p-3">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <h3 className="font-bold text-sm text-primary">
-                              Pedido {plan.orderId}
-                            </h3>
-                            <p className="text-xs text-base-content/70">
-                              Cantidad: {plan.routes.reduce((acc, r) => acc + r.quantity, 0) || 'N/A'}
-                            </p>
-                          </div>
-                          <span className={`badge badge-sm ${
-                            estado === 'success' ? 'badge-success' : 'badge-error'
-                          }`}>
-                            {estadoTexto}
-                          </span>
+                return (
+                  <div
+                    key={plan.orderId}
+                    className={`card bg-base-200 border-l-4 shadow-sm hover:shadow-md transition-shadow ${
+                      estado === 'A tiempo'
+                        ? 'border-success'
+                        : estado === 'Retrasado'
+                          ? 'border-error'
+                          : 'border-warning'
+                    }`}
+                  >
+                    <div className="card-body p-3">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <h3 className="font-bold text-sm text-primary">
+                            Pedido {plan.orderId}
+                          </h3>
+                          <p className="text-xs text-base-content/70">
+                            Cantidad: {plan.routes.reduce((acc, r) => acc + r.quantity, 0) || 'N/A'}
+                          </p>
                         </div>
+                        <span className={`badge badge-sm ${estadoClase}`}>
+                          {estado}
+                        </span>
+                      </div>
 
                         {/* Fecha y hora de REGISTRO */}
                         <div className="mt-2 pt-2 border-t border-base-300">
@@ -744,44 +752,78 @@ export default function SimulacionPage() {
       {/* ========== ÁREA DEL MAPA ========== */}
       <div className="flex-1 flex flex-col">
 
-        {/* Barra superior con KPIs y Reloj */}
-        <div className="bg-base-100 shadow-md p-3 flex justify-between items-center z-10">
-          <div className="flex gap-6 text-sm">
-            <div className="flex items-center gap-2">
-              <Check size={18} className="text-success" />
-              <span>A tiempo: <strong>{kpis.entregas}</strong></span>
+          {/* Barra superior con KPIs y Reloj */}
+          <div className="bg-base-100 shadow-md p-3 flex justify-between items-center z-10">
+            <div className="flex gap-6 text-sm">
+              <div className="flex items-center gap-2 tooltip" data-tip="A tiempo">
+                <Check size={18} className="text-success" />
+                <span className="font-mono font-semibold">{kpisVista.entregas}</span>
+              </div>
+              <div className="flex items-center gap-2 tooltip" data-tip="Retrasados">
+                <AlertTriangle size={18} className="text-error" />
+                <span className="font-mono font-semibold">{kpisVista.retrasados}</span>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <AlertTriangle size={18} className="text-error" />
-              <span>Retrasados: <strong>{kpis.retrasados}</strong></span>
-            </div>
-          </div>
           <div className="flex items-center gap-4">
-            <div className="text-sm">
-              <span className="text-base-content/70">Progreso: </span>
+            <div className="text-sm tooltip" data-tip="Órdenes procesadas por el backend">
               <span className="font-mono font-semibold">{reloj}</span>
             </div>
 
+            <div className="flex items-center gap-2 text-sm">
+              <label className="text-base-content/70 text-xs uppercase tracking-wide">Velocidad</label>
+              {estaActivo ? (
+                <span className="badge badge-outline font-mono">{simSpeed}x</span>
+              ) : (
+                <>
+                  <input
+                    type="number"
+                    className="input input-xs w-20"
+                    min={50}
+                    max={500}
+                    step={50}
+                    value={simSpeed}
+                    onChange={(e) => {
+                      const value = Number(e.target.value);
+                      if (isNaN(value)) return;
+                      const clamped = Math.min(500, Math.max(50, value));
+                      const snapped = Math.round(clamped / 50) * 50;
+                      setSimSpeed(Math.min(500, Math.max(50, snapped)));
+                    }}
+                  />
+                  <span className="text-xs text-base-content/60">x</span>
+                </>
+              )}
+            </div>
+
             {/* Reloj Mundial UTC */}
-            {tiempoSimulado && (
-              <div className="flex gap-2">
-                <div className="badge badge-info">
-                  📅 {tiempoSimulado.toLocaleDateString('es-PE', {
-                    day: '2-digit',
-                    month: 'short',
-                    year: 'numeric',
-                    timeZone: 'UTC'
-                  })}
-                </div>
-                <div className="badge badge-success">
-                  🕒 {tiempoSimulado.toLocaleTimeString('es-PE', {
-                      hour: '2-digit',
-                      minute: '2-digit',
+            <div className="flex gap-2 items-center">
+              {tiempoSimulado && (
+                <>
+                  <div className="badge badge-info">
+                    📅 {tiempoSimulado.toLocaleDateString('es-PE', {
+                      day: '2-digit',
+                      month: 'short',
+                      year: 'numeric',
                       timeZone: 'UTC'
-                  })}
+                    })}
+                  </div>
+                  <div className="badge badge-success">
+                    🕒 {tiempoSimulado.toLocaleTimeString('es-PE', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        timeZone: 'UTC'
+                    })}
+                  </div>
+                </>
+              )}
+              {estaActivo && startRealRef.current !== null && (
+                <div className="tooltip" data-tip="Tiempo real desde inicio">
+                  <div className="badge badge-warning badge-outline">
+                    ⏱️ {formatElapsed(Date.now() - startRealRef.current)}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
 

@@ -1,9 +1,10 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect, useCallback } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { planService } from '../services/planService';
 import { aeropuertoService } from '../services/aeropuertoService';
 import type { Airport } from '../types/airport';
-import type { CurrentPlanResponse, OrderPlan } from '../types/plan';
+import type { CurrentPlanResponse } from '../types/plan';
 
 // --- TIPOS ---
 export interface SegmentoVuelo {
@@ -111,15 +112,15 @@ export const useOperacion = () => {
     const fetchRealTimePlan = useCallback(async () => {
         try {
             const rawResponse = await planService.getCurrentPlan();
-            let parsedPlan: any = rawResponse;
+            let parsedPlan: unknown = rawResponse;
 
             if (typeof rawResponse === 'string') {
                 try {
                     parsedPlan = JSON.parse(rawResponse);
-                } catch (e) {
+                } catch {
                     console.warn("⚠️ JSON roto, intentando reparar...");
                     try {
-                        const sanitized = rawResponse.replace(/,"plan":\{.*?(?=\}\]|\}\,)/g, '');
+                const sanitized = rawResponse.replace(/,"plan":\{.*?(?=}\]|},)/g, '');
                         parsedPlan = JSON.parse(sanitized);
                     } catch (e2) {
                         console.error("❌ Imposible reparar JSON:", e2);
@@ -127,11 +128,12 @@ export const useOperacion = () => {
                 }
             }
 
-            if (parsedPlan) {
+            if (parsedPlan && typeof parsedPlan === 'object') {
+                const planObj = parsedPlan as { generatedAt?: string; fitness?: number; orderPlans?: unknown };
                 const cleanPlan: CurrentPlanResponse = {
-                    generatedAt: parsedPlan.generatedAt,
-                    fitness: parsedPlan.fitness,
-                    orderPlans: Array.isArray(parsedPlan.orderPlans) ? parsedPlan.orderPlans : []
+                    generatedAt: planObj.generatedAt ?? new Date().toISOString(),
+                    fitness: planObj.fitness ?? 0,
+                    orderPlans: Array.isArray(planObj.orderPlans) ? planObj.orderPlans : []
                 };
                 setDayPlan(cleanPlan);
                 setLastUpdated(new Date());
@@ -195,14 +197,14 @@ export const useOperacion = () => {
         let countDelayed = 0;
         let countInTransit = 0;
 
-        orders.forEach((plan: any) => {
+        orders.forEach((plan: { routes?: any[]; slack?: unknown; slackMinutes?: number; orderId?: string }) => {
             let orderStatus: OrderStatusDetail['status'] = 'WAITING';
             let currentFlightId = undefined;
             let nextAirport = undefined;
             let currentSegDep = undefined;
             let currentSegArr = undefined;
 
-            const quantity = (plan.routes || []).reduce((sum: number, r: any) => sum + (r.quantity || 0), 0);
+            const quantity = (plan.routes || []).reduce((sum: number, r: { quantity?: number }) => sum + (r.quantity || 0), 0);
 
             let slackVal = 10;
             if (typeof plan.slack === 'string') slackVal = 10;
@@ -213,7 +215,7 @@ export const useOperacion = () => {
 
             const routes = plan.routes || [];
 
-            const allSegments = routes.flatMap((r: any) => r.segments || []).map((s: any) => {
+            const allSegments = routes.flatMap((r: { segments?: any[]; quantity?: number }) => r.segments || []).map((s: any) => {
                 const fixDate = (d: string) => {
                     if (!d) return new Date().toISOString();
                     if (d.includes('T') && !d.endsWith('Z') && !d.includes('+') && !d.includes('-')) return d + 'Z';

@@ -3,7 +3,9 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import { Client } from '@stomp/stompjs';
 import { aeropuertoService } from '../services/aeropuertoService';
 import { simulacionService } from '../services/simulacionService';
+import { API } from '../api/api';
 import type { Airport } from '../types/airport';
+import type { Flight } from '../types/flight';
 import type { SimulationSnapshot, SimulationMessage, SimulationStartRequest, SimulationOrderPlan, SimulationRoute, SimulationSegment } from '../types/simulation';
 
 export interface VueloEnMovimiento {
@@ -44,14 +46,24 @@ export interface SegmentoVuelo {
   orderIds: string[];
   retrasado: boolean;
   routeQuantity: number;
+  capacityTotal?: number;
+  orderLoads?: { orderId: string; quantity: number }[];
 }
 
 // URL de WebSocket nativo
-const BROKER_URL = 'ws://localhost:8080/ws';
+const resolveWsUrl = () => {
+  const envWs = import.meta.env.VITE_WS_URL as string | undefined;
+  if (envWs) return envWs;
+  const apiBase = import.meta.env.VITE_API_URL as string | undefined;
+  const base = apiBase ?? 'http://localhost:8080/api';
+  const wsBase = base.replace(/^http/, 'ws').replace(/\/api\/?$/, '');
+  return `${wsBase}/ws`;
+};
+const BROKER_URL = resolveWsUrl();
 const TOPIC_PREFIX = '/topic/simulations/';
 
 // Velocidad base; se puede ajustar desde el panel
-const DEFAULT_SPEED = 2000;
+const DEFAULT_SPEED = 500;
 
 export const useSimulacion = () => {
   const [simulationId, setSimulationId] = useState<string | null>(null);
@@ -76,6 +88,24 @@ export const useSimulacion = () => {
     queryKey: ['aeropuertos'],
     queryFn: aeropuertoService.getAll,
   });
+  const { data: baseFlights = [] } = useQuery<Flight[]>({
+    queryKey: ['sim-base-flights'],
+    queryFn: async () => {
+      const res = await API.get<Flight[]>('/base/flights');
+      return res.data;
+    },
+    staleTime: 1000 * 60 * 5,
+  });
+
+  const flightCapacities = useMemo(() => {
+    const map = new Map<string, number>();
+    baseFlights.forEach(flight => {
+      const fallback = flight as Partial<Flight> & { capacity?: number; capacidad?: number };
+      const cap = flight.dailyCapacity ?? fallback.capacity ?? fallback.capacidad ?? 0;
+      map.set(flight.id, cap);
+    });
+    return map;
+  }, [baseFlights]);
 
   const parseUtcMillis = (value?: string | null) => {
     if (!value) return null;
@@ -125,6 +155,12 @@ export const useSimulacion = () => {
             // Acumulamos la carga si es el mismo vuelo llevando varios pedidos
             const currentQuantity = existing?.routeQuantity || 0;
             const segmentoQty = segmento.quantity ?? 0;
+            const capacityTotal = flightCapacities.get(segmento.flightId) ?? existing?.capacityTotal;
+            const existingLoads = existing?.orderLoads ?? [];
+            const loadsMap = new Map(existingLoads.map(load => [load.orderId, load.quantity]));
+            const prevLoad = loadsMap.get(plan.orderId) ?? 0;
+            loadsMap.set(plan.orderId, prevLoad + segmentoQty);
+            const orderLoads = Array.from(loadsMap, ([orderId, quantity]) => ({ orderId, quantity }));
 
             next.set(id, {
               id,
@@ -135,14 +171,16 @@ export const useSimulacion = () => {
               arrivalUtc: segmento.arrivalUtc,
               orderIds,
               retrasado: plan.slackMinutes <= 0,
-              routeQuantity: currentQuantity + segmentoQty
+              routeQuantity: currentQuantity + segmentoQty,
+              capacityTotal,
+              orderLoads,
             });
           });
         });
       });
       return next;
     });
-  }, []);
+  }, [flightCapacities]);
 
   const snapshotConRutas = visibleSnapshot ?? finalSnapshot ?? latestProgress;
 
@@ -340,6 +378,9 @@ export const useSimulacion = () => {
 
       const orderIdReferencia = segmento.orderIds[0];
       const destinoRuta = obtenerDestinoActualOrden(orderIdReferencia, tiempoActualMs);
+      const capacidadTotal = segmento.capacityTotal ?? flightCapacities.get(segmento.flightId) ?? segmento.routeQuantity;
+      const capacidadUsada = segmento.routeQuantity;
+      const pedidosConCantidad = (segmento.orderLoads ?? segmento.orderIds.map(id => ({ orderId: id, quantity: 1 })));
 
       // Construimos el objeto VueloEnMovimiento sin referenciar 'plan' (que no existe aquí)
       vuelosEnCurso.push({
@@ -360,20 +401,20 @@ export const useSimulacion = () => {
         destinoCode: segmento.destination,
         salidaProgramada: segmento.departureUtc,
         llegadaProgramada: segmento.arrivalUtc,
-        capacidadTotal: segmento.routeQuantity,
-        capacidadUsada: segmento.routeQuantity,
+        capacidadTotal,
+        capacidadUsada,
 
-        pedidos: segmento.orderIds.map(id => ({
-            orderId: id,
+        pedidos: pedidosConCantidad.map(load => ({
+            orderId: load.orderId,
             cliente: "---",
             fechaCreacion: "---",
-            cantidad: 1 //hardcodeado CAMBIAR
+            cantidad: load.quantity
         }))
       });
     });
 
     return vuelosEnCurso;
-  }, [activeSegments, tiempoSimulado, aeropuertos, obtenerDestinoActualOrden]);
+  }, [activeSegments, tiempoSimulado, aeropuertos, obtenerDestinoActualOrden, flightCapacities]);
 
   // ===== MUTACIÓN PARA INICIAR SIMULACIÓN =====
   const simulationMutation = useMutation({

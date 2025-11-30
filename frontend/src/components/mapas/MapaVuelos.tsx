@@ -1,14 +1,15 @@
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap, Tooltip } from 'react-leaflet';
 import L from 'leaflet';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { LatLngExpression } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import type { Airport } from '../../types/airport';
-import type { SegmentoVuelo, VueloEnMovimiento } from '../../hooks/useOperacion';
-import { Plane, Calendar, Box, MapPin, Building } from 'lucide-react';
+import type { SegmentoVuelo, VueloEnMovimiento } from '../../hooks/useSimulacion';
+import { Plane, Box, Building } from 'lucide-react';
 
 // Iconos Default Leaflet
-delete (L.Icon.Default.prototype as any)._getIconUrl;
+const iconProto = L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown };
+delete iconProto._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
   iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
@@ -68,9 +69,106 @@ const getHubColor = (originCode: string) => {
 const PLANE_SIZE = 32;
 const PLANE_CENTER = 16;
 
+const toRad = (deg: number) => (deg * Math.PI) / 180;
+const toDeg = (rad: number) => (rad * 180) / Math.PI;
+
+const haversine = (a: [number, number], b: [number, number]) => {
+  const R = 6371e3; // metros
+  const lat1 = toRad(a[0]);
+  const lat2 = toRad(b[0]);
+  const dLat = toRad(b[0] - a[0]);
+  const dLon = toRad(b[1] - a[1]);
+  const sinLat = Math.sin(dLat / 2);
+  const sinLon = Math.sin(dLon / 2);
+  const h = sinLat * sinLat + Math.cos(lat1) * Math.cos(lat2) * sinLon * sinLon;
+  const c = 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+  return R * c;
+};
+
+const bearingBetween = (from: [number, number], to: [number, number]) => {
+  const lat1 = toRad(from[0]);
+  const lat2 = toRad(to[0]);
+  const dLon = toRad(to[1] - from[1]);
+  const y = Math.sin(dLon) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+  const brng = Math.atan2(y, x);
+  return (toDeg(brng) + 360) % 360;
+};
+
+// Devuelve una lista de puntos siguiendo el arco de gran círculo entre dos coordenadas [lat, lon]
+const greatCirclePath = (from: [number, number], to: [number, number], steps = 64): [number, number][] => {
+  const [lat1, lon1] = from.map(toRad);
+  const [lat2, lon2] = to.map(toRad);
+
+  const delta = 2 * Math.asin(Math.sqrt(
+    Math.sin((lat2 - lat1) / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin((lon2 - lon1) / 2) ** 2
+  ));
+
+  if (!Number.isFinite(delta) || delta === 0) {
+    return [from, to];
+  }
+
+  const path: [number, number][] = [];
+  for (let i = 0; i <= steps; i++) {
+    const f = i / steps;
+    const A = Math.sin((1 - f) * delta) / Math.sin(delta);
+    const B = Math.sin(f * delta) / Math.sin(delta);
+    const x = A * Math.cos(lat1) * Math.cos(lon1) + B * Math.cos(lat2) * Math.cos(lon2);
+    const y = A * Math.cos(lat1) * Math.sin(lon1) + B * Math.cos(lat2) * Math.sin(lon2);
+    const z = A * Math.sin(lat1) + B * Math.sin(lat2);
+    const lat = Math.atan2(z, Math.sqrt(x * x + y * y));
+    const lon = Math.atan2(y, x);
+    path.push([toDeg(lat), toDeg(lon)]);
+  }
+  return path;
+};
+// Cacheamos rutas por origen-destino para no recalcular en cada render
+const pathCache = new Map<string, [number, number][]>();
+const getCachedPath = (from: [number, number], to: [number, number], steps = 64) => {
+  const key = `${from[0]},${from[1]}|${to[0]},${to[1]}|${steps}`;
+  const cached = pathCache.get(key);
+  if (cached) return cached;
+  const path = greatCirclePath(from, to, steps);
+  pathCache.set(key, path);
+  return path;
+};
+
+// Devuelve posición y rumbo aproximados sobre el arco, según porcentaje de progreso (0-100)
+const positionAlongPath = (path: [number, number][], progress: number) => {
+  if (!path.length) {
+    return { coord: [0, 0] as [number, number], bearing: 0 };
+  }
+  if (path.length === 1) {
+    return { coord: path[0], bearing: 0 };
+  }
+  const target = Math.max(0, Math.min(100, progress)) / 100;
+  const segLengths: number[] = [];
+  let total = 0;
+  for (let i = 0; i < path.length - 1; i++) {
+    const len = haversine(path[i], path[i + 1]);
+    segLengths.push(len);
+    total += len;
+  }
+  let dist = total * target;
+  for (let i = 0; i < segLengths.length; i++) {
+    if (dist <= segLengths[i]) {
+      const f = segLengths[i] === 0 ? 0 : dist / segLengths[i];
+      const p1 = path[i];
+      const p2 = path[i + 1];
+      const lat = p1[0] + (p2[0] - p1[0]) * f;
+      const lon = p1[1] + (p2[1] - p1[1]) * f;
+      return { coord: [lat, lon] as [number, number], bearing: bearingBetween(p1, p2) };
+    }
+    dist -= segLengths[i];
+  }
+  const last = path[path.length - 1];
+  const prev = path[path.length - 2];
+  return { coord: last, bearing: bearingBetween(prev, last) };
+};
+
 const getPlaneIcon = (originCode: string, rotation: number) => {
   const { twClass } = getHubColor(originCode);
-
   const html = `
     <div style="
       width: ${PLANE_SIZE}px;
@@ -83,30 +181,15 @@ const getPlaneIcon = (originCode: string, rotation: number) => {
       transition: transform 150ms linear;
       will-change: transform;
     ">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="${twClass} fill-current drop-shadow-xl" width="${PLANE_SIZE}" height="${PLANE_SIZE}" style="display: block; filter: drop-shadow(0px 2px 2px rgba(0,0,0,0.5));">
-        <path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/>
-      </svg>
+      <img src="/images/plane-line.svg" alt="plane" class="${twClass}" width="${PLANE_SIZE}" height="${PLANE_SIZE}" style="display: block; filter: drop-shadow(0px 2px 2px rgba(0,0,0,0.5));" />
     </div>
   `;
-
   return L.divIcon({
-    html: html,
+    html,
     className: 'bg-transparent border-none',
     iconSize: [PLANE_SIZE, PLANE_SIZE],
     iconAnchor: [PLANE_CENTER, PLANE_CENTER],
   });
-};
-
-const calculateBearing = (fromLat: number, fromLon: number, toLat: number, toLon: number) => {
-  const fromLatRad = (fromLat * Math.PI) / 180;
-  const toLatRad = (toLat * Math.PI) / 180;
-  const deltaLonRad = ((toLon - fromLon) * Math.PI) / 180;
-
-  const y = Math.sin(deltaLonRad) * Math.cos(toLatRad);
-  const x = Math.cos(fromLatRad) * Math.sin(toLatRad) - Math.sin(fromLatRad) * Math.cos(toLatRad) * Math.cos(deltaLonRad);
-
-  const rawBearing = (Math.atan2(y, x) * 180) / Math.PI;
-  return Number.isNaN(rawBearing) ? 0 : (rawBearing + 360) % 360;
 };
 
 const formatDateTime = (isoDate: string) => {
@@ -155,6 +238,7 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
       .filter((a) => typeof a.latitude === 'number' && typeof a.longitude === 'number')
       .map((a) => [a.id, [a.latitude, a.longitude]])
   );
+  const pathsPorSegmento = useRef(new Map<string, [number, number][]>());
 
   return (
     <MapContainer
@@ -267,11 +351,13 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
 
         const { hex: colorHex } = getHubColor(segmento.origin);
         const opacity = (filtroHubActivo && segmento.origin !== filtroHubActivo) ? 0.1 : 0.4;
+        const path = getCachedPath([origenCoords[0], origenCoords[1]], [destinoCoords[0], destinoCoords[1]], 64);
+        pathsPorSegmento.current.set(segmento.id, path);
 
         return (
           <Polyline
             key={segmento.id}
-            positions={[origenCoords, destinoCoords]}
+            positions={path}
             pathOptions={{
                 color: colorHex,
                 weight: 1.5,
@@ -286,11 +372,11 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
       {vuelosEnMovimiento?.map((vuelo) => {
         const origenCoords = coordsAeropuertos.get(vuelo.origenCode);
         const destinoCoords = coordsAeropuertos.get(vuelo.destinoCode);
+        if (!origenCoords || !destinoCoords) return null;
 
-        if (!origenCoords || !destinoCoords || isNaN(vuelo.latActual)) return null;
-
-        const [dLat, dLon] = destinoCoords as [number, number];
-        const bearing = calculateBearing(vuelo.latActual, vuelo.lonActual, dLat, dLon);
+        const path = pathsPorSegmento.current.get(vuelo.id) ??
+          getCachedPath([origenCoords[0], origenCoords[1]], [destinoCoords[0], destinoCoords[1]], 64);
+        const { coord, bearing } = positionAlongPath(path, vuelo.progreso);
 
         const capacityPct = vuelo.capacidadTotal > 0
             ? Math.round((vuelo.capacidadUsada / vuelo.capacidadTotal) * 100)
@@ -299,7 +385,7 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
         return (
           <Marker
             key={vuelo.id}
-            position={[vuelo.latActual, vuelo.lonActual]}
+            position={[coord[0], coord[1]]}
             icon={getPlaneIcon(vuelo.origenCode, bearing)}
             zIndexOffset={2000}
           >
