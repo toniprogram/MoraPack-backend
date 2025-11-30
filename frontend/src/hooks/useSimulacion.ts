@@ -378,8 +378,8 @@ export const useSimulacion = () => {
 
       const orderIdReferencia = segmento.orderIds[0];
       const destinoRuta = obtenerDestinoActualOrden(orderIdReferencia, tiempoActualMs);
-      const capacidadTotal = segmento.capacityTotal ?? flightCapacities.get(segmento.flightId) ?? segmento.routeQuantity;
-      const capacidadUsada = segmento.routeQuantity;
+      const capacidadTotal = segmento.capacityTotal ?? flightCapacities.get(segmento.flightId) ?? segmento.routeQuantity ?? 0;
+      const capacidadUsada = segmento.routeQuantity ?? 0;
       const pedidosConCantidad = (segmento.orderLoads ?? segmento.orderIds.map(id => ({ orderId: id, quantity: 1 })));
 
       // Construimos el objeto VueloEnMovimiento sin referenciar 'plan' (que no existe aquí)

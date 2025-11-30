@@ -308,6 +308,7 @@ export const useOperacion = () => {
                             if (!mapVuelos.has(uniqueId)) {
                                 mapVuelos.set(uniqueId, {
                                     id: uniqueId,
+                                    orderId: plan.orderId ?? 'UNK',
                                     flightId: seg.flightId ?? 'FL-UNK',
                                     latActual: origin[0] + (dest[0] - origin[0]) * (pct / 100),
                                     lonActual: origin[1] + (dest[1] - origin[1]) * (pct / 100),
