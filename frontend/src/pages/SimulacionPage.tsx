@@ -598,7 +598,11 @@ export default function SimulacionPage() {
                           <div className="flex justify-between">
                             <span className="text-base-content/70">Holgura:</span>
                             <span className={`font-semibold ${
-                              estado === 'success' ? 'text-success' : 'text-error'
+                              estado === 'A tiempo'
+                                ? 'text-success'
+                                : estado === 'Retrasado'
+                                  ? 'text-error'
+                                  : 'text-warning'
                             }`}>
                               {plan.slackMinutes} min
                             </span>

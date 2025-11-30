@@ -16,8 +16,8 @@ export interface VueloEnMovimiento {
   lonActual: number;
   progreso: number;
   estadoVisual: 'en curso' | 'retrasado' | 'completado';
-  origen: string;
-  destino: string;
+  origen?: string;
+  destino?: string;
   destinoActual?: string;
   departureTime?: string;
   arrivalTime?: string;
