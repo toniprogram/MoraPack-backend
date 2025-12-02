@@ -502,7 +502,7 @@ export const useSimulacion = () => {
   }, [visibleSnapshot, finalSnapshot]);
 
   // ===== RELOJ DE PROGRESO =====
-  const reloj = `${latestProgress?.processedOrders ?? 0} / ${latestProgress?.totalOrders ?? 0} Órdenes`;
+  const reloj = `${latestProgress?.processedOrders ?? 0} / ${latestProgress?.totalOrders ?? 0} Pedidos`;
 
   return {
     aeropuertos,
