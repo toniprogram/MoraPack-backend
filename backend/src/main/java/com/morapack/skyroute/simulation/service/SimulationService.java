@@ -98,6 +98,9 @@ public class SimulationService {
             Path sessionFile = snapshotsDir.resolve(simulationId + ".jsonl");
             Files.deleteIfExists(sessionFile);
             session.snapshotFile = sessionFile;
+            Path diffFile = snapshotsDir.resolve(simulationId + "-events.jsonl");
+            Files.deleteIfExists(diffFile);
+            session.diffFile = diffFile;
         } catch (IOException ex) {
             log.warn("[SIM:{}] Unable to prepare snapshot file: {}", simulationId, ex.getMessage());
         }
@@ -276,6 +279,7 @@ public class SimulationService {
         }
         SimulationSnapshot snapshot = toSnapshot(session.id, demand.size(), totalOrders, best, world, demand);
         session.update(snapshot);
+        persistDiff(session, snapshot);
         persistSnapshot(session, snapshot);
         log.trace("[SIM:{}] Snapshot created: processed={}/{}", session.id, demand.size(), totalOrders);
         messagingTemplate.convertAndSend(topic(session.id), SimulationMessage.progress(session.id.toString(), snapshot));
@@ -304,13 +308,7 @@ public class SimulationService {
                                           List<Order> demand) {
 
         Instant currentSimTime = world.getCurrentInstant();
-        Map<String, Instant> completionTimes = best.computeCompletionTimes(world, demand);
-
         List<SimulationOrderPlan> orderPlans = best.getPlans().stream()
-                .filter(plan -> {
-                    Instant completion = completionTimes.get(plan.getOrderId());
-                    return completion == null || completion.isAfter(currentSimTime);
-                })
                 .map(this::toOrderPlanDto)
                 .collect(Collectors.toList());
 
@@ -432,6 +430,7 @@ public class SimulationService {
         if (snapshot == null || session.snapshotFile == null) {
             return;
         }
+        persistDiff(session, snapshot);
         try {
             String line = objectMapper.writeValueAsString(snapshot) + System.lineSeparator();
             Files.write(session.snapshotFile,
@@ -440,6 +439,35 @@ public class SimulationService {
                     StandardOpenOption.APPEND);
         } catch (IOException ex) {
             log.warn("[SIM:{}] Unable to persist snapshot: {}", session.id, ex.getMessage());
+        }
+    }
+
+    private void persistDiff(SimulationSession session, SimulationSnapshot snapshot) {
+        if (snapshot == null || session.diffFile == null) {
+            return;
+        }
+        SimulationSnapshot previous = session.lastSnapshot;
+        if (previous == null) {
+            return;
+        }
+
+        var prevIds = previous.orderPlans().stream().map(SimulationOrderPlan::orderId).collect(Collectors.toSet());
+        var currIds = snapshot.orderPlans().stream().map(SimulationOrderPlan::orderId).collect(Collectors.toSet());
+
+        List<String> added = currIds.stream().filter(id -> !prevIds.contains(id)).sorted().toList();
+        List<String> removed = prevIds.stream().filter(id -> !currIds.contains(id)).sorted().toList();
+
+        if (added.isEmpty() && removed.isEmpty()) {
+            return;
+        }
+
+        DiffLogEntry entry = new DiffLogEntry(snapshot.simulationId(), snapshot.generatedAt(), added, removed);
+        try {
+            String json = objectMapper.writeValueAsString(entry);
+            Files.writeString(session.diffFile, json + System.lineSeparator(), StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        } catch (IOException ex) {
+            log.warn("[SIM:{}] Unable to persist diff log: {}", session.id, ex.getMessage());
         }
     }
 
@@ -456,6 +484,7 @@ public class SimulationService {
         private volatile SimulationSnapshot lastSnapshot;
         private volatile String error;
         private volatile Path snapshotFile;
+        private volatile Path diffFile;
         private final AtomicInteger gaRuns = new AtomicInteger();
         private volatile List<Individual> lastPopulation = List.of();
 
@@ -495,4 +524,15 @@ public class SimulationService {
     }
 
     private record OrderWindow(Instant windowStart, List<Order> orders) {}
+
+    /**
+     * Entrada compacta para dejar trazabilidad incremental en disco.
+     * No impacta el algoritmo, solo permite reconstruir cambios sin que el frontend conserve todo.
+     */
+    private record DiffLogEntry(
+            String simulationId,
+            Instant generatedAt,
+            List<String> addedOrderIds,
+            List<String> removedOrderIds
+    ) {}
 }

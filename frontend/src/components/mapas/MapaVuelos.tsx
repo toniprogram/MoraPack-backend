@@ -1,8 +1,9 @@
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap, Tooltip } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap, Tooltip, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { useEffect, useRef, useState } from 'react';
 import type { LatLngExpression } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import planeIconUrl from '/images/plane-line.svg?url';
 import type { Airport } from '../../types/airport';
 import type { SegmentoVuelo, VueloEnMovimiento } from '../../hooks/useSimulacion';
 import { Plane, Box, Building } from 'lucide-react';
@@ -53,6 +54,13 @@ function MapResizer({ isLoading }: { isLoading: boolean }) {
   return null;
 }
 
+function MapClickReset({ onClear }: { onClear?: () => void }) {
+  useMapEvents({
+    click: () => onClear?.(),
+  });
+  return null;
+}
+
 const isMainHub = (code: string) => {
   const c = code ? code.toUpperCase() : '';
   return ['SPIM', 'LIM', 'UBBB', 'GYD', 'EBCI', 'BRU', 'CRL'].includes(c);
@@ -66,8 +74,9 @@ const getHubColor = (originCode: string) => {
   return { hex: '#a6adbb', twClass: 'text-base-content' };
 };
 
-const PLANE_SIZE = 32;
-const PLANE_CENTER = 16;
+const PLANE_SIZE = 32; // tamaño visual del avión
+const PLANE_HITBOX = 56; // área clickeable (no visible) más grande
+const PLANE_CENTER = PLANE_HITBOX / 2;
 
 const toRad = (deg: number) => (deg * Math.PI) / 180;
 const toDeg = (rad: number) => (rad * 180) / Math.PI;
@@ -171,23 +180,33 @@ const getPlaneIcon = (originCode: string, rotation: number) => {
   const { twClass } = getHubColor(originCode);
   const html = `
     <div style="
-      width: ${PLANE_SIZE}px;
-      height: ${PLANE_SIZE}px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transform: rotate(${rotation}deg);
-      transform-origin: center center;
-      transition: transform 150ms linear;
-      will-change: transform;
+      width: ${PLANE_HITBOX}px;
+      height: ${PLANE_HITBOX}px;
+      position: relative;
+      cursor: pointer;
     ">
-      <img src="/images/plane-line.svg" alt="plane" class="${twClass}" width="${PLANE_SIZE}" height="${PLANE_SIZE}" style="display: block; filter: drop-shadow(0px 2px 2px rgba(0,0,0,0.5));" />
+      <div style="
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%) rotate(${rotation}deg);
+        transform-origin: center center;
+        transition: transform 150ms linear;
+        will-change: transform;
+        width: ${PLANE_SIZE}px;
+        height: ${PLANE_SIZE}px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      ">
+        <img src="${planeIconUrl}" alt="plane" class="${twClass}" width="${PLANE_SIZE}" height="${PLANE_SIZE}" style="display: block; filter: drop-shadow(0px 2px 2px rgba(0,0,0,0.5)); pointer-events: none;" />
+      </div>
     </div>
   `;
   return L.divIcon({
     html,
     className: 'bg-transparent border-none',
-    iconSize: [PLANE_SIZE, PLANE_SIZE],
+    iconSize: [PLANE_HITBOX, PLANE_HITBOX],
     iconAnchor: [PLANE_CENTER, PLANE_CENTER],
   });
 };
@@ -212,9 +231,10 @@ interface MapaVuelosProps {
   vuelosEnMovimiento: VueloEnMovimiento[];
   filtroHubActivo: string;
   airportStocks?: Record<string, number>;
+  onSelectOrders?: (orderIds: string[] | null) => void;
 }
 
-export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMovimiento, filtroHubActivo, airportStocks = {} }: MapaVuelosProps) {
+export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMovimiento, filtroHubActivo, airportStocks = {}, onSelectOrders }: MapaVuelosProps) {
   const initialPosition: LatLngExpression = [20, 0];
   const [mapTheme, setMapTheme] = useState<'light' | 'dark'>('dark');
 
@@ -248,6 +268,7 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
       className="w-full h-full z-0"
       style={{ backgroundColor: mapTheme === 'dark' ? '#1f2937' : '#e5e7eb' }}
     >
+      <MapClickReset onClear={() => onSelectOrders?.(null)} />
       {mapTheme === 'dark' ? (
         <TileLayer
           key="dark"
@@ -388,6 +409,13 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
             position={[coord[0], coord[1]]}
             icon={getPlaneIcon(vuelo.origenCode, bearing)}
             zIndexOffset={2000}
+            eventHandlers={{
+              click: () => {
+                const orders = vuelo.pedidos?.map(p => p.orderId) ?? [];
+                onSelectOrders?.(orders);
+              },
+              popupclose: () => onSelectOrders?.(null),
+            }}
           >
             <Popup className="p-0 overflow-hidden rounded-xl" maxWidth={320}>
               <div className="bg-base-100 text-base-content text-xs w-72 shadow-xl overflow-hidden">
