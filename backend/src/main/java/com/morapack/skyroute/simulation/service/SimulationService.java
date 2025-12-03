@@ -7,11 +7,13 @@ import com.morapack.skyroute.config.Config;
 import com.morapack.skyroute.config.World;
 import com.morapack.skyroute.models.Order;
 import com.morapack.skyroute.models.OrderScope;
+import com.morapack.skyroute.models.OrderPlan;
 import com.morapack.skyroute.models.Route;
 import com.morapack.skyroute.models.RouteSegment;
 import com.morapack.skyroute.plan.service.WorldBuilder;
 import com.morapack.skyroute.orders.repository.OrderRepository;
 import com.morapack.skyroute.simulation.dto.*;
+import com.morapack.skyroute.simulation.live.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -31,6 +33,7 @@ import java.time.ZoneOffset;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,6 +49,7 @@ import java.util.stream.Collectors;
 public class SimulationService {
 
     private static final String TOPIC_PREFIX = "/topic/simulations/";
+    private static final double DEFAULT_SIM_SPEED = 500.0;
     private final Random random = new Random();
     private final WorldBuilder worldBuilder;
     private final OrderRepository orderRepository;
@@ -53,7 +57,9 @@ public class SimulationService {
     private final ObjectMapper objectMapper;
     private final Path snapshotsDir = Paths.get("snapshots");
     private final ExecutorService executorService = Executors.newCachedThreadPool();
+    private final ScheduledExecutorService tickerExecutor = Executors.newSingleThreadScheduledExecutor();
     private final Map<UUID, SimulationSession> sessions = new ConcurrentHashMap<>();
+    private final Map<String, CompletableFuture<World>> prewarmedWorlds = new ConcurrentHashMap<>();
 
     public SimulationService(WorldBuilder worldBuilder,
                              OrderRepository orderRepository,
@@ -88,11 +94,41 @@ public class SimulationService {
 
         UUID simulationId = UUID.randomUUID();
         SimulationSession session = new SimulationSession(simulationId, projectedOrders.size());
+        session.simStartInstant = range.start().plusSeconds(10); // delay de arranque para animación
+        session.realStartMillis = System.currentTimeMillis();
+        session.simSpeed = DEFAULT_SIM_SPEED;
         sessions.put(simulationId, session);
 
-        long worldBuildStart = System.nanoTime();
-        World simulationWorld = worldBuilder.buildBaseWorld(range.start());
-        log.info("[SIM] Base world built in {} ms", nanosToMillis(System.nanoTime() - worldBuildStart));
+        World simulationWorld = null;
+        if (request != null && request.prewarmToken() != null) {
+            CompletableFuture<World> future = prewarmedWorlds.remove(request.prewarmToken());
+            if (future != null) {
+                try {
+                    simulationWorld = future.get();
+                    log.info("[SIM] Reutilizando mundo precalentado con token {}", request.prewarmToken());
+                } catch (Exception ex) {
+                    log.warn("[SIM] Falló reutilización de mundo precalentado (token {}): {}", request.prewarmToken(), ex.getMessage());
+                }
+            }
+        }
+        if (simulationWorld == null) {
+            long worldBuildStart = System.nanoTime();
+            simulationWorld = worldBuilder.buildBaseWorld(range.start());
+            log.info("[SIM] Base world built in {} ms", nanosToMillis(System.nanoTime() - worldBuildStart));
+        }
+        Map<String, LiveAirport> liveAirports = new HashMap<>();
+        simulationWorld.getAirports().asMap().forEach((code, airport) -> {
+            liveAirports.put(code, new LiveAirport(code, airport.getStorageCapacity()));
+        });
+        LiveSimulationWorld liveWorld = new LiveSimulationWorld(
+                simulationId.toString(),
+                session.simStartInstant,
+                liveAirports,
+                projectedOrders
+        );
+        session.liveWorld = liveWorld;
+        final World simulationWorldFinal = simulationWorld;
+        final Instant rangeStart = range.start();
         try {
             Files.createDirectories(snapshotsDir);
             Path sessionFile = snapshotsDir.resolve(simulationId + ".jsonl");
@@ -120,10 +156,11 @@ public class SimulationService {
         final int finalWindowMinutes = windowMinutes;
         final boolean heuristicSeedEnabled = useHeuristicSeed;
         if (finalWindowMinutes > 0) {
-            executorService.submit(() -> runSimulationBatched(session, projectedOrders, simulationWorld, finalWindowMinutes, range.start(), heuristicSeedEnabled));
+            executorService.submit(() -> runSimulationBatched(session, projectedOrders, simulationWorldFinal, finalWindowMinutes, rangeStart, heuristicSeedEnabled));
         } else {
-            executorService.submit(() -> runSimulationLegacy(session, projectedOrders, simulationWorld, heuristicSeedEnabled));
+            executorService.submit(() -> runSimulationLegacy(session, projectedOrders, simulationWorldFinal, heuristicSeedEnabled));
         }
+        startTicker(session);
 
         return new SimulationStartResponse(simulationId.toString());
     }
@@ -136,12 +173,46 @@ public class SimulationService {
         return session.toStatus();
     }
 
+    public SimulationFinalReport getReport(UUID simulationId) {
+        SimulationSession session = sessions.get(simulationId);
+        if (session == null || session.liveWorld == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Simulation not found");
+        }
+        return session.liveWorld.buildFinalReport();
+    }
+
+    public PrewarmResponse prewarmWorld() {
+        // Si ya hay un mundo precalentado en progreso o listo, reutilizamos el token
+        if (!prewarmedWorlds.isEmpty()) {
+            String existing = prewarmedWorlds.keySet().iterator().next();
+            log.info("[SIM] Retornando token de prewarm existente {}", existing);
+            return new PrewarmResponse(existing);
+        }
+
+        UUID token = UUID.randomUUID();
+        final Instant prewarmStart = resolveRange(null).start();
+        CompletableFuture<World> future = CompletableFuture.supplyAsync(() -> {
+            try {
+                long start = System.nanoTime();
+                World world = worldBuilder.buildBaseWorld(prewarmStart);
+                log.info("[SIM] Mundo precalentado listo (token={} en {} ms)", token, nanosToMillis(System.nanoTime() - start));
+                return world;
+            } catch (Exception ex) {
+                log.warn("[SIM] Error al precalentar mundo: {}", ex.getMessage());
+                throw new CompletionException(ex);
+            }
+        }, executorService);
+        prewarmedWorlds.put(token.toString(), future);
+        return new PrewarmResponse(token.toString());
+    }
+
     public void cancel(UUID simulationId) {
         SimulationSession session = sessions.get(simulationId);
         if (session == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Simulation not found");
         }
         session.cancel();
+        stopTicker(session);
     }
 
     private void runSimulationLegacy(SimulationSession session, List<Order> orders, World world, boolean useHeuristicSeed) {
@@ -165,6 +236,7 @@ public class SimulationService {
                     topic(session.id),
                     SimulationMessage.completed(session.id.toString(), finalSnapshot)
             );
+            stopTicker(session);
         } catch (CancellationException ex) {
             log.warn("[SIM:{}] Simulation cancelled: {}", session.id, ex.getMessage());
         } catch (Exception ex) {
@@ -207,6 +279,7 @@ public class SimulationService {
                     topic(session.id),
                     SimulationMessage.completed(session.id.toString(), finalSnapshot)
             );
+            stopTicker(session);
         } catch (Exception ex) {
             session.error(ex.getMessage());
             log.error("[SIM:{}] Simulation failed: {}", session.id, ex.getMessage(), ex);
@@ -281,8 +354,10 @@ public class SimulationService {
         session.update(snapshot);
         persistDiff(session, snapshot);
         persistSnapshot(session, snapshot);
+        scheduleLiveFlightsFromIndividual(session, best, orderedBatch);
         log.trace("[SIM:{}] Snapshot created: processed={}/{}", session.id, demand.size(), totalOrders);
-        messagingTemplate.convertAndSend(topic(session.id), SimulationMessage.progress(session.id.toString(), snapshot));
+        SimulationTick tick = toTick(session);
+        messagingTemplate.convertAndSend(topic(session.id), SimulationMessage.progress(session.id.toString(), snapshot, tick));
 
         return best;
     }
@@ -336,6 +411,61 @@ public class SimulationService {
                 ? List.of()
                 : route.getSegments().stream().map(this::toSegmentDto).toList();
         return new SimulationRoute(route.getQuantity(), slackMinutes, segments);
+    }
+
+    private void scheduleLiveFlightsFromIndividual(SimulationSession session, Individual best, List<Order> batchOrders) {
+        if (session.liveWorld == null || best == null || batchOrders == null) {
+            return;
+        }
+        var ids = batchOrders.stream().map(Order::getId).collect(Collectors.toSet());
+        Map<String, OrderPlan> planById = best.getPlans().stream()
+                .collect(Collectors.toMap(OrderPlan::getOrderId, p -> p, (a, b) -> a));
+
+        ids.forEach(orderId -> {
+            OrderPlan plan = planById.get(orderId);
+            if (plan == null || plan.getRoutes() == null) {
+                return;
+            }
+            plan.getRoutes().forEach(route -> {
+                if (route.getSegments() == null) return;
+                route.getSegments().forEach(seg -> {
+                    var flight = seg.getFlight();
+                    if (flight == null || seg.getDate() == null) return;
+                    Instant dep = flight.getDepartureInstant(seg.getDate());
+                    Instant arr = flight.getArrivalInstant(seg.getDate());
+                    int capacityTotal = Math.max(flight.getDailyCapacity(), seg.getRouteQuantity());
+                    LiveFlight lf = new LiveFlight(
+                            flight.getId(),
+                            orderId,
+                            flight.getOriginCode(),
+                            flight.getDestinationCode(),
+                            dep,
+                            arr,
+                            capacityTotal,
+                            seg.getRouteQuantity()
+                    );
+                    session.liveWorld.scheduleFutureFlight(lf);
+                });
+            });
+        });
+    }
+
+    private SimulationTick toTick(SimulationSession session) {
+        if (session.liveWorld == null) {
+            return null;
+        }
+        Instant simTime = session.liveWorld.getCurrentSimTime();
+        List<ActiveSegment> actives = session.liveWorld.toActiveSegments();
+        List<ActiveAirportTick> airportTicks = session.liveWorld.getAirports().values().stream()
+                .map(a -> new ActiveAirportTick(
+                        a.getAirportCode(),
+                        a.getCurrentLoad(),
+                        a.getMaxThroughputPerHour()
+                ))
+                .toList();
+        double speed = session.simSpeed;
+        String status = session.completed.get() ? "completed" : (session.cancelled.get() ? "cancelled" : "running");
+        return new SimulationTick(session.id.toString(), simTime, speed, status, List.of(), actives, airportTicks);
     }
 
     private SimulationSegment toSegmentDto(RouteSegment segment) {
@@ -442,6 +572,31 @@ public class SimulationService {
         }
     }
 
+    private void startTicker(SimulationSession session) {
+        session.ticker = tickerExecutor.scheduleAtFixedRate(() -> {
+            try {
+                if (session.liveWorld == null) {
+                    return;
+                }
+                long simSeconds = Math.max(1L, Math.round(session.simSpeed));
+                session.liveWorld.tick(simSeconds);
+                SimulationTick tick = toTick(session);
+                if (tick != null) {
+                    messagingTemplate.convertAndSend(topic(session.id), SimulationMessage.progress(session.id.toString(), null, tick));
+                }
+            } catch (Exception ex) {
+                log.debug("[SIM:{}] Ticker error: {}", session.id, ex.getMessage());
+            }
+        }, 0, 1000, TimeUnit.MILLISECONDS); // 1 fps; front interpola con buffer
+    }
+
+    private void stopTicker(SimulationSession session) {
+        if (session.ticker != null) {
+            session.ticker.cancel(true);
+            session.ticker = null;
+        }
+    }
+
     private void persistDiff(SimulationSession session, SimulationSnapshot snapshot) {
         if (snapshot == null || session.diffFile == null) {
             return;
@@ -487,6 +642,11 @@ public class SimulationService {
         private volatile Path diffFile;
         private final AtomicInteger gaRuns = new AtomicInteger();
         private volatile List<Individual> lastPopulation = List.of();
+        private volatile ScheduledFuture<?> ticker;
+        private volatile Instant simStartInstant;
+        private volatile long realStartMillis;
+        private volatile double simSpeed = 1.0;
+        private volatile LiveSimulationWorld liveWorld;
 
         private SimulationSession(UUID id, int totalOrders) {
             this.id = id;
