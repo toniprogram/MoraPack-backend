@@ -3,10 +3,11 @@ import { SidebarFilters } from './SidebarFilters';
 import { SidebarEnviosPanel } from './SidebarEnviosPanel';
 import { SidebarVuelosPanel } from './SidebarVuelosPanel';
 import { SidebarAeropuertosPanel } from './SidebarAeropuertosPanel';
+import { useRef } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { Airport } from '../../types/airport';
 import type { EnvioInfo, FlightGroup } from '../../types/simulacionUI';
-import type { SimulationSnapshot } from '../../types/simulation';
+import type { ActiveAirportTick } from '../../types/simulation';
 import type { VueloEnMovimiento } from '../../hooks/useSimulacion';
 import type { OrderRequest } from '../../types/orderRequest';
 
@@ -27,16 +28,21 @@ interface SimSidebarProps {
   onPausar: () => void;
   vistaPanel: VistaPanel;
   setVistaPanel: Dispatch<SetStateAction<VistaPanel>>;
-  panelSnapshot: SimulationSnapshot | null;
   enviosFiltrados: EnvioInfo[];
   vuelosFiltrados: FlightGroup[];
   vuelosTotal: number;
   aeropuertos: Airport[];
+  activeAirports: ActiveAirportTick[];
   filtroHub: string;
   setFiltroHub: Dispatch<SetStateAction<string>>;
   selectedOrderIds: string[] | null;
+  onSelectOrders: (orderIds: string[] | null) => void;
   clearSelectedOrders: () => void;
   vuelosEnMovimiento: VueloEnMovimiento[];
+  selectedFlightId: string | null;
+  onSelectFlight: (flightId: string | null) => void;
+  selectedAirportIds: string[] | null;
+  onSelectAirport: (airportId: string | null) => void;
 }
 
 export function SimSidebar({
@@ -54,17 +60,25 @@ export function SimSidebar({
   onPausar,
   vistaPanel,
   setVistaPanel,
-  panelSnapshot,
   enviosFiltrados,
   vuelosFiltrados,
   vuelosTotal,
   aeropuertos,
+  activeAirports,
   filtroHub,
   setFiltroHub,
   selectedOrderIds,
+  onSelectOrders,
   clearSelectedOrders,
   vuelosEnMovimiento,
+  selectedFlightId,
+  onSelectFlight,
+  selectedAirportIds,
+  onSelectAirport,
 }: SimSidebarProps) {
+  const enviosToShow = enviosFiltrados;
+  const vuelosToShow = vuelosFiltrados;
+  const scrollRef = useRef<HTMLDivElement>(null);
   return (
     <div className="w-80 bg-base-100 shadow-lg flex flex-col border-r border-base-300">
       <SidebarFilters
@@ -82,7 +96,6 @@ export function SimSidebar({
         onPausar={onPausar}
         filtroHub={filtroHub}
         setFiltroHub={setFiltroHub}
-        hasSnapshot={!!panelSnapshot}
         selectedOrderIds={selectedOrderIds}
         clearSelectedOrders={clearSelectedOrders}
       />
@@ -122,25 +135,40 @@ export function SimSidebar({
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-base-100">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-2 bg-base-100">
         {vistaPanel === 'envios' && (
-        <SidebarEnviosPanel
-          panelSnapshot={panelSnapshot}
-          enviosFiltrados={enviosFiltrados}
-          ordenesParaSimular={ordenesParaSimular}
-        />
-      )}
+          <SidebarEnviosPanel
+            enviosFiltrados={enviosToShow}
+            ordenesParaSimular={ordenesParaSimular}
+            selectedOrders={selectedOrderIds}
+            onSelectOrders={onSelectOrders}
+            scrollParent={scrollRef.current}
+          />
+        )}
 
         {vistaPanel === 'vuelos' && (
           <SidebarVuelosPanel
-            vuelosFiltrados={vuelosFiltrados}
+            vuelosFiltrados={vuelosToShow}
             vuelosTotal={vuelosTotal}
             vuelosEnMovimiento={vuelosEnMovimiento}
+            selectedFlightId={selectedFlightId}
+            onSelectFlight={onSelectFlight}
+            scrollParent={scrollRef.current}
+            selectedOrders={selectedOrderIds}
+            selectedAirportIds={selectedAirportIds}
           />
         )}
 
         {vistaPanel === 'aeropuertos' && (
-          <SidebarAeropuertosPanel aeropuertos={aeropuertos} />
+          <SidebarAeropuertosPanel
+            aeropuertos={aeropuertos}
+            activeAirports={activeAirports}
+            selectedAirportIds={selectedAirportIds}
+            onSelectAirport={onSelectAirport}
+            selectedOrders={selectedOrderIds}
+            scrollParent={scrollRef.current}
+            onSelectOrders={onSelectOrders}
+          />
         )}
       </div>
     </div>

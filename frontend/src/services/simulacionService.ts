@@ -6,11 +6,17 @@ const startSimulation = async (request: SimulationStartRequest): Promise<Simulat
   return res.data;
 };
 
+const prewarmWorld = async (): Promise<string> => {
+  const res = await API.post<{ token: string }>("/simulations/prewarm");
+  return res.data.token;
+};
+
 const cancelSimulation = async (simulationId: string): Promise<void> => {
   await API.delete(`/simulations/${simulationId}`);
 };
 
 export const simulacionService = {
   startSimulation,
+  prewarmWorld,
   cancelSimulation,
 };

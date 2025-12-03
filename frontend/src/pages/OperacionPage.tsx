@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useOperacion, type OrderStatusDetail } from '../hooks/useOperacion';
 import { MapaVuelos } from '../components/mapas/MapaVuelos';
 import {
@@ -6,6 +6,7 @@ import {
     Plane, Package, CheckCircle,
     Activity, Calendar, RefreshCw, Box
 } from 'lucide-react';
+import type { ActiveAirportTick } from '../types/simulation';
 
 export default function OperacionPage() {
     const {
@@ -21,6 +22,17 @@ export default function OperacionPage() {
         isReplanning,
         lastUpdated
     } = useOperacion();
+
+    const activeAirports: ActiveAirportTick[] = useMemo(() => {
+        return aeropuertos.map(a => {
+            const code = a.id || a.code || '';
+            return {
+                airportCode: code,
+                currentLoad: airportStocks[code] || 0,
+                maxThroughputPerHour: a.storageCapacity || 0
+            };
+        });
+    }, [aeropuertos, airportStocks]);
 
     // Estado local para el input de fecha
     const [manualDateStr, setManualDateStr] = useState('');
@@ -200,7 +212,7 @@ export default function OperacionPage() {
                     aeropuertos={aeropuertos}
                     activeSegments={activeSegments}
                     vuelosEnMovimiento={vuelosEnMovimiento}
-                    airportStocks={airportStocks}
+                    activeAirports={activeAirports}
                     isLoading={status === 'buffering'}
                     filtroHubActivo=""
                 />

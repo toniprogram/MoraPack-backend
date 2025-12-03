@@ -6,5 +6,6 @@ public record SimulationStartRequest(
         LocalDateTime startDate,
         LocalDateTime endDate,
         Integer windowMinutes,
-        Boolean useHeuristicSeed
+        Boolean useHeuristicSeed,
+        String prewarmToken
 ) {}

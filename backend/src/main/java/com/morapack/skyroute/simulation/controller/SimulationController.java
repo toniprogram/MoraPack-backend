@@ -1,8 +1,10 @@
 package com.morapack.skyroute.simulation.controller;
 
+import com.morapack.skyroute.simulation.dto.PrewarmResponse;
 import com.morapack.skyroute.simulation.dto.SimulationStartRequest;
 import com.morapack.skyroute.simulation.dto.SimulationStartResponse;
 import com.morapack.skyroute.simulation.dto.SimulationStatus;
+import com.morapack.skyroute.simulation.live.SimulationFinalReport;
 import com.morapack.skyroute.simulation.service.SimulationService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -26,6 +28,11 @@ public class SimulationController {
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(response);
     }
 
+    @PostMapping("/prewarm")
+    public PrewarmResponse prewarm() {
+        return simulationService.prewarmWorld();
+    }
+
     @GetMapping("/{simulationId}/status")
     public SimulationStatus status(@PathVariable UUID simulationId) {
         return simulationService.getStatus(simulationId);
@@ -35,5 +42,10 @@ public class SimulationController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void cancel(@PathVariable UUID simulationId) {
         simulationService.cancel(simulationId);
+    }
+
+    @GetMapping("/{simulationId}/report")
+    public SimulationFinalReport report(@PathVariable UUID simulationId) {
+        return simulationService.getReport(simulationId);
     }
 }

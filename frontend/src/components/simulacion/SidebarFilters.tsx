@@ -17,7 +17,6 @@ interface SidebarFiltersProps {
   onPausar: () => void;
   filtroHub: string;
   setFiltroHub: Dispatch<SetStateAction<string>>;
-  hasSnapshot: boolean;
   selectedOrderIds: string[] | null;
   clearSelectedOrders: () => void;
 }
@@ -37,7 +36,6 @@ export function SidebarFilters({
   onPausar,
   filtroHub,
   setFiltroHub,
-  hasSnapshot,
   selectedOrderIds,
   clearSelectedOrders,
 }: SidebarFiltersProps) {
@@ -122,7 +120,7 @@ export function SidebarFilters({
             className="select select-sm w-full"
             value={filtroHub}
             onChange={(e) => setFiltroHub(e.target.value)}
-            disabled={!hasSnapshot}
+            disabled={false}
           >
             <option value="">Todos</option>
             <option value="SPIM">Lima (SPIM)</option>

@@ -1,8 +1,8 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useSimulacion } from '../hooks/useSimulacion';
 import { MapaVuelos } from '../components/mapas/MapaVuelos';
 import type { OrderRequest } from '../types/orderRequest';
-import type { SimulationSnapshot } from '../types/simulation';
+import type { OrderStatusTick, SimulationOrderPlan } from '../types/simulation';
 import { SimTopBar } from '../components/simulacion/SimTopBar';
 import { SimSidebar } from '../components/simulacion/SimSidebar';
 import type { EnvioInfo, FlightGroup } from '../types/simulacionUI';
@@ -25,25 +25,29 @@ export default function SimulacionPage() {
       iniciar,
       pausar,
       terminar,
-      snapshotFinal,
-      snapshotVisible,
-      snapshotProgreso,
       vuelosEnMovimiento,
       hasSnapshots,
       tiempoSimulado,
-      simSpeed,
-      setSimSpeed,
+      engineSpeed,
       status,
+      resetVisual,
+      activeAirports,
+      deliveredOrders,
+      inTransitOrders,
+      orderStatuses,
+      orderPlans,
   } = useSimulacion();
 
   const [ordenesParaSimular] = useState<OrderRequestExtended[]>([]);
   const [vistaPanel, setVistaPanel] = useState<'envios' | 'vuelos' | 'aeropuertos'>('envios');
-  const [startDate, setStartDate] = useState<string>('');
-  const [endDate, setEndDate] = useState<string>('');
+  const [startDate, setStartDate] = useState<string>('2025-01-02T12:00');
+  const [endDate, setEndDate] = useState<string>('2025-01-09T12:00');
   const [estaSincronizando] = useState(false);
 
   const [filtroHub, setFiltroHub] = useState<string>('');
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[] | null>(null);
+  const [selectedFlightId, setSelectedFlightId] = useState<string | null>(null);
+  const [selectedAirportIds, setSelectedAirportIds] = useState<string[] | null>(null);
   const [dialogInfo, setDialogInfo] = useState<{ titulo: string; mensaje: string } | null>(null);
   const startSimRef = useRef<number | null>(null);
   const startRealRef = useRef<number | null>(null);
@@ -55,255 +59,181 @@ export default function SimulacionPage() {
     return value.length === 16 ? `${value}:00` : value;
   };
 
-  const fechasOriginalesPorOrden = useMemo(() => {
-    const mapa = new Map<string, { fecha: Date; fechaStr: string }>();
-    ordenesParaSimular.forEach(orden => {
-      mapa.set(orden.id, {
-        fecha: new Date(orden.fechaOriginal),
-        fechaStr: orden.fechaOriginal
-      });
-    });
-    return mapa;
-  }, [ordenesParaSimular]);
-
-  const panelSnapshot: SimulationSnapshot | null =
-    snapshotVisible ?? snapshotProgreso ?? snapshotFinal ?? null;
   const enviosHistoricos = useRef<Map<string, EnvioInfo>>(new Map());
-  const ordersEnTransito = useMemo(() => {
-    const set = new Set<string>();
-    activeSegments.forEach(seg => seg.orderIds?.forEach(id => set.add(id)));
-    return set;
+
+  // Mapas auxiliares para selección cruzada
+  const flightById = useMemo(() => {
+    const map = new Map<string, typeof activeSegments[number]>();
+    activeSegments.forEach(seg => map.set(seg.id, seg));
+    return map;
   }, [activeSegments]);
 
-  const vuelosPorFlightId = useMemo<Map<string, FlightGroup>>(() => {
-    if (!panelSnapshot) return new Map();
-    const mapa = new Map<string, FlightGroup>();
-
-    panelSnapshot.orderPlans.forEach(plan => {
-      plan.routes.forEach(ruta => {
-        ruta.segments.forEach(segmento => {
-          if (!segmento.departureUtc || !segmento.arrivalUtc) {
-            return;
-          }
-
-          const uniqueFlightId = segmento.departureUtc;
-          const diaVuelo = new Date(segmento.departureUtc).toLocaleDateString('es-PE', {
-                day: '2-digit',
-                month: 'short',
-                year: 'numeric',
-                timeZone: 'UTC'
-              });
-          const horaSalida = new Date(segmento.departureUtc).toLocaleTimeString('es-PE', {
-                hour: '2-digit',
-                minute: '2-digit',
-                timeZone: 'UTC'
-              });
-          const horaLlegada = new Date(segmento.arrivalUtc).toLocaleTimeString('es-PE', {
-                hour: '2-digit',
-                minute: '2-digit',
-                timeZone: 'UTC'
-              });
-          if (!mapa.has(uniqueFlightId)) {
-            mapa.set(uniqueFlightId, {
-              flightId: segmento.flightId,
-              origen: segmento.origin,
-              destino: segmento.destination,
-              pedidos: [],
-              hora: horaSalida,
-              fecha: diaVuelo,
-              departureUtc: segmento.departureUtc,
-              arrivalUtc: segmento.arrivalUtc,
-              horaLlegada: horaLlegada
-            });
-          }
-          const vueloData = mapa.get(uniqueFlightId)!;
-          if (!vueloData.pedidos.includes(plan.orderId)) {
-            vueloData.pedidos.push(plan.orderId);
-          }
-        });
+  const orderToFlights = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    activeSegments.forEach(seg => {
+      const orders = seg.orderLoads?.map(o => o.orderId) ?? seg.orderIds ?? [];
+      orders.forEach(id => {
+        if (!map.has(id)) map.set(id, new Set());
+        map.get(id)!.add(seg.id);
       });
     });
-    return mapa;
-  }, [panelSnapshot]);
+    return map;
+  }, [activeSegments]);
+
+  const airportToOrders = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    activeAirports.forEach(a => {
+      const orders = a.orderLoads ?? [];
+      orders.forEach(ol => {
+        if (!map.has(a.airportCode)) map.set(a.airportCode, new Set());
+        map.get(a.airportCode)!.add(ol.orderId);
+      });
+    });
+    return map;
+  }, [activeAirports]);
+
+  const orderToAirports = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    airportToOrders.forEach((orders, airport) => {
+      orders.forEach(orderId => {
+        if (!map.has(orderId)) map.set(orderId, new Set());
+        map.get(orderId)!.add(airport);
+      });
+    });
+    return map;
+  }, [airportToOrders]);
 
   // --- LÓGICA DE FILTRADO Y ORDEN PARA LOS PANELES ---
   const enviosCalc = useMemo(() => {
-    if (!panelSnapshot) return { lista: [], stats: { entregas: 0, retrasados: 0 } };
     const term = '';
-    const currentMs = tiempoSimulado
-      ? tiempoSimulado.getTime()
-      : panelSnapshot?.generatedAt
-        ? Date.parse(panelSnapshot.generatedAt)
-        : 0;
-
     const prev = enviosHistoricos.current;
     const next = new Map(prev);
     const vistos = new Set<string>();
+    const planMap = new Map<string, SimulationOrderPlan>();
+    (orderPlans ?? []).forEach(p => planMap.set(p.orderId, p));
 
-    panelSnapshot.orderPlans.forEach(plan => {
-      const matchSearch = term === '' || plan.orderId.toLowerCase().includes(term);
-      const matchHub = filtroHub === '' || plan.routes.some(ruta =>
-        ruta.segments.some(seg => seg.origin === filtroHub)
-      );
-      if (!matchSearch || !matchHub) return;
+    (orderStatuses ?? []).forEach((os: OrderStatusTick) => {
+      if (!os || os.status === 'PLANNED') return; // ignoramos planificados para no poblar el panel
+      const matchSearch = term === '' || os.orderId.toLowerCase().includes(term);
+      if (!matchSearch) return;
+      if (selectedOrderIds && !selectedOrderIds.includes(os.orderId)) return;
 
-      const segmentos = plan.routes?.flatMap(r => r.segments ?? []) ?? [];
-      const earliestDepartureMs = segmentos.reduce((min, seg) => {
-        const dep = seg?.departureUtc ? Date.parse(seg.departureUtc) : NaN;
-        if (Number.isNaN(dep)) return min;
-        return Math.min(min, dep);
-      }, Number.POSITIVE_INFINITY);
-      const idBase = plan.orderId.split('_')[0];
-      const fechaOriginalData = fechasOriginalesPorOrden.get(plan.orderId) || fechasOriginalesPorOrden.get(idBase);
-      const creationMs = fechaOriginalData?.fecha.getTime()
-        ?? (Number.isFinite(earliestDepartureMs) ? earliestDepartureMs : 0);
-      const arrivalMs = segmentos.reduce((max, seg) => {
-        const arr = seg?.arrivalUtc ? Date.parse(seg.arrivalUtc) : NaN;
-        return Number.isNaN(arr) ? max : Math.max(max, arr);
-      }, 0);
-      const enTransitoPorSegmento = ordersEnTransito.has(plan.orderId);
+      const estado: EnvioInfo['estado'] =
+        os.status === 'READY_PICKUP' ? 'En tránsito'
+        : os.status === 'IN_TRANSIT' ? 'En tránsito'
+        : 'Planificado';
 
-      // Estado detallado según línea de tiempo
-      let estado: EnvioInfo['estado'] = 'Recibido';
-      if (creationMs && currentMs && creationMs > currentMs) {
-        // aún no "existe" en la simulación
-        return;
-      }
-      if (arrivalMs && currentMs >= arrivalMs) {
-        estado = 'Entregado';
-      } else if (Number.isFinite(earliestDepartureMs) && earliestDepartureMs < Infinity) {
-        if (currentMs < earliestDepartureMs && !enTransitoPorSegmento) {
-          estado = 'Planificado';
-        } else {
-          // ¿está en tránsito?
-          const enTransito = segmentos.some(seg => {
-            const dep = seg?.departureUtc ? Date.parse(seg.departureUtc) : NaN;
-            const arr = seg?.arrivalUtc ? Date.parse(seg.arrivalUtc) : NaN;
-            return !Number.isNaN(dep) && !Number.isNaN(arr) && dep <= currentMs && currentMs < arr;
-          });
-          estado = (enTransito || enTransitoPorSegmento) ? 'En tránsito' : 'Planificado';
-        }
-      } else if (enTransitoPorSegmento) {
-        estado = 'En tránsito';
-      }
-
-      // Si hay avión seleccionado, filtrar pedidos que vayan en él
-      if (selectedOrderIds && !selectedOrderIds.includes(plan.orderId)) {
-        return;
-      }
-      next.set(plan.orderId, { plan, estado, creationMs, arrivalMs });
-      vistos.add(plan.orderId);
+      const plan = planMap.get(os.orderId);
+      next.set(os.orderId, {
+        plan: plan ?? { orderId: os.orderId, slackMinutes: 0, routes: [] } as SimulationOrderPlan,
+        estado,
+        creationMs: 0,
+        arrivalMs: 0
+      });
+      vistos.add(os.orderId);
     });
 
-    // Mantener los pedidos que ya no llegan en el snapshot (posiblemente completados)
-    prev.forEach((info, id) => {
-      if (vistos.has(id)) return;
-      if (selectedOrderIds && !selectedOrderIds.includes(id)) return;
-      let estado: EnvioInfo['estado'] = info.estado;
-      if (info.arrivalMs && currentMs >= info.arrivalMs) {
-        estado = 'Entregado';
-      } else if (ordersEnTransito.has(id)) {
-        estado = 'En tránsito';
-      }
-      next.set(id, { ...info, estado });
-    });
-
-    // Asegurar que los pedidos detectados en activeSegments aparezcan aunque no estén en el snapshot visible
-    ordersEnTransito.forEach(orderId => {
-      if (selectedOrderIds && !selectedOrderIds.includes(orderId)) {
-        return;
-      }
-      const existing = next.get(orderId);
-      if (existing) {
-        if (existing.estado !== 'Entregado') {
-          next.set(orderId, { ...existing, estado: 'En tránsito' });
-        }
-      } else {
-        // si no tenemos plan en este snapshot, pero estaba en históricos lo reutilizamos
-        const historico = prev.get(orderId);
-        if (historico) {
-          next.set(orderId, { ...historico, estado: 'En tránsito' });
-        }
+    // limpiar antiguos entregados
+    Array.from(next.keys()).forEach(id => {
+      if (!vistos.has(id)) {
+        next.delete(id);
       }
     });
 
     enviosHistoricos.current = next;
 
-    // Ventana: solo pedidos en tránsito o recién entregados/planificados cercanos.
-    const retentionMs = 5 * 60 * 1000; // 5 minutos simulados
-    const lista: EnvioInfo[] = [];
-    next.forEach(info => {
-      const estado = info.estado;
-      const inTransit = estado === 'En tránsito' || ordersEnTransito.has(info.plan.orderId);
-      const deliveredRecently = estado === 'Entregado' && info.arrivalMs > 0 && currentMs - info.arrivalMs <= retentionMs;
-      const plannedSoon = estado === 'Planificado';
-      if (inTransit || deliveredRecently || plannedSoon) {
-        lista.push(info);
-      } else {
-        // podar entradas viejas para no crecer sin límite
-        if (estado === 'Entregado' && info.arrivalMs > 0 && currentMs - info.arrivalMs > retentionMs) {
-          next.delete(info.plan.orderId);
-        }
-      }
-    });
-
-    lista.sort((a, b) => b.creationMs - a.creationMs);
-
+    const lista: EnvioInfo[] = Array.from(next.values());
     const stats = { entregas: 0, retrasados: 0 };
     lista.forEach(info => {
-      if (info.estado === 'Entregado') stats.entregas += 1;
-      if (info.estado === 'En tránsito' || ordersEnTransito.has(info.plan.orderId)) stats.retrasados += 1;
+      if (info.estado === 'En tránsito') stats.retrasados += 1;
     });
-
     return { lista, stats };
-  }, [panelSnapshot, filtroHub, fechasOriginalesPorOrden, tiempoSimulado, selectedOrderIds, ordersEnTransito]);
+  }, [orderStatuses, selectedOrderIds, orderPlans]);
 
   // KPIs basados en lo que se muestra actualmente
   const enviosFiltrados = enviosCalc.lista;
-  const kpisVista = enviosCalc.stats;
 
-  useEffect(() => {
-    // Logs para depurar por qué el panel puede estar vacío
-    const sampleOrder = panelSnapshot?.orderPlans?.[0];
-    console.info('[SIM DEBUG] snapshot orders:', panelSnapshot?.orderPlans?.length ?? 0,
-      'activeSegments:', activeSegments.length,
-      'ordersEnTransito:', ordersEnTransito.size,
-      'enviosFiltrados:', enviosFiltrados.length,
-      'currentSim:', tiempoSimulado?.toISOString() ?? panelSnapshot?.generatedAt ?? 'n/a');
-    if (enviosFiltrados.length === 0 && sampleOrder) {
-      const segs = sampleOrder.routes?.flatMap(r => r.segments ?? []) ?? [];
-      console.info('[SIM DEBUG] sample order',
-        sampleOrder.orderId,
-        'segments:',
-        segs.map(s => ({
-          o: s.origin,
-          d: s.destination,
-          dep: s.departureUtc,
-          arr: s.arrivalUtc,
-        }))
-      );
+  // ----- SELECCIÓN CRUZADA -----
+  const handleSelectFlight = useCallback((flightId: string | null) => {
+    if (!flightId) {
+      setSelectedFlightId(null);
+      setSelectedOrderIds(null);
+      setSelectedAirportIds(null);
+      return;
     }
-  }, [panelSnapshot, enviosFiltrados, ordersEnTransito, activeSegments, tiempoSimulado]);
+    const seg = flightById.get(flightId);
+    const orders = seg ? (seg.orderLoads?.map(o => o.orderId) ?? seg.orderIds ?? []) : [];
+    const airports = seg ? [seg.origin, seg.destination].filter(Boolean) as string[] : [];
+    setSelectedFlightId(flightId);
+    setSelectedOrderIds(orders.length ? orders : null);
+    setSelectedAirportIds(airports.length ? airports : null);
+  }, [flightById]);
+
+  const handleSelectAirport = useCallback((airportId: string | null) => {
+    if (!airportId) {
+      setSelectedAirportIds(null);
+      return;
+    }
+    const orders = Array.from(airportToOrders.get(airportId)?.values() ?? []);
+    setSelectedAirportIds([airportId]);
+    setSelectedOrderIds(orders.length ? orders : null);
+    setSelectedFlightId(null);
+  }, [airportToOrders]);
+
+  const handleSelectOrders = useCallback((orderIds: string[] | null) => {
+    if (!orderIds || orderIds.length === 0) {
+      setSelectedOrderIds(null);
+      setSelectedFlightId(null);
+      setSelectedAirportIds(null);
+      return;
+    }
+    const unique = Array.from(new Set(orderIds));
+    setSelectedOrderIds(unique);
+
+    const airports = new Set<string>();
+    unique.forEach(id => {
+      orderToAirports.get(id)?.forEach(a => airports.add(a));
+    });
+    setSelectedAirportIds(airports.size ? Array.from(airports) : null);
+
+    let firstFlight: string | null = null;
+    unique.some(id => {
+      const flights = orderToFlights.get(id);
+      if (flights && flights.size > 0) {
+        firstFlight = Array.from(flights)[0];
+        return true;
+      }
+      return false;
+    });
+    setSelectedFlightId(firstFlight);
+  }, [orderToAirports, orderToFlights]);
+
+  // Vuelos en vivo desde los ticks (preferidos)
+  const vuelosLive: FlightGroup[] = useMemo(() => {
+    return activeSegments.map(seg => {
+      const dep = new Date(seg.departureUtc);
+      const arr = new Date(seg.arrivalUtc);
+      const fecha = dep.toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });
+      const hora = dep.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
+      const horaLlegada = arr.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
+      return {
+        segmentId: seg.id,
+        flightId: seg.flightId,
+        origen: seg.origin,
+        destino: seg.destination,
+        pedidos: seg.orderIds ?? [],
+        hora,
+        fecha,
+        departureUtc: seg.departureUtc,
+        arrivalUtc: seg.arrivalUtc,
+        horaLlegada,
+      };
+    }).filter(vuelo => filtroHub === '' || vuelo.origen === filtroHub);
+  }, [activeSegments, filtroHub]);
 
   const vuelosFiltrados = useMemo<FlightGroup[]>(() => {
-    const term = '';
-
-    return Array.from(vuelosPorFlightId.values())
-      .filter(vuelo => {
-        // Filtro por término de búsqueda (ID de pedido en el vuelo)
-        const matchSearch = term === '' || vuelo.pedidos.some(pedidoId => pedidoId.toLowerCase().includes(term));
-
-        // Filtro por Hub de origen
-        const matchHub = filtroHub === '' || vuelo.origen === filtroHub;
-
-        return matchSearch && matchHub;
-      })
-      .sort((a, b) => {
-        const dateA = a.departureUtc ? new Date(a.departureUtc).getTime() : 0;
-        const dateB = b.departureUtc ? new Date(b.departureUtc).getTime() : 0;
-        return dateA - dateB;
-      });
-  }, [vuelosPorFlightId, filtroHub]);
+    return vuelosLive;
+  }, [vuelosLive]);
 
   const handleIniciarSimulacion = () => {
     const startUtc = ensureSeconds(startDate);
@@ -314,12 +244,14 @@ export default function SimulacionPage() {
     setElapsedRealMs(0);
     enviosHistoricos.current = new Map();
     setSelectedOrderIds(null);
+    setSelectedFlightId(null);
+    setSelectedAirportIds(null);
     const payload = {
       startDate: startUtc,
       endDate: endUtc,
       windowMinutes: 180,
     };
-    iniciar(payload, { start: startUtc, end: endUtc });
+    iniciar(payload);
   };
 
   const handleTerminarSimulacion = async () => {
@@ -330,6 +262,9 @@ export default function SimulacionPage() {
     setElapsedRealMs(0);
     enviosHistoricos.current = new Map();
     setSelectedOrderIds(null);
+    setSelectedFlightId(null);
+    setSelectedAirportIds(null);
+    resetVisual();
     setDialogInfo({
       titulo: 'Simulación terminada',
       mensaje: 'Se detuvo la simulación actual. Ahora puedes modificar los datos o iniciar una nueva corrida.',
@@ -373,7 +308,11 @@ export default function SimulacionPage() {
     return <div className="p-6 text-center text-red-500">Error al cargar datos.</div>;
   }
   const mostrandoOverlay = estaActivo && !hasSnapshots;
-  const clearSelectedOrders = () => setSelectedOrderIds(null);
+  const clearSelectedOrders = () => {
+    setSelectedOrderIds(null);
+    setSelectedFlightId(null);
+    setSelectedAirportIds(null);
+  };
 
   return (
     <>
@@ -394,16 +333,21 @@ export default function SimulacionPage() {
         onPausar={pausar}
         vistaPanel={vistaPanel}
         setVistaPanel={setVistaPanel}
-        panelSnapshot={panelSnapshot}
         enviosFiltrados={enviosFiltrados}
         vuelosFiltrados={vuelosFiltrados}
-        vuelosTotal={vuelosPorFlightId.size}
+        vuelosTotal={vuelosLive.length}
         aeropuertos={aeropuertos}
+        activeAirports={activeAirports}
         filtroHub={filtroHub}
         setFiltroHub={setFiltroHub}
         selectedOrderIds={selectedOrderIds}
+        onSelectOrders={handleSelectOrders}
         clearSelectedOrders={clearSelectedOrders}
         vuelosEnMovimiento={vuelosEnMovimiento}
+        selectedFlightId={selectedFlightId}
+        onSelectFlight={handleSelectFlight}
+        selectedAirportIds={selectedAirportIds}
+        onSelectAirport={handleSelectAirport}
       />
 
       {/* ========== ÁREA DEL MAPA ========== */}
@@ -411,12 +355,13 @@ export default function SimulacionPage() {
 
           {/* Barra superior con KPIs y Reloj */}
           <SimTopBar
-            kpisVista={kpisVista}
+            entregados={deliveredOrders}
+            enTransito={inTransitOrders}
+            vuelosActivos={activeSegments.length}
             reloj={reloj}
             tiempoSimulado={tiempoSimulado}
             estaActivo={estaActivo}
-            simSpeed={simSpeed}
-            setSimSpeed={setSimSpeed}
+            engineSpeed={engineSpeed}
             startRealMs={startRealMs}
             elapsedRealMs={elapsedRealMs}
             formatElapsed={formatElapsed}
@@ -453,7 +398,13 @@ export default function SimulacionPage() {
             isLoading={isLoading || isStarting}
             vuelosEnMovimiento={vuelosEnMovimiento}
             filtroHubActivo={filtroHub}
-            onSelectOrders={setSelectedOrderIds}
+            activeAirports={activeAirports}
+            onSelectOrders={handleSelectOrders}
+            selectedFlightId={selectedFlightId}
+            onSelectFlight={handleSelectFlight}
+            selectedAirportIds={selectedAirportIds}
+            onSelectAirport={handleSelectAirport}
+            selectedOrders={selectedOrderIds}
           />
         </div>
       </div>

@@ -6,7 +6,17 @@ import { simulacionService } from '../services/simulacionService';
 import { API } from '../api/api';
 import type { Airport } from '../types/airport';
 import type { Flight } from '../types/flight';
-import type { SimulationSnapshot, SimulationMessage, SimulationStartRequest, SimulationSegment, SimulationTick, ActiveSegmentTick, ActiveAirportTick } from '../types/simulation';
+import type {
+  SimulationSnapshot,
+  SimulationMessage,
+  SimulationStartRequest,
+  SimulationSegment,
+  SimulationTick,
+  ActiveSegmentTick,
+  ActiveAirportTick,
+  SimulationOrderPlan,
+  OrderPlansDiff
+} from '../types/simulation';
 import type { OrderStatusTick } from '../types/simulation';
 
 export interface VueloEnMovimiento {
@@ -87,6 +97,7 @@ export const useSimulacion = () => {
   const [tickBuffer, setTickBuffer] = useState<SimulationTick[]>([]);
   const [tickPlaybackReady, setTickPlaybackReady] = useState(false);
   const tickReadyRef = useRef(false);
+  const lastPlansSimTimeRef = useRef<string | null>(null);
   const prewarmStorageKey = 'sim_prewarm_token';
   const [prewarmToken, setPrewarmToken] = useState<string | null>(() => {
     try {
@@ -110,9 +121,9 @@ export const useSimulacion = () => {
     staleTime: 1000 * 60 * 5,
   });
 
-  // Precalienta el mundo al entrar a la página de simulación (una sola vez)
+  // Precalienta el mundo al entrar a la página de simulación
   useEffect(() => {
-    if (prewarmRequested.current || prewarmToken) return;
+    if (prewarmRequested.current) return;
     prewarmRequested.current = true;
     simulacionService.prewarmWorld()
       .then(token => {
@@ -123,7 +134,7 @@ export const useSimulacion = () => {
         setPrewarmToken(null);
         prewarmRequested.current = false;
       });
-  }, [prewarmToken]);
+  }, []);
 
   useEffect(() => {
     try {
@@ -151,7 +162,7 @@ export const useSimulacion = () => {
   const planSource: SimulationOrderPlan[] =
     orderPlansLive.length > 0
       ? orderPlansLive
-      : snapshotConRutas?.orderPlans ?? [];
+      : (snapshotConRutas?.orderPlans ?? []);
 
   const segmentosPorOrden = useMemo(() => {
     const mapa = new Map<string, SimulationSegment[]>();
@@ -308,12 +319,26 @@ export const useSimulacion = () => {
     if (renderTick.orderStatuses) {
       setOrderStatuses(renderTick.orderStatuses);
     }
-    if (renderTick.orderPlans && renderTick.orderPlans.length > 0) {
-      setOrderPlansLive(renderTick.orderPlans);
+    // orderPlans completos (fallback) o diffs
+    const simTimeKey = renderTick.simTime ?? '';
+    if (renderTick.orderPlansDiff) {
+      const diff: OrderPlansDiff = renderTick.orderPlansDiff;
+      const currentMap = new Map<string, SimulationOrderPlan>();
+      orderPlansLive.forEach(p => currentMap.set(p.orderId, p));
+      diff.removed?.forEach(id => currentMap.delete(id));
+      diff.updated?.forEach(p => currentMap.set(p.orderId, p));
+      diff.added?.forEach(p => currentMap.set(p.orderId, p));
+      lastPlansSimTimeRef.current = simTimeKey;
+      setOrderPlansLive(Array.from(currentMap.values()));
+    } else if (renderTick.orderPlans && renderTick.orderPlans.length > 0) {
+      if (lastPlansSimTimeRef.current !== simTimeKey) {
+        lastPlansSimTimeRef.current = simTimeKey;
+        setOrderPlansLive(renderTick.orderPlans);
+      }
     }
     // Avanza el buffer descartando el frame renderizado
     setTickBuffer(prev => prev.slice(1));
-  }, [tickBuffer, tickPlaybackReady, animPaused]);
+  }, [tickBuffer, tickPlaybackReady, animPaused, orderPlansLive]);
 
   // ===== CÁLCULO DE VUELOS EN MOVIMIENTO =====
   useEffect(() => {
@@ -489,6 +514,7 @@ export const useSimulacion = () => {
     setOrderStatuses([]);
     setPrewarmToken(null);
     prewarmRequested.current = false;
+    setOrderPlansLive([]);
   }, [stompClient, simulationId]);
 
   // ===== KPIs =====

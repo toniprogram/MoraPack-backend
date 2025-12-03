@@ -1,26 +1,27 @@
 import { useMemo } from 'react';
-import { Check, Plane } from 'lucide-react';
-import type { Dispatch, SetStateAction } from 'react';
+import { Check, Plane, Box } from 'lucide-react';
 
 interface SimTopBarProps {
-  kpisVista: { entregas: number; retrasados: number };
+  entregados: number;
+  enTransito: number;
+  vuelosActivos: number;
   reloj: string;
   tiempoSimulado: Date | null;
   estaActivo: boolean;
-  simSpeed: number;
-  setSimSpeed: Dispatch<SetStateAction<number>>;
+  engineSpeed: number;
   startRealMs: number | null;
   elapsedRealMs: number;
   formatElapsed: (ms: number) => string;
 }
 
 export function SimTopBar({
-  kpisVista,
+  entregados,
+  enTransito,
+  vuelosActivos,
   reloj,
   tiempoSimulado,
   estaActivo,
-  simSpeed,
-  setSimSpeed,
+  engineSpeed,
   startRealMs,
   elapsedRealMs,
   formatElapsed,
@@ -53,11 +54,15 @@ export function SimTopBar({
       <div className="flex gap-6 text-sm">
         <div className="flex items-center gap-2 tooltip" data-tip="Entregados">
           <Check size={18} className="text-success" />
-          <span className="font-mono font-semibold">{kpisVista.entregas}</span>
+          <span className="font-mono font-semibold">{entregados}</span>
         </div>
         <div className="flex items-center gap-2 tooltip" data-tip="En tránsito">
-          <Plane size={18} className="text-info" />
-          <span className="font-mono font-semibold">{kpisVista.retrasados}</span>
+          <Box size={18} className="text-info" />
+          <span className="font-mono font-semibold">{enTransito}</span>
+        </div>
+        <div className="flex items-center gap-2 tooltip" data-tip="Vuelos en uso">
+          <Plane size={18} className="text-warning" />
+          <span className="font-mono font-semibold">{vuelosActivos}</span>
         </div>
       </div>
       <div className="flex items-center gap-4">
@@ -67,28 +72,7 @@ export function SimTopBar({
 
         <div className="flex items-center gap-2 text-sm">
           <label className="text-base-content/70 text-xs uppercase tracking-wide">Velocidad</label>
-          {estaActivo ? (
-            <span className="badge badge-outline font-mono">{simSpeed}x</span>
-          ) : (
-            <>
-              <input
-                type="number"
-                className="input input-xs w-20"
-                min={50}
-                max={500}
-                step={50}
-                value={simSpeed}
-                onChange={(e) => {
-                  const value = Number(e.target.value);
-                  if (isNaN(value)) return;
-                  const clamped = Math.min(500, Math.max(50, value));
-                  const snapped = Math.round(clamped / 50) * 50;
-                  setSimSpeed(Math.min(500, Math.max(50, snapped)));
-                }}
-              />
-              <span className="text-xs text-base-content/60">x</span>
-            </>
-          )}
+          <span className="badge badge-outline font-mono">{engineSpeed}x</span>
         </div>
 
         <div className="flex gap-2 items-center">

@@ -1,12 +1,14 @@
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap, Tooltip, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import type { LatLngExpression } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import planeIconUrl from '/images/plane-line.svg?url';
 import type { Airport } from '../../types/airport';
+import type { ActiveAirportTick } from '../../types/simulation';
 import type { SegmentoVuelo, VueloEnMovimiento } from '../../hooks/useSimulacion';
-import { Plane, Box, Building } from 'lucide-react';
+import { Plane, Building } from 'lucide-react';
+import { OrdersList, type OrderLoadView } from '../simulacion/OrdersList';
 
 // Iconos Default Leaflet
 const iconProto = L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown };
@@ -230,11 +232,29 @@ interface MapaVuelosProps {
   isLoading: boolean;
   vuelosEnMovimiento: VueloEnMovimiento[];
   filtroHubActivo: string;
-  airportStocks?: Record<string, number>;
+  activeAirports?: ActiveAirportTick[];
   onSelectOrders?: (orderIds: string[] | null) => void;
+  selectedFlightId?: string | null;
+  onSelectFlight?: (flightId: string | null) => void;
+  selectedOrders?: string[] | null;
+  selectedAirportIds?: string[] | null;
+  onSelectAirport?: (airportId: string | null) => void;
 }
 
-export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMovimiento, filtroHubActivo, airportStocks = {}, onSelectOrders }: MapaVuelosProps) {
+export function MapaVuelos({
+  activeSegments,
+  aeropuertos,
+  isLoading,
+  vuelosEnMovimiento,
+  filtroHubActivo,
+  activeAirports = [],
+  onSelectOrders,
+  selectedFlightId,
+  onSelectFlight,
+  selectedOrders,
+  selectedAirportIds,
+  onSelectAirport,
+}: MapaVuelosProps) {
   const initialPosition: LatLngExpression = [20, 0];
   const [mapTheme, setMapTheme] = useState<'light' | 'dark'>('dark');
 
@@ -259,6 +279,33 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
       .map((a) => [a.id, [a.latitude, a.longitude]])
   );
   const pathsPorSegmento = useRef(new Map<string, [number, number][]>());
+  const segmentsMap = useMemo(() => {
+    const m = new Map<string, SegmentoVuelo>();
+    activeSegments.forEach(s => m.set(s.id, s));
+    return m;
+  }, [activeSegments]);
+
+  const airportHighlights = useMemo(() => {
+    const set = new Set<string>();
+    if (selectedAirportIds && selectedAirportIds.length > 0) {
+      selectedAirportIds.forEach(a => a && set.add(a));
+      return set;
+    }
+    if (selectedOrders && selectedOrders.length > 0) {
+      activeAirports.forEach(a => {
+        const has = a.orderLoads?.some(ol => selectedOrders.includes(ol.orderId));
+        if (has) set.add(a.airportCode);
+      });
+      return set;
+    }
+    if (selectedFlightId) {
+      const seg = segmentsMap.get(selectedFlightId);
+      if (seg?.origin) set.add(seg.origin);
+      if (seg?.destination) set.add(seg.destination);
+      return set;
+    }
+    return set;
+  }, [selectedAirportIds, selectedOrders, selectedFlightId, activeAirports, segmentsMap]);
 
   return (
     <MapContainer
@@ -268,7 +315,7 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
       className="w-full h-full z-0"
       style={{ backgroundColor: mapTheme === 'dark' ? '#1f2937' : '#e5e7eb' }}
     >
-      <MapClickReset onClear={() => onSelectOrders?.(null)} />
+      <MapClickReset onClear={() => { onSelectOrders?.(null); onSelectFlight?.(null); onSelectAirport?.(null); }} />
       {mapTheme === 'dark' ? (
         <TileLayer
           key="dark"
@@ -313,8 +360,9 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
       {/* AEROPUERTOS */}
       {aeropuertos.slice(0, 50).map(aeropuerto => {
         const esSede = isMainHub(aeropuerto.id || aeropuerto.code || '');
-        const stockActual = airportStocks[aeropuerto.id || aeropuerto.code || ''] || 0;
-        const capacidadMax = aeropuerto.storageCapacity || 3000; //AHORA ESTA HARDCODEADO
+        const live = activeAirports.find(a => a.airportCode === (aeropuerto.id || aeropuerto.code));
+        const stockActual = live?.currentLoad ?? 0;
+        const capacidadMax = live?.maxThroughputPerHour ?? aeropuerto.storageCapacity ?? 0;
         const stockPct = Math.min(100, Math.round((stockActual / capacidadMax) * 100));
 
         return (
@@ -322,8 +370,20 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
             key={aeropuerto.id}
             position={[aeropuerto.latitude, aeropuerto.longitude]}
             icon={esSede ? hubIcon : defaultAirportIcon}
-            opacity={!filtroHubActivo || filtroHubActivo === aeropuerto.id ? 1.0 : 0.5}
+            opacity={
+              (!filtroHubActivo || filtroHubActivo === aeropuerto.id)
+                ? (airportHighlights.size > 0 && !airportHighlights.has(aeropuerto.id || aeropuerto.code || '') ? 0.2 : 1.0)
+                : 0.5
+            }
             zIndexOffset={esSede ? 1000 : 0}
+            eventHandlers={{
+              click: () => {
+                const code = aeropuerto.id || aeropuerto.code || null;
+                onSelectAirport?.(code);
+                const loads = live?.orderLoads?.map(ol => ol.orderId) ?? [];
+                if (loads.length) onSelectOrders?.(loads);
+              }
+            }}
           >
             {esSede && (
               <Tooltip
@@ -346,7 +406,7 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
                         <div className="text-[10px] opacity-60 truncate w-36">{aeropuerto.name}</div>
                     </div>
                 </div>
-                <div className="p-3">
+                <div className="p-3 space-y-2">
                     <div className="flex justify-between mb-1 text-[10px] font-semibold uppercase opacity-70">
                         <span>Almacén</span>
                         <span>{stockActual} / {capacidadMax}</span>
@@ -357,6 +417,17 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
                         max={capacidadMax}
                     ></progress>
                     <div className="text-right mt-1 text-[10px] font-mono opacity-50">{stockPct}% Ocupado</div>
+                    <div className="border-t border-base-300 pt-2">
+                      <div className="text-[10px] font-semibold uppercase opacity-70 mb-1">Pedidos en almacén</div>
+                      <OrdersList
+                        items={(live?.orderLoads ?? []).map(ol => ({ orderId: ol.orderId, cantidad: ol.quantity }))}
+                        selectedOrders={selectedOrders}
+                        onSelectOrder={(oid) => {
+                          onSelectOrders?.([oid]);
+                          onSelectAirport?.(aeropuerto.id || aeropuerto.code || null);
+                        }}
+                      />
+                    </div>
                 </div>
               </div>
             </Popup>
@@ -371,7 +442,18 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
         if (!origenCoords || !destinoCoords) return null;
 
         const { hex: colorHex } = getHubColor(segmento.origin);
-        const opacity = (filtroHubActivo && segmento.origin !== filtroHubActivo) ? 0.1 : 0.4;
+        const hasOrderMatch = selectedOrders && selectedOrders.length > 0
+          ? (segmento.orderLoads?.some(ol => selectedOrders.includes(ol.orderId)) ||
+              segmento.orderIds?.some(id => selectedOrders.includes(id)))
+          : true;
+        const hasAirportMatch = selectedAirportIds && selectedAirportIds.length > 0
+          ? selectedAirportIds.includes(segmento.origin) || selectedAirportIds.includes(segmento.destination)
+          : true;
+        const isSelected = selectedFlightId === segmento.id;
+        const shouldHighlight = isSelected || (!selectedFlightId && hasOrderMatch && hasAirportMatch);
+        const opacityBase = (filtroHubActivo && segmento.origin !== filtroHubActivo) ? 0.1 : 0.4;
+        const dimmed = !shouldHighlight;
+        const opacity = dimmed ? 0.1 : opacityBase;
         const path = getCachedPath([origenCoords[0], origenCoords[1]], [destinoCoords[0], destinoCoords[1]], 64);
         pathsPorSegmento.current.set(segmento.id, path);
 
@@ -398,10 +480,28 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
         const path = pathsPorSegmento.current.get(vuelo.id) ??
           getCachedPath([origenCoords[0], origenCoords[1]], [destinoCoords[0], destinoCoords[1]], 64);
         const { coord, bearing } = positionAlongPath(path, vuelo.progreso);
+        const segMatch = activeSegments.find(s => s.id === vuelo.id);
+        const hasOrderMatch = selectedOrders && selectedOrders.length > 0
+          ? vuelo.pedidos.some(p => selectedOrders.includes(p.orderId)) ||
+            (segMatch?.orderLoads?.some(ol => selectedOrders.includes(ol.orderId)) ?? false)
+          : true;
+        const hasAirportMatch = selectedAirportIds && selectedAirportIds.length > 0
+          ? selectedAirportIds.includes(vuelo.origenCode) || selectedAirportIds.includes(vuelo.destinoCode)
+          : true;
+        const isSelected = selectedFlightId === vuelo.id;
+        const shouldHighlight = isSelected || (!selectedFlightId && hasOrderMatch && hasAirportMatch);
+        const dimmed = !shouldHighlight;
 
         const capacityPct = vuelo.capacidadTotal > 0
             ? Math.round((vuelo.capacidadUsada / vuelo.capacidadTotal) * 100)
             : 0;
+
+        const pedidosTooltip: OrderLoadView[] = vuelo.pedidos.length > 0
+          ? vuelo.pedidos.map(p => ({ orderId: p.orderId, cantidad: p.cantidad }))
+          : (segMatch?.orderLoads?.map(load => ({
+              orderId: load.orderId,
+              cantidad: load.quantity
+            })) ?? (segMatch?.orderIds ?? []).map(id => ({ orderId: id, cantidad: 1 })));
 
         return (
           <Marker
@@ -409,12 +509,18 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
             position={[coord[0], coord[1]]}
             icon={getPlaneIcon(vuelo.origenCode, bearing)}
             zIndexOffset={2000}
+            opacity={dimmed ? 0.35 : 1}
             eventHandlers={{
               click: () => {
                 const orders = vuelo.pedidos?.map(p => p.orderId) ?? [];
                 onSelectOrders?.(orders);
+                onSelectFlight?.(vuelo.id);
               },
-              popupclose: () => onSelectOrders?.(null),
+              popupclose: () => {
+                onSelectOrders?.(null);
+                onSelectFlight?.(null);
+                onSelectAirport?.(null);
+              },
             }}
           >
             <Popup className="p-0 overflow-hidden rounded-xl" maxWidth={320}>
@@ -459,32 +565,14 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
                     ></progress>
                 </div>
 
-                {/* TABLA DE PEDIDOS */}
-                <div className="max-h-40 overflow-y-auto scrollbar-thin bg-base-100">
-                    <table className="table table-xs table-pin-rows w-full">
-                        <thead className="bg-base-200">
-                            <tr>
-                                <th className="pl-3">Pedido</th>
-                                <th className="text-right pr-3">Carga</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {vuelo.pedidos.map((p, idx) => (
-                                <tr key={idx} className="hover:bg-base-200/50">
-                                    <td className="pl-3">
-                                        <div className="font-mono font-bold text-xs text-primary">{p.orderId}</div>
-                                    </td>
-                                    <td className="text-right font-mono pr-3">
-                                        <div className="flex items-center justify-end gap-1">
-                                            <Box size={10} className="opacity-50"/>
-                                            {p.cantidad}
-                                        </div>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
+                <OrdersList
+                  items={pedidosTooltip}
+                  selectedOrders={selectedOrders}
+                  onSelectOrder={(oid) => {
+                    onSelectOrders?.([oid]);
+                    onSelectFlight?.(vuelo.id);
+                  }}
+                />
               </div>
             </Popup>
           </Marker>
