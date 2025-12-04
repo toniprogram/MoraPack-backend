@@ -8,8 +8,11 @@ interface SidebarFiltersProps {
   endDate: string;
   setStartDate: Dispatch<SetStateAction<string>>;
   setEndDate: Dispatch<SetStateAction<string>>;
+  hastaColapso: boolean;
+  setHastaColapso: Dispatch<SetStateAction<boolean>>;
   estaActivo: boolean;
   estaVisualizando: boolean;
+  animPaused: boolean;
   isStarting: boolean;
   estaSincronizando: boolean;
   onIniciar: () => void;
@@ -27,8 +30,11 @@ export function SidebarFilters({
   endDate,
   setStartDate,
   setEndDate,
+  hastaColapso,
+  setHastaColapso,
   estaActivo,
   estaVisualizando,
+  animPaused,
   isStarting,
   estaSincronizando,
   onIniciar,
@@ -56,27 +62,36 @@ export function SidebarFilters({
               </label>
               <input
                 type="datetime-local"
-                className="input input-sm w-full"
+                className="input input-sm w-full text-base-content/90"
                 value={startDate}
                 onChange={(event) => setStartDate(event.target.value)}
                 disabled={estaActivo}
               />
             </div>
             <div>
-              <label className="block uppercase tracking-wide text-[10px] text-primary-content/70 mb-1">
+              <label className="block uppercase tracking-wide text-[10px] text-primary-content/90 mb-1">
                 Fin (UTC)
-              </label>
+              </label>  
               <input
                 type="datetime-local"
-                className="input input-sm w-full"
-                value={endDate}
-                onChange={(event) => setEndDate(event.target.value)}
+              className="input input-sm w-full text-base-content/90"
+              value={hastaColapso ? '' : endDate}
+              onChange={(event) => setEndDate(event.target.value)}
+              disabled={estaActivo || hastaColapso}
+            />
+            <div className="flex items-center justify-end mt-2 gap-1">
+              <span className="text-[10px] text-base-content/90">Hasta el colapso</span>
+              <input
+                type="checkbox"
+                className="toggle toggle-xs toggle-primary"
+                checked={hastaColapso}
+                onChange={(e) => {
+                  setHastaColapso(e.target.checked);
+                }}
                 disabled={estaActivo}
               />
-              <p className="text-[10px] text-primary-content/70 mt-1">
-                Vacío = usa todo el rango de pedidos proyectados guardados.
-              </p>
             </div>
+          </div>
           </div>
 
           <div className="flex gap-2">
@@ -91,18 +106,26 @@ export function SidebarFilters({
               }}
               disabled={estaSincronizando || isStarting}
             >
-              {estaActivo ? (
-                <>
-                  <Pause size={16} /> Pausar
-                </>
+              {animPaused ? (
+                <span className="flex items-center gap-2">
+                  <Play size={16} /> <span>Reanudar</span>
+                </span>
+              ) : estaActivo ? (
+                <span className="flex items-center gap-2">
+                  <Pause size={16} /> <span>Pausar</span>
+                </span>
               ) : (
-                <>
-                  <Play size={16} /> {isStarting ? 'Preparando...' : (estaVisualizando ? 'Reanudar' : 'Iniciar')}
-                </>
+                <span className="flex items-center gap-2">
+                  <Play size={16} /> <span>{isStarting ? 'Preparando...' : (estaVisualizando ? 'Reanudar' : 'Iniciar')}</span>
+                </span>
               )}
             </button>
 
-            <button className="btn btn-sm btn-error flex-1" onClick={onTerminar}>
+            <button
+              className="btn btn-sm btn-error flex-1"
+              onClick={onTerminar}
+              disabled={!estaActivo && !estaVisualizando && !isStarting}
+            >
               <XCircle size={16} /> Terminar
             </button>
           </div>
