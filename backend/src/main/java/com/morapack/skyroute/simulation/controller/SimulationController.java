@@ -38,6 +38,24 @@ public class SimulationController {
         return simulationService.getStatus(simulationId);
     }
 
+    @PostMapping("/{simulationId}/pause")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void pause(@PathVariable UUID simulationId) {
+        simulationService.pause(simulationId);
+    }
+
+    @PostMapping("/{simulationId}/resume")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void resume(@PathVariable UUID simulationId) {
+        simulationService.resume(simulationId);
+    }
+
+    @PostMapping("/{simulationId}/touch")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void touch(@PathVariable UUID simulationId) {
+        simulationService.touch(simulationId);
+    }
+
     @DeleteMapping("/{simulationId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void cancel(@PathVariable UUID simulationId) {

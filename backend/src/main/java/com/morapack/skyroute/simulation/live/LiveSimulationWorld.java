@@ -33,6 +33,7 @@ public class LiveSimulationWorld {
     private final PriorityQueue<ReleaseEvent> releaseQueue = new PriorityQueue<>(Comparator.comparing(ReleaseEvent::releaseTime));
     // Inventario simplificado para KPI de capacidad
     private final Map<String, Integer> airportLoads = new HashMap<>();
+    private final Map<String, Integer> maxObservedLoad = new HashMap<>();
     private Instant lastHourMark;
 
     public LiveSimulationWorld(String simulationId,
@@ -48,7 +49,13 @@ public class LiveSimulationWorld {
         }
         if (projectedOrders != null) {
             for (Order order : projectedOrders) {
-                orders.put(order.getId(), new LiveOrder(order.getId(), order.getQuantity(), order.getDestinationCode()));
+                orders.put(order.getId(), new LiveOrder(
+                        order.getId(),
+                        order.getQuantity(),
+                        order.getDestinationCode(),
+                        order.getCreationUtc(),
+                        order.getDueUtc()
+                ));
             }
         }
     }
@@ -201,6 +208,26 @@ public class LiveSimulationWorld {
         return simulationId;
     }
 
+    public boolean hasPendingWork() {
+        if (!activeFlights.isEmpty() || !scheduledFlights.isEmpty() || !releaseQueue.isEmpty()) {
+            return true;
+        }
+        for (Map<String, Integer> inv : airportInventory.values()) {
+            int total = inv.values().stream().mapToInt(Integer::intValue).sum();
+            if (total > 0) {
+                return true;
+            }
+        }
+        for (LiveOrder order : orders.values()) {
+            if (order.getStatus() != LiveOrder.Status.DELIVERED) {
+                if (order.getPendingQuantity() > 0 || order.getRemainingToDestination() > 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     public List<ActiveSegment> toActiveSegments() {
         List<ActiveSegment> list = new ArrayList<>();
         for (LiveFlight flight : activeFlights.values()) {
@@ -314,6 +341,7 @@ public class LiveSimulationWorld {
         }
         int total = inv.values().stream().mapToInt(Integer::intValue).sum();
         airportLoads.put(airportCode, total);
+        maxObservedLoad.merge(airportCode, total, Math::max);
         LiveAirport airport = airports.get(airportCode);
         if (airport != null) {
             airport.resetHour();
@@ -327,10 +355,16 @@ public class LiveSimulationWorld {
 
     public SimulationFinalReport buildFinalReport() {
         List<OrderFinalReport> reports = new ArrayList<>();
+        List<FlightUsageReport> flightReports = new ArrayList<>();
+        List<AirportUsageReport> airportReports = new ArrayList<>();
         double totalMinutes = 0;
         int deliveredCount = 0;
         double utilAccum = 0;
         int utilCount = 0;
+
+        int totalQuantity = 0;
+        int deliveredQuantity = 0;
+        int totalOrders = orders.size();
 
         for (LiveOrder order : orders.values()) {
             String finalStatus = order.getDeliveredQuantity() >= order.getTotalQuantity() ? "DELIVERED" : "PARTIAL";
@@ -338,14 +372,24 @@ public class LiveSimulationWorld {
                 totalMinutes += order.getTotalTransitMinutes();
                 deliveredCount++;
             }
+            totalQuantity += order.getTotalQuantity();
+            deliveredQuantity += order.getDeliveredQuantity();
+            Long slackMinutes = null;
+            if (order.getDeliveryTime() != null && order.getDueUtc() != null) {
+                slackMinutes = java.time.Duration.between(order.getDeliveryTime(), order.getDueUtc()).toMinutes();
+            }
             reports.add(new OrderFinalReport(
                     order.getOrderId(),
                     order.getTotalQuantity(),
                     order.getDeliveredQuantity(),
                     finalStatus,
+                    order.getDestinationCode(),
+                    order.getCreationUtc(),
+                    order.getDueUtc(),
                     order.getFirstPickupTime(),
                     order.getDeliveryTime(),
                     order.getTotalTransitMinutes(),
+                    slackMinutes,
                     List.copyOf(order.getExecutedRoute()),
                     List.copyOf(order.getHistory())
             ));
@@ -356,7 +400,33 @@ public class LiveSimulationWorld {
                 utilAccum += (double) flight.getCapacityUsed() / flight.getCapacityTotal();
                 utilCount++;
             }
+            List<OrderLoadTick> loads = flight.getOrderLoads().entrySet().stream()
+                    .map(e -> new OrderLoadTick(e.getKey(), e.getValue()))
+                    .toList();
+            double util = flight.getCapacityTotal() > 0 ? (double) flight.getCapacityUsed() / flight.getCapacityTotal() : 0.0;
+            flightReports.add(new FlightUsageReport(
+                    flight.getFlightId(),
+                    flight.getOrigin(),
+                    flight.getDestination(),
+                    flight.getDepartureTime(),
+                    flight.getArrivalTime(),
+                    flight.getCapacityTotal(),
+                    flight.getCapacityUsed(),
+                    util,
+                    loads
+            ));
         }
+
+        airports.forEach((code, airport) -> {
+            int finalLoad = airportLoads.getOrDefault(code, 0);
+            int maxLoad = maxObservedLoad.getOrDefault(code, finalLoad);
+            airportReports.add(new AirportUsageReport(
+                    code,
+                    airport.getMaxThroughputPerHour(),
+                    finalLoad,
+                    maxLoad
+            ));
+        });
 
         double avgMinutes = deliveredCount > 0 ? totalMinutes / deliveredCount : 0;
         double avgUtil = utilCount > 0 ? utilAccum / utilCount : 0;
@@ -367,7 +437,13 @@ public class LiveSimulationWorld {
                 currentSimTime,
                 reports,
                 avgMinutes,
-                avgUtil
+                avgUtil,
+                totalOrders,
+                deliveredCount,
+                totalQuantity,
+                deliveredQuantity,
+                flightReports,
+                airportReports
         );
     }
 

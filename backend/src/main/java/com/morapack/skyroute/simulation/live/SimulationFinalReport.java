@@ -9,5 +9,11 @@ public record SimulationFinalReport(
         Instant endTime,
         List<OrderFinalReport> orders,
         double avgDeliveryMinutes,
-        double avgFlightUtilization
+        double avgFlightUtilization,
+        int totalOrders,
+        int deliveredOrders,
+        int totalQuantity,
+        int deliveredQuantity,
+        List<FlightUsageReport> flights,
+        List<AirportUsageReport> airports
 ) {}

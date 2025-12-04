@@ -6,11 +6,8 @@ import type { OrderStatusTick, SimulationOrderPlan } from '../types/simulation';
 import { SimTopBar } from '../components/simulacion/SimTopBar';
 import { SimSidebar } from '../components/simulacion/SimSidebar';
 import type { EnvioInfo, FlightGroup } from '../types/simulacionUI';
-
-// Interfaz extendida para mantener fechas originales del archivo TXT
-interface OrderRequestExtended extends OrderRequest {
-  fechaOriginal: string;
-}
+import { useLocation } from 'react-router-dom';
+import { simulacionService } from '../services/simulacionService';
 
 export default function SimulacionPage() {
   const {
@@ -36,28 +33,67 @@ export default function SimulacionPage() {
       inTransitOrders,
       orderStatuses,
       orderPlans,
+      simulationId,
+      startRealMs,
+      elapsedRealMs,
+      conectarSimulacion,
+      notificacion,
+      setNotificacion,
   } = useSimulacion();
+  const location = useLocation();
 
-  const [ordenesParaSimular] = useState<OrderRequestExtended[]>([]);
+  const [ordenesParaSimular] = useState<OrderRequest[]>([]);
   const [vistaPanel, setVistaPanel] = useState<'envios' | 'vuelos' | 'aeropuertos'>('envios');
   const [startDate, setStartDate] = useState<string>('2025-01-02T12:00');
   const [endDate, setEndDate] = useState<string>('2025-01-09T12:00');
+  const [hastaColapso, setHastaColapso] = useState(false);
   const [estaSincronizando] = useState(false);
+  const startedHereRef = useRef(false);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [toastError, setToastError] = useState(false);
 
   const [filtroHub, setFiltroHub] = useState<string>('');
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[] | null>(null);
   const [selectedFlightId, setSelectedFlightId] = useState<string | null>(null);
   const [selectedAirportIds, setSelectedAirportIds] = useState<string[] | null>(null);
   const [dialogInfo, setDialogInfo] = useState<{ titulo: string; mensaje: string } | null>(null);
-  const startSimRef = useRef<number | null>(null);
-  const startRealRef = useRef<number | null>(null);
-  const [startRealMs, setStartRealMs] = useState<number | null>(null);
-  const [elapsedRealMs, setElapsedRealMs] = useState(0);
+  const statusRef = useRef(status);
+  const [downloadingReport, setDownloadingReport] = useState(false);
+  const lastSimulationIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
 
   const ensureSeconds = (value?: string) => {
     if (!value) return undefined;
     return value.length === 16 ? `${value}:00` : value;
   };
+
+  // Conectar si ya viene una simulación en la URL
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const simIdParam = params.get('simId');
+    if (simIdParam && !simulationId) {
+      simulacionService.getStatus(simIdParam)
+        .then(statusResp => {
+          if (statusResp.cancelled || statusResp.completed) {
+            setToastMsg('La simulación especificada ya finalizó o fue cancelada.');
+            const url = new URL(window.location.href);
+            url.searchParams.delete('simId');
+            window.history.replaceState({}, '', url.toString());
+          } else {
+            conectarSimulacion(simIdParam);
+          }
+        })
+        .catch(() => {
+          setToastMsg('No se pudo cargar la simulación indicada.');
+          const url = new URL(window.location.href);
+          url.searchParams.delete('simId');
+          window.history.replaceState({}, '', url.toString());
+        });
+    }
+  }, [location.search, simulationId, conectarSimulacion]);
 
   const enviosHistoricos = useRef<Map<string, EnvioInfo>>(new Map());
 
@@ -237,11 +273,7 @@ export default function SimulacionPage() {
 
   const handleIniciarSimulacion = () => {
     const startUtc = ensureSeconds(startDate);
-    const endUtc = ensureSeconds(endDate);
-    startSimRef.current = startUtc ? Date.parse(startUtc) : null;
-    startRealRef.current = Date.now();
-    setStartRealMs(startRealRef.current);
-    setElapsedRealMs(0);
+    const endUtc = hastaColapso ? undefined : ensureSeconds(endDate);
     enviosHistoricos.current = new Map();
     setSelectedOrderIds(null);
     setSelectedFlightId(null);
@@ -251,15 +283,16 @@ export default function SimulacionPage() {
       endDate: endUtc,
       windowMinutes: 180,
     };
+    startedHereRef.current = true;
     iniciar(payload);
   };
 
   const handleTerminarSimulacion = async () => {
+    const simIdActual = simulationId ?? lastSimulationIdRef.current;
+    if (simIdActual) {
+      lastSimulationIdRef.current = simIdActual;
+    }
     await terminar();
-    startSimRef.current = null;
-    startRealRef.current = null;
-    setStartRealMs(null);
-    setElapsedRealMs(0);
     enviosHistoricos.current = new Map();
     setSelectedOrderIds(null);
     setSelectedFlightId(null);
@@ -267,30 +300,72 @@ export default function SimulacionPage() {
     resetVisual();
     setDialogInfo({
       titulo: 'Simulación terminada',
-      mensaje: 'Se detuvo la simulación actual. Ahora puedes modificar los datos o iniciar una nueva corrida.',
+      mensaje: 'Se detuvo la simulación actual. Puedes descargar el reporte o iniciar una nueva corrida.',
     });
+    // limpiar URL
+    const url = new URL(window.location.href);
+    url.searchParams.delete('simId');
+    window.history.replaceState({}, '', url.toString());
   };
 
   const handleCerrarDialogo = () => setDialogInfo(null);
 
   useEffect(() => {
-    if (status === 'completed') {
+    if (status === 'completed' && inTransitOrders === 0 && activeSegments.length === 0) {
       setDialogInfo({
         titulo: 'Simulación terminada',
         mensaje: 'La simulación finalizó correctamente. Puedes ajustar parámetros o comenzar otra simulación.',
       });
     }
-  }, [status]);
+  }, [status, inTransitOrders, activeSegments.length]);
+
+  // Actualiza URL con simId y ofrece link para compartir
+  useEffect(() => {
+    if (!simulationId) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set('simId', simulationId);
+    window.history.replaceState({}, '', url.toString());
+    if (startedHereRef.current) {
+      setToastMsg('Puedes compartir esta simulación copiando la URL');
+      startedHereRef.current = false;
+    }
+  }, [simulationId]);
 
   useEffect(() => {
-    if (!estaActivo || startRealMs === null) {
-      return;
+    if (!toastMsg) return;
+    const t = setTimeout(() => setToastMsg(null), 5000);
+    return () => clearTimeout(t);
+  }, [toastMsg]);
+
+  useEffect(() => {
+    if (!notificacion) return;
+    setToastError(notificacion.toLowerCase().includes('colapso'));
+    setToastMsg(notificacion);
+    setNotificacion(null);
+  }, [notificacion, setNotificacion]);
+
+  const handleDescargarReporte = useCallback(async () => {
+    const targetId = simulationId ?? lastSimulationIdRef.current;
+    if (!targetId) return;
+    try {
+      setDownloadingReport(true);
+      const report = await simulacionService.getReport(targetId);
+      const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `reporte-simulacion-${targetId}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setToastError(false);
+      setToastMsg('Reporte descargado');
+    } catch (err) {
+      setToastError(true);
+      setToastMsg('No se pudo descargar el reporte');
+    } finally {
+      setDownloadingReport(false);
     }
-    const interval = setInterval(() => {
-      setElapsedRealMs(Date.now() - startRealMs);
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [estaActivo, startRealMs]);
+  }, [simulationId]);
 
   const formatElapsed = (elapsedMs: number) => {
     if (elapsedMs < 0 || !Number.isFinite(elapsedMs)) return '--:--:--';
@@ -316,6 +391,13 @@ export default function SimulacionPage() {
 
   return (
     <>
+    {toastMsg && (
+      <div className="toast toast-end z-[1500]">
+        <div className={`alert ${toastError ? 'alert-error' : 'alert-info'}`}>
+          <span>{toastMsg}</span>
+        </div>
+      </div>
+    )}
     <div className="flex h-screen w-full bg-base-200 text-base-content">
 
       <SimSidebar
@@ -324,8 +406,11 @@ export default function SimulacionPage() {
         endDate={endDate}
         setStartDate={setStartDate}
         setEndDate={setEndDate}
+        hastaColapso={hastaColapso}
+        setHastaColapso={setHastaColapso}
         estaActivo={estaActivo}
         estaVisualizando={estaVisualizando}
+        status={status}
         isStarting={isStarting}
         estaSincronizando={estaSincronizando}
         onIniciar={handleIniciarSimulacion}
@@ -378,7 +463,7 @@ export default function SimulacionPage() {
                   className="animate-spin rounded-full h-24 w-24 border-8 border-primary border-t-transparent mx-auto"
                 ></div>
                 <h2 className="text-2xl font-semibold">Planificando Rutas...</h2>
-                <p className="text-lg text-base-content/70">
+                <p className="text-lg text-base-content/90">
                   El Sistema está procesando los pedidos.
                 </p>
                 <div className="stats bg-base-200 shadow-xl">
@@ -415,7 +500,16 @@ export default function SimulacionPage() {
           <h3 className="font-bold text-lg mb-2">{dialogInfo.titulo}</h3>
           <p className="text-base-content/80">{dialogInfo.mensaje}</p>
           <div className="modal-action">
-            <button className="btn btn-primary" onClick={handleCerrarDialogo}>Entendido</button>
+            {(simulationId || lastSimulationIdRef.current) && (
+              <button
+                className="btn btn-primary"
+                onClick={handleDescargarReporte}
+                disabled={downloadingReport}
+              >
+                {downloadingReport ? 'Generando...' : 'Descargar reporte'}
+              </button>
+            )}
+            <button className="btn" onClick={handleCerrarDialogo}>Aceptar</button>
           </div>
         </div>
         <form method="dialog" className="modal-backdrop">

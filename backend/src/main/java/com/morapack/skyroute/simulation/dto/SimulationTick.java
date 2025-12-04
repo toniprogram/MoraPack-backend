@@ -6,8 +6,10 @@ import java.util.List;
 public record SimulationTick(
         String simulationId,
         Instant simTime,
+        long realElapsedMs,
         double speed,
         String status,
+        String collapseMessage,
         List<SimulationOrderPlan> orderPlans,
         OrderPlansDiff orderPlansDiff,
         List<ActiveSegment> activeSegments,

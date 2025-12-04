@@ -8,9 +8,13 @@ public record OrderFinalReport(
         int totalQuantity,
         int deliveredQuantity,
         String finalStatus,
+        String destination,
+        Instant creationUtc,
+        Instant dueUtc,
         Instant firstPickupTime,
         Instant deliveryTime,
         long totalTransitMinutes,
+        Long slackMinutes,
         List<OrderFlightLeg> routeTaken,
         List<OrderEvent> history
 ) {}

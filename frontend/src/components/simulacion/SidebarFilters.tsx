@@ -22,6 +22,7 @@ interface SidebarFiltersProps {
   setFiltroHub: Dispatch<SetStateAction<string>>;
   selectedOrderIds: string[] | null;
   clearSelectedOrders: () => void;
+  status: string;
 }
 
 export function SidebarFilters({
@@ -44,7 +45,9 @@ export function SidebarFilters({
   setFiltroHub,
   selectedOrderIds,
   clearSelectedOrders,
+  status,
 }: SidebarFiltersProps) {
+  const inputsBloqueados = status !== 'idle' && status !== 'completed';
   return (
     <>
       <div className="bg-primary text-primary-content p-4">
@@ -55,9 +58,9 @@ export function SidebarFilters({
             </div>
           )}
 
-          <div className="space-y-2 text-xs text-primary-content/90">
+          <div className="space-y-2 text-xs text-base-content/90">
             <div>
-              <label className="block uppercase tracking-wide text-[10px] text-primary-content/70 mb-1">
+              <label className="block uppercase tracking-wide text-[10px] text-base-content/90 mb-1">
                 Inicio (UTC)
               </label>
               <input
@@ -65,11 +68,11 @@ export function SidebarFilters({
                 className="input input-sm w-full text-base-content/90"
                 value={startDate}
                 onChange={(event) => setStartDate(event.target.value)}
-                disabled={estaActivo}
+                disabled={inputsBloqueados}
               />
             </div>
             <div>
-              <label className="block uppercase tracking-wide text-[10px] text-primary-content/90 mb-1">
+              <label className="block uppercase tracking-wide text-[10px] text-base-content/90 mb-1">
                 Fin (UTC)
               </label>  
               <input
@@ -77,7 +80,7 @@ export function SidebarFilters({
               className="input input-sm w-full text-base-content/90"
               value={hastaColapso ? '' : endDate}
               onChange={(event) => setEndDate(event.target.value)}
-              disabled={estaActivo || hastaColapso}
+              disabled={inputsBloqueados || hastaColapso}
             />
             <div className="flex items-center justify-end mt-2 gap-1">
               <span className="text-[10px] text-base-content/90">Hasta el colapso</span>
@@ -88,7 +91,7 @@ export function SidebarFilters({
                 onChange={(e) => {
                   setHastaColapso(e.target.checked);
                 }}
-                disabled={estaActivo}
+                disabled={inputsBloqueados}
               />
             </div>
           </div>
@@ -96,7 +99,7 @@ export function SidebarFilters({
 
           <div className="flex gap-2">
             <button
-              className={`btn btn-sm flex-1 ${estaActivo ? 'btn-warning' : 'btn-primary'}`}
+              className={`btn btn-sm flex-1 ${animPaused || (!estaActivo && !estaVisualizando) ? 'btn-success' : (estaActivo ? 'btn-warning' : 'btn-success')}`}
               onClick={() => {
                 if (!estaActivo && !estaVisualizando) {
                   onIniciar();
@@ -124,7 +127,7 @@ export function SidebarFilters({
             <button
               className="btn btn-sm btn-error flex-1"
               onClick={onTerminar}
-              disabled={!estaActivo && !estaVisualizando && !isStarting}
+              disabled={isStarting ? true : (!estaActivo && !estaVisualizando)}
             >
               <XCircle size={16} /> Terminar
             </button>

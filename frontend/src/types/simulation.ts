@@ -75,8 +75,10 @@ export interface ActiveAirportTick {
 export interface SimulationTick {
   simulationId: string;
   simTime: string;
+  realElapsedMs?: number;
   speed: number;
   status: string;
+  collapseMessage?: string;
   orderPlans: SimulationOrderPlan[];
   orderPlansDiff?: OrderPlansDiff;
   activeSegments: ActiveSegmentTick[];
@@ -116,4 +118,69 @@ export interface SimulationStatus {
   cancelled: boolean;
   error: string | null;
   lastSnapshot: SimulationSnapshot | null;
+}
+
+export interface OrderEventReport {
+  time: string;
+  type: string;
+  location: string;
+  flightId: string;
+  quantity: number;
+}
+
+export interface OrderFinalReport {
+  orderId: string;
+  totalQuantity: number;
+  deliveredQuantity: number;
+  finalStatus: string;
+  destination: string;
+  creationUtc?: string;
+  dueUtc?: string;
+  firstPickupTime?: string;
+  deliveryTime?: string;
+  totalTransitMinutes: number;
+  slackMinutes?: number | null;
+  routeTaken: {
+    flightId: string;
+    origin: string;
+    destination: string;
+    departureTime: string;
+    arrivalTime: string;
+    quantity: number;
+  }[];
+  history: OrderEventReport[];
+}
+
+export interface SimulationFinalReport {
+  simulationId: string;
+  startTime: string;
+  endTime: string;
+  orders: OrderFinalReport[];
+  avgDeliveryMinutes: number;
+  avgFlightUtilization: number;
+  totalOrders: number;
+  deliveredOrders: number;
+  totalQuantity: number;
+  deliveredQuantity: number;
+  flights: FlightUsageReport[];
+  airports: AirportUsageReport[];
+}
+
+export interface FlightUsageReport {
+  flightId: string;
+  origin: string;
+  destination: string;
+  departureTime: string;
+  arrivalTime: string;
+  capacityTotal: number;
+  capacityUsed: number;
+  utilization: number;
+  ordersCarried: { orderId: string; quantity: number }[];
+}
+
+export interface AirportUsageReport {
+  airportCode: string;
+  maxThroughputPerHour: number;
+  finalLoad: number;
+  maxObservedLoad: number;
 }

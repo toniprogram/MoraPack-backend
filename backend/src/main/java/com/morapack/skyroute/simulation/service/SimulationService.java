@@ -99,6 +99,7 @@ public class SimulationService {
         SimulationSession session = new SimulationSession(simulationId, projectedOrders.size());
         session.simStartInstant = range.start().plusSeconds(10); // delay de arranque para animación
         session.realStartMillis = System.currentTimeMillis();
+        session.touch();
         session.simSpeed = DEFAULT_SIM_SPEED;
         sessions.put(simulationId, session);
 
@@ -155,6 +156,9 @@ public class SimulationService {
                 request != null ? request.windowMinutes() : null,
                 Config.SIMULATION_WINDOW_MINUTES);
         boolean useHeuristicSeed = request != null && Boolean.TRUE.equals(request.useHeuristicSeed());
+        if (request != null && request.endDate() != null) {
+            session.endInstant = toUtc(request.endDate());
+        }
 
         final int finalWindowMinutes = windowMinutes;
         final boolean heuristicSeedEnabled = useHeuristicSeed;
@@ -174,6 +178,34 @@ public class SimulationService {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Simulation not found");
     }
         return session.toStatus();
+    }
+
+    public void pause(UUID simulationId) {
+        SimulationSession session = sessions.get(simulationId);
+        if (session == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Simulation not found");
+        }
+        session.pause();
+        stopTicker(session);
+        log.info("[SIM:{}] Pausada por solicitud del cliente", simulationId);
+    }
+
+    public void resume(UUID simulationId) {
+        SimulationSession session = sessions.get(simulationId);
+        if (session == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Simulation not found");
+        }
+        session.resume();
+        startTicker(session);
+        log.info("[SIM:{}] Reanudada por solicitud del cliente", simulationId);
+    }
+
+    public void touch(UUID simulationId) {
+        SimulationSession session = sessions.get(simulationId);
+        if (session == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Simulation not found");
+        }
+        session.touch();
     }
 
     public SimulationFinalReport getReport(UUID simulationId) {
@@ -224,6 +256,7 @@ public class SimulationService {
         try {
             log.info("[SIM:{}] Starting legacy simulation with {} orders", session.id, orders.size());
             for (Order order : orders) {
+                waitIfPaused(session);
                 if (session.cancelled.get()) {
                     log.warn("[SIM:{}] Simulation cancelled by user after processing {} orders", session.id, demand.size());
                     break;
@@ -231,15 +264,7 @@ public class SimulationService {
                 previousBest = processOrder(session, world, previousBest, demand, order, orders.size(), true, order.getCreationUtc(), useHeuristicSeed);
             }
 
-            session.complete();
-            SimulationSnapshot finalSnapshot = session.lastSnapshot;
-            log.info("[SIM:{}] Simulation completed. Processed {}/{} orders. GA runs={}", session.id, session.processed.get(), session.totalOrders, session.gaRuns.get());
-            persistSnapshot(session, finalSnapshot);
-            messagingTemplate.convertAndSend(
-                    topic(session.id),
-                    SimulationMessage.completed(session.id.toString(), finalSnapshot)
-            );
-            stopTicker(session);
+            finishWhenDelivered(session);
         } catch (CancellationException ex) {
             log.warn("[SIM:{}] Simulation cancelled: {}", session.id, ex.getMessage());
         } catch (Exception ex) {
@@ -264,6 +289,7 @@ public class SimulationService {
             log.info("[SIM:{}] Starting batched simulation: {} orders grouped in {} windows of {} minutes",
                     session.id, orders.size(), batches.size(), windowMinutes);
             for (int batchIndex = 0; batchIndex < batches.size(); batchIndex++) {
+                waitIfPaused(session);
                 if (session.cancelled.get()) {
                     log.warn("[SIM:{}] Simulation cancelled before batch {}", session.id, batchIndex + 1);
                     break;
@@ -274,21 +300,21 @@ public class SimulationService {
                 Instant snapshotInstant = window.windowStart().plus(windowDuration);
                 log.info("[SIM:{}] Invoking processBatch for batch {} (orders so far={})", session.id, batchIndex + 1, demand.size());
                 previousBest = processBatch(session, world, previousBest, demand, batch, orders.size(), snapshotInstant, useHeuristicSeed);
-                batchesProcessed++;
-                log.info("[SIM:{}] Finished batch {} of {} (demand size={}, processed total={})",
-                        session.id, batchIndex + 1, batches.size(), demand.size(), session.processed.get());
+            batchesProcessed++;
+            log.info("[SIM:{}] Finished batch {} of {} (demand size={}, processed total={})",
+                    session.id, batchIndex + 1, batches.size(), demand.size(), session.processed.get());
+            if (session.collapsed.get()) {
+                log.warn("[SIM:{}] Stopping batch processing due to logistic collapse", session.id);
+                break;
             }
+            if (session.endInstant != null && window.windowStart().isAfter(session.endInstant)) {
+                log.warn("[SIM:{}] Reached end window {}; stopping GA batches", session.id, session.endInstant);
+                break;
+            }
+        }
 
             log.info("[SIM:{}] Batch loop completed: processed {} of {} batches", session.id, batchesProcessed, batches.size());
-            session.complete();
-            SimulationSnapshot finalSnapshot = session.lastSnapshot;
-            log.info("[SIM:{}] Simulation completed. Processed {}/{} orders. GA runs={}", session.id, session.processed.get(), session.totalOrders, session.gaRuns.get());
-            persistSnapshot(session, finalSnapshot);
-            messagingTemplate.convertAndSend(
-                    topic(session.id),
-                    SimulationMessage.completed(session.id.toString(), finalSnapshot)
-            );
-            stopTicker(session);
+            finishWhenDelivered(session);
         } catch (Exception ex) {
             session.error(ex.getMessage());
             log.error("[SIM:{}] Simulation failed after {} batches: {}", session.id, batchesProcessed, ex.getMessage(), ex);
@@ -365,10 +391,53 @@ public class SimulationService {
         persistSnapshot(session, snapshot);
         scheduleLiveFlightsFromIndividual(session, best, orderedBatch);
         log.trace("[SIM:{}] Snapshot created: processed={}/{}", session.id, demand.size(), totalOrders);
-        SimulationTick tick = toTick(session);
-        messagingTemplate.convertAndSend(topic(session.id), SimulationMessage.progress(session.id.toString(), snapshot, tick));
+        // Enviamos snapshot de avance (sin tick) para liberar overlay en frontend sin duplicar ticks
+        messagingTemplate.convertAndSend(
+                topic(session.id),
+                SimulationMessage.progress(session.id.toString(), snapshot, null)
+        );
+
+        // Detecta colapso si faltan planes para órdenes demandadas
+        Set<String> plannedIds = best.getPlans().stream().map(OrderPlan::getOrderId).collect(Collectors.toSet());
+        for (Order o : demand) {
+            if (!plannedIds.contains(o.getId())) {
+                session.markCollapsed("Colapso logístico: no se pudo planificar el pedido " + o.getId());
+                log.warn("[SIM:{}] Logistic collapse detected at order {}", session.id, o.getId());
+                break;
+            }
+        }
 
         return best;
+    }
+
+    private void finishWhenDelivered(SimulationSession session) {
+        executorService.submit(() -> {
+            try {
+                while (!session.cancelled.get()
+                        && session.liveWorld != null
+                        && (session.liveWorld.hasPendingWork()
+                        || session.liveWorld.countDeliveredOrders() < session.totalOrders)) {
+                    Thread.sleep(500);
+                }
+                if (session.cancelled.get()) {
+                    stopTicker(session);
+                    return;
+                }
+                session.complete();
+                SimulationSnapshot finalSnapshot = session.lastSnapshot;
+                log.info("[SIM:{}] Simulation completed after deliveries. Processed {}/{} orders. GA runs={}", session.id, session.processed.get(), session.totalOrders, session.gaRuns.get());
+                persistSnapshot(session, finalSnapshot);
+                messagingTemplate.convertAndSend(
+                        topic(session.id),
+                        SimulationMessage.completed(session.id.toString(), finalSnapshot)
+                );
+                stopTicker(session);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            } catch (Exception ex) {
+                log.warn("[SIM:{}] Error while waiting for deliveries: {}", session.id, ex.getMessage());
+            }
+        });
     }
 
     private Individual processOrder(SimulationSession session,
@@ -497,6 +566,13 @@ public class SimulationService {
         int inTransitOrders = session.liveWorld.countInTransitOrders();
         double speed = session.simSpeed;
         String status = session.completed.get() ? "completed" : (session.cancelled.get() ? "cancelled" : "running");
+        if (session.paused.get()) {
+            status = "paused";
+        }
+        if (session.collapsed.get()) {
+            status = "collapsed";
+        }
+        long realElapsedMs = session.realStartMillis > 0 ? System.currentTimeMillis() - session.realStartMillis : 0L;
         // calcular diff de planes
         Map<String, SimulationOrderPlan> currentMap = new HashMap<>();
         currentPlans.forEach(p -> currentMap.put(p.orderId(), p));
@@ -522,7 +598,7 @@ public class SimulationService {
 
         // orderPlans se envía vacío para reducir payload; diffs llevan los cambios
         List<SimulationOrderPlan> orderPlans = List.of();
-        return new SimulationTick(session.id.toString(), simTime, speed, status, orderPlans, diff, actives, airportTicks, deliveredOrders, inTransitOrders, orderStatuses);
+        return new SimulationTick(session.id.toString(), simTime, realElapsedMs, speed, status, session.collapseMessage, orderPlans, diff, actives, airportTicks, deliveredOrders, inTransitOrders, orderStatuses);
     }
 
     private SimulationSegment toSegmentDto(RouteSegment segment) {
@@ -579,6 +655,17 @@ public class SimulationService {
         return nanos / 1_000_000;
     }
 
+    private void waitIfPaused(SimulationSession session) {
+        while (session.paused.get() && !session.cancelled.get() && !session.completed.get()) {
+            try {
+                Thread.sleep(200);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+    }
+
     private Instant alignToWindow(Instant instant, Duration window) {
         if (instant == null || window == null || window.isZero() || window.isNegative()) {
             return instant;
@@ -630,9 +717,19 @@ public class SimulationService {
     }
 
     private void startTicker(SimulationSession session) {
+        if (session.ticker != null && !session.ticker.isCancelled()) {
+            return;
+        }
         session.ticker = tickerExecutor.scheduleAtFixedRate(() -> {
             try {
                 if (session.liveWorld == null) {
+                    return;
+                }
+                // auto-cancel if no client heartbeat in 5 minutes
+                long now = System.currentTimeMillis();
+                if (now - session.lastClientPingMillis > 300_000) {
+                    log.warn("[SIM:{}] Cancelling due to inactivity (>5min sin solicitudes)", session.id);
+                    cancel(session.id);
                     return;
                 }
                 long simSeconds = Math.max(1L, Math.round(session.simSpeed));
@@ -693,6 +790,8 @@ public class SimulationService {
         private final AtomicInteger processed = new AtomicInteger();
         private final AtomicBoolean completed = new AtomicBoolean(false);
         private final AtomicBoolean cancelled = new AtomicBoolean(false);
+        private final AtomicBoolean paused = new AtomicBoolean(false);
+        private final AtomicBoolean collapsed = new AtomicBoolean(false);
         private volatile SimulationSnapshot lastSnapshot;
         private volatile String error;
         private volatile Path snapshotFile;
@@ -701,10 +800,13 @@ public class SimulationService {
         private volatile List<Individual> lastPopulation = List.of();
         private volatile ScheduledFuture<?> ticker;
         private volatile Instant simStartInstant;
+        private volatile Instant endInstant;
         private volatile long realStartMillis;
         private volatile double simSpeed = 1.0;
         private volatile LiveSimulationWorld liveWorld;
         private volatile Map<String, SimulationOrderPlan> lastPlans = new HashMap<>();
+        private volatile long lastClientPingMillis = System.currentTimeMillis();
+        private volatile String collapseMessage;
 
         private SimulationSession(UUID id, int totalOrders) {
             this.id = id;
@@ -722,6 +824,23 @@ public class SimulationService {
 
         private void cancel() {
             this.cancelled.set(true);
+        }
+
+        private void pause() {
+            this.paused.set(true);
+        }
+
+        private void resume() {
+            this.paused.set(false);
+        }
+
+        private void markCollapsed(String message) {
+            this.collapsed.set(true);
+            this.collapseMessage = message;
+        }
+
+        private void touch() {
+            this.lastClientPingMillis = System.currentTimeMillis();
         }
 
         private void error(String message) {

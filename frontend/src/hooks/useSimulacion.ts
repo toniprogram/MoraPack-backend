@@ -94,10 +94,16 @@ export const useSimulacion = () => {
   const [orderStatuses, setOrderStatuses] = useState<OrderStatusTick[]>([]);
   const [orderPlansLive, setOrderPlansLive] = useState<SimulationOrderPlan[]>([]);
   const [animPaused, setAnimPaused] = useState(false);
+  const firstSimTickMsRef = useRef<number | null>(null);
+  const heartbeatRef = useRef<NodeJS.Timeout | null>(null);
+  const [startRealMs, setStartRealMs] = useState<number | null>(null);
+  const [elapsedRealMs, setElapsedRealMs] = useState(0);
+  const engineSpeedRef = useRef(DEFAULT_SPEED);
   const [tickBuffer, setTickBuffer] = useState<SimulationTick[]>([]);
   const [tickPlaybackReady, setTickPlaybackReady] = useState(false);
   const tickReadyRef = useRef(false);
   const lastPlansSimTimeRef = useRef<string | null>(null);
+  const preprocNotifiedRef = useRef(false);
   const prewarmStorageKey = 'sim_prewarm_token';
   const [prewarmToken, setPrewarmToken] = useState<string | null>(() => {
     try {
@@ -107,6 +113,7 @@ export const useSimulacion = () => {
     }
   });
   const prewarmRequested = useRef(false);
+  const [notificacion, setNotificacion] = useState<string | null>(null);
 
   const { data: aeropuertos = [], isLoading: isLoadingAeropuertos } = useQuery<Airport[]>({
     queryKey: ['aeropuertos'],
@@ -158,11 +165,18 @@ export const useSimulacion = () => {
     return map;
   }, [baseFlights]);
 
-  const snapshotConRutas = visibleSnapshot ?? finalSnapshot ?? latestProgress;
-  const planSource: SimulationOrderPlan[] =
-    orderPlansLive.length > 0
+  const snapshotConRutas = useMemo(
+    () => visibleSnapshot ?? finalSnapshot ?? latestProgress,
+    [visibleSnapshot, finalSnapshot, latestProgress]
+  );
+  useEffect(() => {
+    engineSpeedRef.current = engineSpeed;
+  }, [engineSpeed]);
+  const planSource: SimulationOrderPlan[] = useMemo(() => {
+    return orderPlansLive.length > 0
       ? orderPlansLive
       : (snapshotConRutas?.orderPlans ?? []);
+  }, [orderPlansLive, snapshotConRutas]);
 
   const segmentosPorOrden = useMemo(() => {
     const mapa = new Map<string, SimulationSegment[]>();
@@ -203,7 +217,8 @@ export const useSimulacion = () => {
   // ===== WEBSOCKET CONNECTION =====
   useEffect(() => {
     if (!simulationId) return;
-
+    // Si nos conectamos a una simulación existente, asumimos que está en marcha
+    setStatus(prev => prev === 'idle' ? 'running' : prev);
     const client = new Client({
       brokerURL: BROKER_URL,
       reconnectDelay: 5000,
@@ -216,6 +231,21 @@ export const useSimulacion = () => {
 
           if (tick?.simTime) {
             console.info('[SIM] Recibiendo tick del backend (nueva ruta)');
+            setHasSnapshots(true); // liberamos overlay con ticks reales
+            const simMs = Date.parse(tick.simTime);
+            if (Number.isFinite(simMs)) {
+              if (firstSimTickMsRef.current === null) {
+                firstSimTickMsRef.current = simMs;
+              }
+              if (typeof tick.realElapsedMs === 'number' && Number.isFinite(tick.realElapsedMs)) {
+                setElapsedRealMs(tick.realElapsedMs);
+                setStartRealMs(Date.now() - tick.realElapsedMs);
+              } else if (firstSimTickMsRef.current !== null && engineSpeedRef.current > 0) {
+                const elapsedMs = Math.max(0, (simMs - firstSimTickMsRef.current) / engineSpeedRef.current);
+                setElapsedRealMs(elapsedMs);
+                setStartRealMs(Date.now() - elapsedMs);
+              }
+            }
             setTickBuffer(prev => {
               const next = [...prev, tick].slice(-6);
               if (!tickReadyRef.current && next.length >= 3) {
@@ -230,21 +260,20 @@ export const useSimulacion = () => {
             const tickStatus = (tick.status || '').toLowerCase();
             if (tickStatus === 'completed') {
               setStatus('completed');
+              setNotificacion('Hora de fin alcanzada, despachando pendientes');
             } else if (tickStatus === 'paused') {
-              setStatus('running'); // mantenemos animación pero podrías setear paused si controlas UI
+              setStatus('paused');
               setAnimPaused(true);
+            } else if (tickStatus === 'collapsed') {
+              setStatus('running');
+              if (tick.collapseMessage) {
+                setNotificacion(tick.collapseMessage);
+              } else {
+                setNotificacion('Colapso logístico detectado; despachando pendientes');
+              }
             } else {
               setStatus('running');
             }
-          }
-
-          if (simMessage.snapshot) {
-            if (!tick?.simTime) {
-              console.info('[SIM] Usando snapshot (fallback)');
-            }
-            setLatestProgress(simMessage.snapshot);
-            setVisibleSnapshot(simMessage.snapshot);
-            setHasSnapshots(true);
           }
 
           if (simMessage.type === 'COMPLETED' && simMessage.snapshot) {
@@ -252,6 +281,14 @@ export const useSimulacion = () => {
             setVisibleSnapshot(simMessage.snapshot);
             setHasSnapshots(true);
             setStatus('completed');
+          } else if (simMessage.snapshot) {
+            // Snapshot de progreso (pre-proceso GA)
+            setLatestProgress(simMessage.snapshot);
+            const snap = simMessage.snapshot;
+            if (!preprocNotifiedRef.current && snap.processedOrders === snap.totalOrders) {
+              preprocNotifiedRef.current = true;
+              setNotificacion('Pedidos terminados de pre-procesar');
+            }
           } else if (simMessage.type === 'ERROR') {
             console.error("❌ Error en simulación:", simMessage.error);
             setStatus('error');
@@ -272,6 +309,20 @@ export const useSimulacion = () => {
     return () => {
       client.deactivate();
       setStompClient(null);
+    };
+  }, [simulationId]);
+
+  // Heartbeat para evitar cancelación por inactividad en backend
+  useEffect(() => {
+    if (!simulationId) return;
+    heartbeatRef.current = setInterval(() => {
+      simulacionService.touchSimulation(simulationId).catch(() => {});
+    }, 30_000);
+    return () => {
+      if (heartbeatRef.current) {
+        clearInterval(heartbeatRef.current);
+        heartbeatRef.current = null;
+      }
     };
   }, [simulationId]);
 
@@ -338,7 +389,7 @@ export const useSimulacion = () => {
     }
     // Avanza el buffer descartando el frame renderizado
     setTickBuffer(prev => prev.slice(1));
-  }, [tickBuffer, tickPlaybackReady, animPaused, orderPlansLive]);
+  }, [tickBuffer, tickPlaybackReady, animPaused, orderPlansLive, engineSpeed]);
 
   // ===== CÁLCULO DE VUELOS EN MOVIMIENTO =====
   useEffect(() => {
@@ -466,6 +517,7 @@ export const useSimulacion = () => {
     setTickBuffer([]);
     setTickPlaybackReady(false);
     tickReadyRef.current = false;
+    preprocNotifiedRef.current = false;
     const enriched: SimulationStartRequest = {
       ...payload,
       prewarmToken: prewarmToken || undefined,
@@ -478,9 +530,26 @@ export const useSimulacion = () => {
     });
   }, [simulationMutation, prewarmToken]);
 
-  const pausar = useCallback(() => {
-    setAnimPaused(prev => !prev);
-  }, []);
+  const pausar = useCallback(async () => {
+    if (!simulationId) {
+      setAnimPaused(prev => !prev);
+      setStatus(prev => (prev === 'paused' ? 'running' : 'paused'));
+      return;
+    }
+    try {
+      if (animPaused) {
+        await simulacionService.resumeSimulation(simulationId);
+        setStatus('running');
+        setAnimPaused(false);
+      } else {
+        await simulacionService.pauseSimulation(simulationId);
+        setStatus('paused');
+        setAnimPaused(true);
+      }
+    } catch (error) {
+      console.error("Error al pausar/reanudar la simulación en el backend:", error);
+    }
+  }, [simulationId, animPaused]);
 
   const terminar = useCallback(async () => {
     if (simulationId) {
@@ -507,6 +576,9 @@ export const useSimulacion = () => {
     setTickBuffer([]);
     setTickPlaybackReady(false);
     tickReadyRef.current = false;
+    preprocNotifiedRef.current = false;
+    setStartRealMs(null);
+    setElapsedRealMs(0);
     setSegmentosTick([]);
     setActiveAirports([]);
     setDeliveredOrders(0);
@@ -516,6 +588,12 @@ export const useSimulacion = () => {
     prewarmRequested.current = false;
     setOrderPlansLive([]);
   }, [stompClient, simulationId]);
+
+  const conectarSimulacion = useCallback((simId: string) => {
+    if (!simId) return;
+    setSimulationId(simId);
+    setStatus('running');
+  }, []);
 
   // ===== KPIs =====
   const kpis = useMemo(() => {
@@ -542,6 +620,7 @@ export const useSimulacion = () => {
     setTickBuffer([]);
     setTickPlaybackReady(false);
     tickReadyRef.current = false;
+    preprocNotifiedRef.current = false;
     setActiveAirports([]);
     setDeliveredOrders(0);
     setInTransitOrders(0);
@@ -566,6 +645,7 @@ export const useSimulacion = () => {
     tiempoSimulado,
     engineSpeed,
     renderSpeed,
+    animPaused,
     activeAirports,
     orderPlans: planSource,
     iniciar,
@@ -574,10 +654,16 @@ export const useSimulacion = () => {
     resetVisual,
     kpis,
     reloj,
+    simulationId,
     hasSnapshots,
     status,
     deliveredOrders,
     inTransitOrders,
     orderStatuses,
+    startRealMs,
+    elapsedRealMs,
+    conectarSimulacion,
+    notificacion,
+    setNotificacion,
   };
 };

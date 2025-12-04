@@ -12,6 +12,8 @@ public class LiveOrder {
     private final String orderId;
     private final int totalQuantity;
     private final String destinationCode;
+    private final Instant creationUtc;
+    private final Instant dueUtc;
     private int deliveredQuantity;
     private Status status = Status.PLANNED;
     private Instant firstPickupTime;
@@ -21,7 +23,7 @@ public class LiveOrder {
     private int pendingQuantity;
     private int remainingToDestination;
 
-    public LiveOrder(String orderId, int totalQuantity, String destinationCode) {
+    public LiveOrder(String orderId, int totalQuantity, String destinationCode, Instant creationUtc, Instant dueUtc) {
         if (totalQuantity <= 0) {
             throw new IllegalArgumentException("totalQuantity must be positive");
         }
@@ -30,6 +32,8 @@ public class LiveOrder {
         this.pendingQuantity = totalQuantity;
         this.remainingToDestination = totalQuantity;
         this.destinationCode = destinationCode;
+        this.creationUtc = creationUtc;
+        this.dueUtc = dueUtc;
     }
 
     public void markWaiting(Instant time) {
@@ -104,6 +108,14 @@ public class LiveOrder {
 
     public int getDeliveredQuantity() {
         return deliveredQuantity;
+    }
+
+    public Instant getCreationUtc() {
+        return creationUtc;
+    }
+
+    public Instant getDueUtc() {
+        return dueUtc;
     }
 
     public Status getStatus() {

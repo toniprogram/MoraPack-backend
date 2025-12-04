@@ -89,10 +89,10 @@ export default function OperacionPage() {
                 <div className="p-5 bg-base-100 border-b border-base-300 shadow-lg shrink-0">
                     <div className="flex justify-between items-center mb-4">
                         <h1 className="text-lg font-bold tracking-tight flex items-center gap-2">
-                            <Radio className={status === 'running' ? 'text-success animate-pulse' : 'text-base-content/50'} size={20} />
+                            <Radio className={status === 'running' ? 'text-success animate-pulse' : 'text-base-content/70'} size={20} />
                             OPERACION DÍA A DÍA
                         </h1>
-                        <span className="badge badge-outline text-xs font-mono opacity-50">UTC ZONE</span>
+                        <span className="badge badge-outline text-xs font-mono opacity-80">UTC ZONE</span>
                     </div>
 
                     {/* RELOJ */}
@@ -100,7 +100,7 @@ export default function OperacionPage() {
                         <div className="text-5xl font-black font-mono tracking-widest text-primary tabular-nums">
                             {formatTime(simClock)}
                         </div>
-                        <div className="text-sm text-base-content/70 font-medium mt-1 uppercase tracking-widest">
+                        <div className="text-sm text-base-content/80 font-medium mt-1 uppercase tracking-widest">
                             {simClock.toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'short', timeZone: 'UTC' })}
                         </div>
 
@@ -113,7 +113,7 @@ export default function OperacionPage() {
                                     value={getInputValue()}
                                     onChange={handleTimeChange}
                                 />
-                                <Calendar className="absolute right-2 top-1 text-base-content/60 pointer-events-none" size={14}/>
+                                <Calendar className="absolute right-2 top-1 text-base-content/80 pointer-events-none" size={14}/>
                             </div>
                             <button
                                 onClick={handleResetTime}

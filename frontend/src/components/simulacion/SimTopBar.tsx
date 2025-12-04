@@ -30,7 +30,7 @@ export function SimTopBar({
     if (!tiempoSimulado) return null;
     return (
       <>
-        <div className="badge badge-info">
+        <div className="badge badge-neutral text-base-content">
           📅 {tiempoSimulado.toLocaleDateString('es-PE', {
             day: '2-digit',
             month: 'short',
@@ -38,7 +38,7 @@ export function SimTopBar({
             timeZone: 'UTC'
           })}
         </div>
-        <div className="badge badge-success">
+        <div className="badge badge-neutral text-base-content">
           🕒 {tiempoSimulado.toLocaleTimeString('es-PE', {
               hour: '2-digit',
               minute: '2-digit',

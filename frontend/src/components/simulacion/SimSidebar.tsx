@@ -19,6 +19,8 @@ interface SimSidebarProps {
   endDate: string;
   setStartDate: Dispatch<SetStateAction<string>>;
   setEndDate: Dispatch<SetStateAction<string>>;
+  hastaColapso: boolean;
+  setHastaColapso: Dispatch<SetStateAction<boolean>>;
   estaActivo: boolean;
   estaVisualizando: boolean;
   isStarting: boolean;
@@ -43,6 +45,8 @@ interface SimSidebarProps {
   onSelectFlight: (flightId: string | null) => void;
   selectedAirportIds: string[] | null;
   onSelectAirport: (airportId: string | null) => void;
+  animPaused: boolean;
+  status: string;
 }
 
 export function SimSidebar({
@@ -51,6 +55,8 @@ export function SimSidebar({
   endDate,
   setStartDate,
   setEndDate,
+  hastaColapso,
+  setHastaColapso,
   estaActivo,
   estaVisualizando,
   isStarting,
@@ -75,6 +81,8 @@ export function SimSidebar({
   onSelectFlight,
   selectedAirportIds,
   onSelectAirport,
+  animPaused,
+  status,
 }: SimSidebarProps) {
   const enviosToShow = enviosFiltrados;
   const vuelosToShow = vuelosFiltrados;
@@ -83,17 +91,21 @@ export function SimSidebar({
     <div className="w-80 bg-base-100 shadow-lg flex flex-col border-r border-base-300">
       <SidebarFilters
         ordenesParaSimular={ordenesParaSimular}
-        startDate={startDate}
-        endDate={endDate}
-        setStartDate={setStartDate}
-        setEndDate={setEndDate}
-        estaActivo={estaActivo}
-        estaVisualizando={estaVisualizando}
-        isStarting={isStarting}
-        estaSincronizando={estaSincronizando}
-        onIniciar={onIniciar}
-        onTerminar={onTerminar}
-        onPausar={onPausar}
+            startDate={startDate}
+            endDate={endDate}
+            setStartDate={setStartDate}
+            setEndDate={setEndDate}
+            hastaColapso={hastaColapso}
+            setHastaColapso={setHastaColapso}
+            estaActivo={estaActivo}
+            estaVisualizando={estaVisualizando}
+            animPaused={animPaused}
+            status={status}
+            isStarting={isStarting}
+            estaSincronizando={estaSincronizando}
+            onIniciar={onIniciar}
+            onTerminar={onTerminar}
+            onPausar={onPausar}
         filtroHub={filtroHub}
         setFiltroHub={setFiltroHub}
         selectedOrderIds={selectedOrderIds}
