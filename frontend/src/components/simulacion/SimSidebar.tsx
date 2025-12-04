@@ -1,5 +1,6 @@
-import { Package, Plane } from 'lucide-react';
+import { Package, Plane, ChevronLeft, ChevronRight } from 'lucide-react';
 import { SidebarFilters } from './SidebarFilters';
+import { useState } from 'react';
 import { SidebarEnviosPanel } from './SidebarEnviosPanel';
 import { SidebarVuelosPanel } from './SidebarVuelosPanel';
 import { SidebarAeropuertosPanel } from './SidebarAeropuertosPanel';
@@ -84,11 +85,25 @@ export function SimSidebar({
   animPaused,
   status,
 }: SimSidebarProps) {
+  const [collapsed, setCollapsed] = useState(true);
   const enviosToShow = enviosFiltrados;
   const vuelosToShow = vuelosFiltrados;
   const scrollRef = useRef<HTMLDivElement>(null);
   return (
-    <div className="w-80 bg-base-100 shadow-lg flex flex-col border-r border-base-300">
+    <div className={`bg-base-100 shadow-lg flex flex-col border-r border-base-300 transition-all ${collapsed ? 'w-9' : 'w-80'}`}>
+      <div className="flex items-center justify-between p-2">
+        <div className={`flex items-center gap-2 ${collapsed ? 'hidden' : ''}`}>
+          <span className="font-bold text-sm ml-2">Simulación</span>
+        </div>
+        <button
+          aria-label={collapsed ? 'Expandir sidebar' : 'Colapsar sidebar'}
+          className="btn btn-ghost btn-sm btn-square"
+          onClick={() => setCollapsed(c => !c)}
+        >
+          {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+        </button>
+      </div>
+      {!collapsed && (
       <SidebarFilters
         ordenesParaSimular={ordenesParaSimular}
             startDate={startDate}
@@ -111,7 +126,9 @@ export function SimSidebar({
         selectedOrderIds={selectedOrderIds}
         clearSelectedOrders={clearSelectedOrders}
       />
+      )}
 
+      {!collapsed && (
       <div className="flex border-b border-base-300 bg-base-200">
         <button
           className={`flex-1 py-2 text-sm font-medium transition-colors ${
@@ -146,9 +163,10 @@ export function SimSidebar({
           Aeropuertos
         </button>
       </div>
+      )}
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-2 bg-base-100">
-        {vistaPanel === 'envios' && (
+      <div ref={scrollRef} className={`flex-1 overflow-y-auto p-3 space-y-2 bg-base-100 ${collapsed ? 'p-0' : ''}`}>
+        { !collapsed && vistaPanel === 'envios' && (
           <SidebarEnviosPanel
             enviosFiltrados={enviosToShow}
             ordenesParaSimular={ordenesParaSimular}
@@ -158,7 +176,7 @@ export function SimSidebar({
           />
         )}
 
-        {vistaPanel === 'vuelos' && (
+        { !collapsed && vistaPanel === 'vuelos' && (
           <SidebarVuelosPanel
             vuelosFiltrados={vuelosToShow}
             vuelosTotal={vuelosTotal}
@@ -171,7 +189,7 @@ export function SimSidebar({
           />
         )}
 
-        {vistaPanel === 'aeropuertos' && (
+        { !collapsed && vistaPanel === 'aeropuertos' && (
           <SidebarAeropuertosPanel
             aeropuertos={aeropuertos}
             activeAirports={activeAirports}

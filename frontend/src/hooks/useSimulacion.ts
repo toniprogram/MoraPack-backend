@@ -83,7 +83,7 @@ export const useSimulacion = () => {
   const [finalSnapshot, setFinalSnapshot] = useState<SimulationSnapshot | null>(null);
   const [visibleSnapshot, setVisibleSnapshot] = useState<SimulationSnapshot | null>(null);
   const [hasSnapshots, setHasSnapshots] = useState(false);
-  const [status, setStatus] = useState<'idle' | 'running' | 'completed' | 'error'>('idle');
+  const [status, setStatus] = useState<'idle' | 'running' | 'completed' | 'error' | 'paused'>('idle');
   const [tiempoSimulado, setTiempoSimulado] = useState<Date | null>(null);
   const [engineSpeed, setEngineSpeed] = useState(DEFAULT_SPEED);  // del backend
   const [renderSpeed, setRenderSpeed] = useState(1);              // solo visual
