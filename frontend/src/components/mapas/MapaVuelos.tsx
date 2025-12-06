@@ -23,7 +23,7 @@ L.Icon.Default.mergeOptions({
 const defaultAirportIcon = new L.Icon({
   iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-  iconSize: [12, 15],
+  iconSize: [12, 16],
   iconAnchor: [6, 15],
   popupAnchor: [1, -18],
   shadowSize: [20, 20]
@@ -32,7 +32,7 @@ const defaultAirportIcon = new L.Icon({
 const hubIcon = new L.Icon({
   iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-violet.png',
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-  iconSize: [12, 15],
+  iconSize: [12, 16],
   iconAnchor: [6, 15],
   popupAnchor: [1, -18],
   shadowSize: [20, 20]
