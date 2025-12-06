@@ -54,7 +54,7 @@ export default function SimulacionPage() {
 
   const [filtroHub, setFiltroHub] = useState<string>('');
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[] | null>(null);
-  const [orderIdFilter, setOrderIdFilter] = useState<string>('');
+  const [orderIdFilter] = useState<string>('');
   const [selectedFlightId, setSelectedFlightId] = useState<string | null>(null);
   const [selectedAirportIds, setSelectedAirportIds] = useState<string[] | null>(null);
   const [dialogInfo, setDialogInfo] = useState<{ titulo: string; mensaje: string } | null>(null);
