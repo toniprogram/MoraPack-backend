@@ -399,7 +399,7 @@ export default function SimulacionPage() {
         </div>
       </div>
     )}
-    <div className="flex h-screen w-full bg-base-200 text-base-content">
+    <div className="flex h-[calc(100vh-3rem)] min-h-[calc(100vh-3rem)] w-full bg-base-200 text-base-content">
 
       <SimSidebar
           ordenesParaSimular={ordenesParaSimular}
@@ -436,7 +436,7 @@ export default function SimulacionPage() {
           onSelectAirport={handleSelectAirport} animPaused={false}      />
 
       {/* ========== ÁREA DEL MAPA ========== */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col min-h-0">
 
           {/* Barra superior con KPIs y Reloj */}
           <SimTopBar
@@ -453,7 +453,7 @@ export default function SimulacionPage() {
           />
 
         {/* Mapa */}
-        <div className="flex-1 relative">
+        <div className="flex-1 relative min-h-0">
 
           {/* Mostramos overlay de carga si el GA está corriendo */}
           {mostrandoOverlay && (
