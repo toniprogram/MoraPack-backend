@@ -97,7 +97,7 @@ public class SimulationService {
 
         UUID simulationId = UUID.randomUUID();
         SimulationSession session = new SimulationSession(simulationId, projectedOrders.size());
-        session.simStartInstant = range.start().plusSeconds(10); // delay de arranque para animación
+        session.simStartInstant = range.start();
         session.realStartMillis = System.currentTimeMillis();
         session.touch();
         session.simSpeed = DEFAULT_SIM_SPEED;

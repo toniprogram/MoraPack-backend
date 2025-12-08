@@ -286,7 +286,7 @@ export function MapaVuelos({
   selectedAirportIds,
   onSelectAirport,
 }: MapaVuelosProps) {
-  const initialPosition: LatLngExpression = [20, 0];
+  const initialPosition: LatLngExpression = [15, 0];
   const [mapTheme, setMapTheme] = useState<'light' | 'dark'>('dark');
 
   useEffect(() => {
@@ -341,7 +341,7 @@ export function MapaVuelos({
   return (
     <MapContainer
       center={initialPosition}
-      zoom={2}
+      zoom={3}
       minZoom={2}
       className="w-full h-full z-0"
       style={{ backgroundColor: mapTheme === 'dark' ? '#1f2937' : '#e5e7eb' }}

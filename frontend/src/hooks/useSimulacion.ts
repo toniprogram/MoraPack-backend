@@ -109,6 +109,7 @@ export const useSimulacion = () => {
   const lastPlansSimTimeRef = useRef<string | null>(null);
   const preprocNotifiedRef = useRef(false);
   const prewarmStorageKey = 'sim_prewarm_token';
+  const firstSnapshotLoggedRef = useRef(false);
   const [prewarmToken, setPrewarmToken] = useState<string | null>(() => {
     try {
       return localStorage.getItem(prewarmStorageKey);
@@ -286,6 +287,31 @@ export const useSimulacion = () => {
             setHasSnapshots(true);
             setStatus('completed');
           } else if (simMessage.snapshot) {
+            if (!firstSnapshotLoggedRef.current) {
+              console.log('[SIM] First snapshot from backend:', simMessage.snapshot);
+              const findEarliestDeparture = (snapshot: SimulationSnapshot) => {
+                let earliestMs: number | null = null;
+                snapshot.orderPlans?.forEach(plan => {
+                  plan.routes?.forEach(route => {
+                    route.segments?.forEach(seg => {
+                      const depMs = Date.parse(seg.departureUtc);
+                      if (Number.isNaN(depMs)) return;
+                      if (earliestMs === null || depMs < earliestMs) {
+                        earliestMs = depMs;
+                      }
+                    });
+                  });
+                });
+                return earliestMs;
+              };
+              const earliestMs = findEarliestDeparture(simMessage.snapshot);
+              if (earliestMs !== null) {
+                console.log('[SIM] Earliest departure time:', new Date(earliestMs).toISOString());
+              } else {
+                console.log('[SIM] No departure times found in first snapshot');
+              }
+              firstSnapshotLoggedRef.current = true;
+            }
             // Snapshot de progreso (pre-proceso GA)
             setLatestProgress(simMessage.snapshot);
             const snap = simMessage.snapshot;
