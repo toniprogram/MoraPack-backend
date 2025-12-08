@@ -15,6 +15,13 @@ interface SidebarAeropuertosPanelProps {
 
 const ITEM_HEIGHT = 190;
 const BUFFER_ITEMS = 8;
+const INFINITE_CODES = new Set(['SPIM', 'LIM', 'EBCI', 'BRU', 'UBBB', 'GYD']);
+
+const isInfiniteHub = (a: Airport) => {
+  const id = (a.id || '').toUpperCase().trim();
+  const code = (a.code || '').toUpperCase().trim();
+  return INFINITE_CODES.has(a.id) || INFINITE_CODES.has(a.code);
+};
 
 export function SidebarAeropuertosPanel({
   aeropuertos,
@@ -85,7 +92,10 @@ export function SidebarAeropuertosPanel({
             const live = activeAirports.find(a => a.airportCode === (aeropuerto.id || aeropuerto.code));
             const current = live?.currentLoad ?? 0;
             const max = live?.maxThroughputPerHour ?? aeropuerto.storageCapacity ?? 0;
-            const pct = max > 0 ? Math.min(100, Math.round((current / max) * 100)) : 0;
+            const isInfinite = isInfiniteHub(aeropuerto);
+            const pct = (isInfinite || max === 0)
+              ? 0
+              : Math.min(100, Math.round((current / max) * 100));
             const flightOrders = live?.orderLoads ?? [];
             const isSelected = !!selectedAirportIds?.includes((aeropuerto.id || aeropuerto.code || ''));
             const dimmed = !!(selectedAirportIds && selectedAirportIds.length > 0 && !isSelected);
@@ -112,14 +122,19 @@ export function SidebarAeropuertosPanel({
             <div className="text-xs text-base-content/70 mt-1 space-y-1">
               <div className="flex justify-between">
                 <span>Almacén</span>
-                <span className="font-mono">{current} / {max}</span>
+                <span className={`font-mono ${textColorClass}`}>
+                    {current} / {isInfinite ? '∞' : max}
+                </span>
               </div>
                 <progress
-                  className={`progress ${progressColorClass} w-full h-2`}
-                  value={current}
-                  max={max || 1}
-                ></progress>
-              <div className="font-mono text-right opacity-60">{pct}%</div>
+                    className={`progress ${progressColorClass} w-full h-2`}
+                    value={isInfinite ? 0 : current}
+                    max={isInfinite ? 100 : (max || 1)}
+                  ></progress>
+
+                  <div className={`font-mono text-right text-[10px] ${textColorClass}`}>
+                    {isInfinite ? 'Capacidad Ilimitada' : `${pct}% Ocupado`}
+                  </div>
             </div>
             <div className="border-t border-base-300 pt-2 mt-2">
               <div className="text-[10px] font-semibold uppercase opacity-70 mb-1">Pedidos en almacén</div>

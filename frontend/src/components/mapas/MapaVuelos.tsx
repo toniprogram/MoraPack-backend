@@ -117,7 +117,7 @@ function MapClickReset({ onClear }: { onClear?: () => void }) {
 
 const isMainHub = (code: string) => {
   const c = code ? code.toUpperCase() : '';
-  return ['SPIM', 'LIM', 'UBBB', 'GYD', 'EBCI', 'BRU', 'CRL'].includes(c);
+  return ['SPIM','UBBB','EBCI'].includes(c);
 };
 
 const getHubColor = (originCode: string) => {
@@ -453,15 +453,24 @@ export function MapaVuelos({
         const live = activeAirports.find(a => a.airportCode === (aeropuerto.id || aeropuerto.code));
         const stockActual = live?.currentLoad ?? 0;
         const capacidadMax = live?.maxThroughputPerHour ?? aeropuerto.storageCapacity ?? 0;
-        const stockPct = Math.min(100, Math.round((stockActual / capacidadMax) * 100));
+        const targetInfinite = ['SPIM', 'LIM', 'EBCI', 'BRU', 'UBBB', 'GYD'];
+        const isInfinite = targetInfinite.includes(aeropuerto.id) || targetInfinite.includes(aeropuerto.code);
+        const stockPct = (isInfinite || capacidadMax === 0)
+            ? 0
+            : Math.min(100, Math.round((stockActual / capacidadMax) * 100));
         let statusColorClass = 'text-success';
         let progressClass = 'progress-success';
-        if (stockPct >= 90) {
-            statusColorClass = 'text-error';
-            progressClass = 'progress-error';
-        } else if (stockPct >= 70) {
-            statusColorClass = 'text-warning';
-            progressClass = 'progress-warning';
+        if (!isInfinite) {
+            if (stockPct >= 90) {
+                statusColorClass = 'text-error';
+                progressClass = 'progress-error';
+            } else if (stockPct >= 70) {
+                statusColorClass = 'text-warning';
+                progressClass = 'progress-warning';
+            }
+        } else {
+            statusColorClass = 'text-success';
+            progressClass = 'progress-success';
         }
         return (
           <Marker
@@ -507,14 +516,19 @@ export function MapaVuelos({
                 <div className="p-3 space-y-2">
                     <div className="flex justify-between mb-1 text-[10px] font-semibold uppercase opacity-70">
                         <span>Almacén</span>
-                        <span>{stockActual} / {capacidadMax}</span>
+                        <span className={`font-mono ${statusColorClass}`}>
+                            {stockActual} / {isInfinite ? '∞' : capacidadMax}
+                        </span>
                     </div>
                     <progress
                         className={`progress w-full h-2 ${progressClass}`}
-                        value={stockActual}
-                        max={capacidadMax}
+                        value={isInfinite ? 0 : stockActual}
+                        max={isInfinite ? 100 : (capacidadMax || 1)}
                     ></progress>
-                    <div className="text-right mt-1 text-[10px] font-mono opacity-50">{stockPct}% Ocupado</div>
+
+                    <div className={`font-mono text-right mt-1 text-[10px] ${statusColorClass}`}>
+                        {isInfinite ? 'Capacidad Ilimitada' : `${stockPct}% Ocupado`}
+                    </div>
                     <div className="border-t border-base-300 pt-2">
                       <div className="text-[10px] font-semibold uppercase opacity-70 mb-1">Pedidos en almacén</div>
                       <OrdersList
