@@ -71,6 +71,10 @@ const resolveWsUrl = () => {
   return `${wsBase}/ws`;
 };
 const BROKER_URL = resolveWsUrl();
+//const BROKER_URL =
+  import.meta.env.PROD
+    ? 'ws://200.16.7.179/ws'  // producción
+    : 'ws://localhost:8080/ws'; // desarrollo local
 const TOPIC_PREFIX = '/topic/simulations/';
 
 // Velocidad base; se puede ajustar desde el panel
@@ -83,7 +87,7 @@ export const useSimulacion = () => {
   const [finalSnapshot, setFinalSnapshot] = useState<SimulationSnapshot | null>(null);
   const [visibleSnapshot, setVisibleSnapshot] = useState<SimulationSnapshot | null>(null);
   const [hasSnapshots, setHasSnapshots] = useState(false);
-  const [status, setStatus] = useState<'idle' | 'running' | 'completed' | 'error'>('idle');
+  const [status, setStatus] = useState<'idle' | 'running' | 'completed' | 'error' | 'paused'>('idle');
   const [tiempoSimulado, setTiempoSimulado] = useState<Date | null>(null);
   const [engineSpeed, setEngineSpeed] = useState(DEFAULT_SPEED);  // del backend
   const [renderSpeed, setRenderSpeed] = useState(1);              // solo visual

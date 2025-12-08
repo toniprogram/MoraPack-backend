@@ -5,10 +5,11 @@ import type { LatLngExpression } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import planeIconUrl from '/images/plane-line.svg?url';
 import type { Airport } from '../../types/airport';
+
 import type { ActiveAirportTick } from '../../types/simulation';
-import type { SegmentoVuelo, VueloEnMovimiento } from '../../hooks/useSimulacion';
-import { Plane, Building } from 'lucide-react';
 import { OrdersList, type OrderLoadView } from '../simulacion/OrdersList';
+import type { SegmentoVuelo, VueloEnMovimiento } from '../../hooks/useSimulacion';
+import { Plane, Box, Building } from 'lucide-react';
 
 // Iconos Default Leaflet
 const iconProto = L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown };
@@ -23,19 +24,19 @@ L.Icon.Default.mergeOptions({
 const defaultAirportIcon = new L.Icon({
   iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-  iconSize: [15, 25],
-  iconAnchor: [7, 25],
-  popupAnchor: [1, -20],
-  shadowSize: [25, 25]
+  iconSize: [12, 16],
+  iconAnchor: [6, 15],
+  popupAnchor: [1, -18],
+  shadowSize: [20, 20]
 });
 
 const hubIcon = new L.Icon({
   iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-violet.png',
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  shadowSize: [41, 41]
+  iconSize: [12, 16],
+  iconAnchor: [6, 15],
+  popupAnchor: [1, -18],
+  shadowSize: [20, 20]
 });
 
 function MapResizer({ isLoading }: { isLoading: boolean }) {
@@ -76,8 +77,8 @@ const getHubColor = (originCode: string) => {
   return { hex: '#a6adbb', twClass: 'text-base-content' };
 };
 
-const PLANE_SIZE = 32; // tamaño visual del avión
-const PLANE_HITBOX = 56; // área clickeable (no visible) más grande
+const PLANE_SIZE = 20; // tamaño visual del avión (reducido)
+const PLANE_HITBOX = 40; // área clickeable (no visible) más grande
 const PLANE_CENTER = PLANE_HITBOX / 2;
 
 const toRad = (deg: number) => (deg * Math.PI) / 180;
@@ -176,6 +177,36 @@ const positionAlongPath = (path: [number, number][], progress: number) => {
   const last = path[path.length - 1];
   const prev = path[path.length - 2];
   return { coord: last, bearing: bearingBetween(prev, last) };
+};
+
+// Devuelve la porción restante del camino a partir del progreso (0-100).
+const getRemainingPath = (path: [number, number][], progress: number): [number, number][] => {
+  if (!path || path.length === 0) return [];
+  if (path.length === 1) return path;
+  const target = Math.max(0, Math.min(100, progress)) / 100;
+  const segLengths: number[] = [];
+  let total = 0;
+  for (let i = 0; i < path.length - 1; i++) {
+    const len = haversine(path[i], path[i + 1]);
+    segLengths.push(len);
+    total += len;
+  }
+  if (total === 0) return path;
+  let dist = total * target;
+  for (let i = 0; i < segLengths.length; i++) {
+    if (dist <= segLengths[i]) {
+      const f = segLengths[i] === 0 ? 0 : dist / segLengths[i];
+      const p1 = path[i];
+      const p2 = path[i + 1];
+      const lat = p1[0] + (p2[0] - p1[0]) * f;
+      const lon = p1[1] + (p2[1] - p1[1]) * f;
+      const current: [number, number] = [lat, lon];
+      return [current, ...path.slice(i + 1)];
+    }
+    dist -= segLengths[i];
+  }
+  // Si el progreso es 100% o más, no queda camino
+  return [];
 };
 
 const getPlaneIcon = (originCode: string, rotation: number) => {
@@ -454,21 +485,30 @@ export function MapaVuelos({
         const opacityBase = (filtroHubActivo && segmento.origin !== filtroHubActivo) ? 0.1 : 0.4;
         const dimmed = !shouldHighlight;
         const opacity = dimmed ? 0.1 : opacityBase;
-        const path = getCachedPath([origenCoords[0], origenCoords[1]], [destinoCoords[0], destinoCoords[1]], 64);
-        pathsPorSegmento.current.set(segmento.id, path);
+          const path = getCachedPath([origenCoords[0], origenCoords[1]], [destinoCoords[0], destinoCoords[1]], 64);
+          pathsPorSegmento.current.set(segmento.id, path);
 
-        return (
-          <Polyline
-            key={segmento.id}
-            positions={path}
-            pathOptions={{
-                color: colorHex,
-                weight: 1.5,
-                opacity: opacity,
-                dashArray: '4, 8'
-            }}
-          />
-        );
+          // Si existe un vuelo correspondiente en movimiento, recortamos la ruta
+          const vueloMatch = vuelosEnMovimiento?.find(v => v.id === segmento.id);
+          let polyPositions: [number, number][] = path;
+          if (vueloMatch) {
+            polyPositions = getRemainingPath(path, vueloMatch.progreso);
+          }
+
+          if (!polyPositions || polyPositions.length < 2) return null;
+
+          return (
+            <Polyline
+              key={segmento.id}
+              positions={polyPositions}
+              pathOptions={{
+                  color: colorHex,
+                  weight: 1.5,
+                  opacity: opacity,
+                  dashArray: '4, 8'
+              }}
+            />
+          );
       })}
 
       {/* AVIONES */}

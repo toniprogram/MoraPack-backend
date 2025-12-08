@@ -48,6 +48,27 @@ export function SidebarFilters({
   status,
 }: SidebarFiltersProps) {
   const inputsBloqueados = status !== 'idle' && status !== 'completed';
+  const formatLocalNoSeconds = (d: Date) => {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
+  const handleStartChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const v = event.target.value;
+    setStartDate(v);
+    if (!v) {
+      setEndDate('');
+      return;
+    }
+    try {
+      const d = new Date(v);
+      // add 7 days
+      d.setDate(d.getDate() + 7);
+      setEndDate(formatLocalNoSeconds(d));
+    } catch (e) {
+      // ignore parse errors
+    }
+  };
   return (
     <>
       <div className="bg-primary text-primary-content p-4">
@@ -67,7 +88,7 @@ export function SidebarFilters({
                 type="datetime-local"
                 className="input input-sm w-full text-base-content/90"
                 value={startDate}
-                onChange={(event) => setStartDate(event.target.value)}
+                onChange={handleStartChange}
                 disabled={inputsBloqueados}
               />
             </div>

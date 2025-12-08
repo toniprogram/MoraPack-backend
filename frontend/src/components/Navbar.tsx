@@ -18,13 +18,13 @@ export default function Navbar() {
   }, []);
 
   return (
-    <div className="navbar bg-primary px-4">
+    <div className="navbar bg-primary px-4 h-10">
       {/* Izquierda: Logo y nombre */}
       <div className="navbar-start">
           <img
             src="/MoraPackLogo.png"
             alt="Logo"
-            className="w-10 h-10 rounded-md"
+            className="w-8 h-8 rounded-md"
           />
           <div className="flex flex-col leading-tight text-left">
             <span className="text-xl font-bold">MoraPack</span>
@@ -89,7 +89,7 @@ export default function Navbar() {
             <img
               src="https://img.daisyui.com/images/stock/photo-1534528741775-53994a69daeb.webp"
               alt="User"
-              className="rounded-full w-10 h-10"
+              className="rounded-full w-8 h-8"
             />
           </button>
           <ul className="dropdown-content menu bg-base-100 rounded-box z-10 mt-3 w-30 shadow">

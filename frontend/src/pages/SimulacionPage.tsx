@@ -54,6 +54,7 @@ export default function SimulacionPage() {
 
   const [filtroHub, setFiltroHub] = useState<string>('');
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[] | null>(null);
+  const [orderIdFilter] = useState<string>('');
   const [selectedFlightId, setSelectedFlightId] = useState<string | null>(null);
   const [selectedAirportIds, setSelectedAirportIds] = useState<string[] | null>(null);
   const [dialogInfo, setDialogInfo] = useState<{ titulo: string; mensaje: string } | null>(null);
@@ -141,7 +142,7 @@ export default function SimulacionPage() {
 
   // --- LÓGICA DE FILTRADO Y ORDEN PARA LOS PANELES ---
   const enviosCalc = useMemo(() => {
-    const term = '';
+    const term = (orderIdFilter || '').toLowerCase();
     const prev = enviosHistoricos.current;
     const next = new Map(prev);
     const vistos = new Set<string>();
@@ -184,7 +185,7 @@ export default function SimulacionPage() {
       if (info.estado === 'En tránsito') stats.retrasados += 1;
     });
     return { lista, stats };
-  }, [orderStatuses, selectedOrderIds, orderPlans]);
+  }, [orderStatuses, selectedOrderIds, orderPlans, orderIdFilter]);
 
   // KPIs basados en lo que se muestra actualmente
   const enviosFiltrados = enviosCalc.lista;
@@ -401,39 +402,38 @@ export default function SimulacionPage() {
     <div className="flex h-screen w-full bg-base-200 text-base-content">
 
       <SimSidebar
-        ordenesParaSimular={ordenesParaSimular}
-        startDate={startDate}
-        endDate={endDate}
-        setStartDate={setStartDate}
-        setEndDate={setEndDate}
-        hastaColapso={hastaColapso}
-        setHastaColapso={setHastaColapso}
-        estaActivo={estaActivo}
-        estaVisualizando={estaVisualizando}
-        status={status}
-        isStarting={isStarting}
-        estaSincronizando={estaSincronizando}
-        onIniciar={handleIniciarSimulacion}
-        onTerminar={handleTerminarSimulacion}
-        onPausar={pausar}
-        vistaPanel={vistaPanel}
-        setVistaPanel={setVistaPanel}
-        enviosFiltrados={enviosFiltrados}
-        vuelosFiltrados={vuelosFiltrados}
-        vuelosTotal={vuelosLive.length}
-        aeropuertos={aeropuertos}
-        activeAirports={activeAirports}
-        filtroHub={filtroHub}
-        setFiltroHub={setFiltroHub}
-        selectedOrderIds={selectedOrderIds}
-        onSelectOrders={handleSelectOrders}
-        clearSelectedOrders={clearSelectedOrders}
-        vuelosEnMovimiento={vuelosEnMovimiento}
-        selectedFlightId={selectedFlightId}
-        onSelectFlight={handleSelectFlight}
-        selectedAirportIds={selectedAirportIds}
-        onSelectAirport={handleSelectAirport}
-      />
+          ordenesParaSimular={ordenesParaSimular}
+          startDate={startDate}
+          endDate={endDate}
+          setStartDate={setStartDate}
+          setEndDate={setEndDate}
+          hastaColapso={hastaColapso}
+          setHastaColapso={setHastaColapso}
+          estaActivo={estaActivo}
+          estaVisualizando={estaVisualizando}
+          status={status}
+          isStarting={isStarting}
+          estaSincronizando={estaSincronizando}
+          onIniciar={handleIniciarSimulacion}
+          onTerminar={handleTerminarSimulacion}
+          onPausar={pausar}
+          vistaPanel={vistaPanel}
+          setVistaPanel={setVistaPanel}
+          enviosFiltrados={enviosFiltrados}
+          vuelosFiltrados={vuelosFiltrados}
+          vuelosTotal={vuelosLive.length}
+          aeropuertos={aeropuertos}
+          activeAirports={activeAirports}
+          filtroHub={filtroHub}
+          setFiltroHub={setFiltroHub}
+          selectedOrderIds={selectedOrderIds}
+          onSelectOrders={handleSelectOrders}
+          clearSelectedOrders={clearSelectedOrders}
+          vuelosEnMovimiento={vuelosEnMovimiento}
+          selectedFlightId={selectedFlightId}
+          onSelectFlight={handleSelectFlight}
+          selectedAirportIds={selectedAirportIds}
+          onSelectAirport={handleSelectAirport} animPaused={false}      />
 
       {/* ========== ÁREA DEL MAPA ========== */}
       <div className="flex-1 flex flex-col">
