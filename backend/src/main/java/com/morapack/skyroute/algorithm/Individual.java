@@ -5,11 +5,16 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 import com.morapack.skyroute.config.*;
+import com.morapack.skyroute.io.Airports;
 import com.morapack.skyroute.models.*;
 
 public class Individual {
@@ -41,42 +46,33 @@ public class Individual {
     }
 
     static Individual crossover(World world, List<Order> orders, Individual parentA, Individual parentB, Random rnd) {
-        FlightSchedule flightSchedule = world.getFlights().getSchedule().copy();
-        AirportSchedule airportSchedule = world.getAirportSchedule().copy();
+        // Partimos del schedule del padre A para preservar sus reservas
+        FlightSchedule flightSchedule = parentA.flightSchedule.copy();
+        AirportSchedule airportSchedule = parentA.airportSchedule.copy();
         RouteBuilder builder = new RouteBuilder(world, flightSchedule, airportSchedule, rnd, RouteBuilder.SelectionMode.HEURISTIC_APPROACH);
 
-        List<OrderPlan> plans = new ArrayList<>();
-        for (Order order : orders) {
-            OrderPlan childPlan = new OrderPlan(order.getId());
-            int remaining = order.getQuantity();
+        // Punto de partida: copiar planes de A
+        List<OrderPlan> plans = deepCopyPlans(parentA.plans);
+        // Seleccionamos un subconjunto para intentar mejorar con orígenes de B
+        int tweakCount = Math.max(1, orders.size() / 4);
+        Set<String> tweakIds = selectOrderIds(orders, tweakCount, rnd);
 
-            List<Route> parentRoutes = gatherParentRoutes(parentA, parentB, order.getId(), rnd);
-            for (Route parentRoute : parentRoutes) {
-                if (remaining <= 0) break;
-                String origin = extractOrigin(parentRoute);
-                if (origin == null || origin.isBlank()) {
-                    continue;
-                }
-                Route rebuilt = builder.buildRoute(order, origin, remaining);
-                if (rebuilt != null && rebuilt.getQuantity() > 0) {
-                    childPlan.addRoute(rebuilt);
-                    remaining -= rebuilt.getQuantity();
-                }
-        }
-
-        while (remaining > 0) {
-                List<String> hubs = builder.productionHubs();
-                String origin = hubs.get(rnd.nextInt(hubs.size()));
-                Route fallback = builder.buildRoute(order, origin, remaining);
-                if (fallback == null || fallback.getQuantity() <= 0) {
-                    throw new IllegalStateException("Unable to rebuild route for order " + order.getId());
-                }
-                childPlan.addRoute(fallback);
-                remaining -= fallback.getQuantity();
+        for (String orderId : tweakIds) {
+            Order order = findOrder(orders, orderId);
+            if (order == null) continue;
+            OrderPlan planA = findPlan(parentA, orderId);
+            OrderPlan planB = findPlan(parentB, orderId);
+            if (planA != null) {
+                releasePlan(world, planA, flightSchedule, airportSchedule);
+                plans.removeIf(p -> p.getOrderId().equals(orderId));
             }
-
-            childPlan.setSlack(determinePlanSlack(world, order, childPlan));
-            plans.add(childPlan);
+            OrderPlan adopted = tryAdoptPlan(world, order, planB, flightSchedule, airportSchedule);
+            if (adopted != null) {
+                plans.add(adopted);
+            } else {
+                OrderPlan rebuilt = buildPlanWithPreferences(order, planB, builder, world, rnd);
+                plans.add(rebuilt);
+            }
         }
 
         Individual child = new Individual(plans, flightSchedule, airportSchedule);
@@ -85,62 +81,36 @@ public class Individual {
     }
 
     static Individual mutate(World world, List<Order> orders, Individual parent, Random rnd) {
-        FlightSchedule flightSchedule = world.getFlights().getSchedule().copy();
-        AirportSchedule airportSchedule = world.getAirportSchedule().copy();
-        RouteBuilder builder = new RouteBuilder(world, flightSchedule, airportSchedule, rnd, RouteBuilder.SelectionMode.RANDOM_APPROACH);
+        // Partimos del schedule del padre para evitar reconstruir todo desde cero
+        FlightSchedule flightSchedule = parent.flightSchedule.copy();
+        AirportSchedule airportSchedule = parent.airportSchedule.copy();
+        RouteBuilder builder = new RouteBuilder(world, flightSchedule, airportSchedule, rnd, RouteBuilder.SelectionMode.HEURISTIC_APPROACH);
+
+        int mutateCount = Math.max(1, orders.size() / 5);
+        Set<String> mutateIds = selectOrderIds(orders, mutateCount, rnd);
+
+        // Liberar reservas de los planes a mutar
+        for (OrderPlan plan : parent.plans) {
+            if (mutateIds.contains(plan.getOrderId())) {
+                releasePlan(world, plan, flightSchedule, airportSchedule);
+            }
+        }
 
         List<OrderPlan> plans = new ArrayList<>();
         for (Order order : orders) {
-            OrderPlan mutatedPlan = new OrderPlan(order.getId());
-            int remaining = order.getQuantity();
-
-            List<String> preferredHubs = new ArrayList<>();
-            OrderPlan parentPlan = findPlan(parent, order.getId());
-            if (parentPlan != null) {
-                for (Route route : parentPlan.getRoutes()) {
-                    String origin = extractOrigin(route);
-                    if (origin != null && !origin.isBlank()) {
-                        preferredHubs.add(origin);
-                    }
+            if (mutateIds.contains(order.getId())) {
+                OrderPlan preferred = findPlan(parent, order.getId());
+                OrderPlan rebuilt = buildPlanWithPreferences(order, preferred, builder, world, rnd);
+                plans.add(rebuilt);
+            } else {
+                OrderPlan existing = findPlan(parent, order.getId());
+                OrderPlan copy = copyPlan(existing);
+                if (copy != null) {
+                    plans.add(copy);
+                } else {
+                    plans.add(buildPlanWithPreferences(order, existing, builder, world, rnd));
                 }
             }
-            Collections.shuffle(preferredHubs, rnd);
-
-            int preferredIndex = 0;
-            while (remaining > 0) {
-                boolean built = false;
-                while (preferredIndex < preferredHubs.size() && remaining > 0) {
-                    String origin = preferredHubs.get(preferredIndex++);
-                    Route rebuilt = builder.buildRoute(order, origin, remaining);
-                    if (rebuilt != null && rebuilt.getQuantity() > 0) {
-                        mutatedPlan.addRoute(rebuilt);
-                        remaining -= rebuilt.getQuantity();
-                        built = true;
-                        break;
-                    }
-                }
-
-                if (built) continue;
-
-                List<String> hubs = new ArrayList<>(builder.productionHubs());
-                Collections.shuffle(hubs, rnd);
-                for (String origin : hubs) {
-                    Route fallback = builder.buildRoute(order, origin, remaining);
-                    if (fallback != null && fallback.getQuantity() > 0) {
-                        mutatedPlan.addRoute(fallback);
-                        remaining -= fallback.getQuantity();
-                        built = true;
-                        break;
-                    }
-                }
-
-                if (!built) {
-                    throw new IllegalStateException("Unable to mutate route for order " + order.getId());
-                }
-            }
-
-            mutatedPlan.setSlack(determinePlanSlack(world, order, mutatedPlan));
-            plans.add(mutatedPlan);
         }
 
         Individual mutant = new Individual(plans, flightSchedule, airportSchedule);
@@ -167,6 +137,27 @@ public class Individual {
             }
             List<OrderPlan> planCopies = deepCopyPlans(this.plans);
             planCopies.add(newPlan);
+            Individual patched = new Individual(planCopies, scheduleCopy, airportCopy);
+            patched.evaluate();
+            return patched;
+        } catch (IllegalStateException ex) {
+            return null;
+        }
+    }
+
+    public Individual tryInsertOrders(World world, List<Order> newOrders, Random rnd) {
+        if (newOrders == null || newOrders.isEmpty()) {
+            return copy();
+        }
+        FlightSchedule scheduleCopy = flightSchedule.copy();
+        AirportSchedule airportCopy = airportSchedule.copy();
+        RouteBuilder builder = new RouteBuilder(world, scheduleCopy, airportCopy, rnd, RouteBuilder.SelectionMode.HEURISTIC_APPROACH);
+        List<OrderPlan> planCopies = deepCopyPlans(this.plans);
+        try {
+            for (Order order : newOrders) {
+                OrderPlan newPlan = buildPlanForOrder(order, builder, world, rnd);
+                planCopies.add(newPlan);
+            }
             Individual patched = new Individual(planCopies, scheduleCopy, airportCopy);
             patched.evaluate();
             return patched;
@@ -391,6 +382,210 @@ public class Individual {
             throw new IllegalStateException("Plan violates SLA for order " + order.getId());
         }
         return plan;
+    }
+
+    private static OrderPlan buildPlanWithPreferences(Order order,
+                                                      OrderPlan preferred,
+                                                      RouteBuilder builder,
+                                                      World world,
+                                                      Random rnd) {
+        List<String> preferredHubs = new ArrayList<>();
+        if (preferred != null) {
+            for (Route route : preferred.getRoutes()) {
+                String origin = extractOrigin(route);
+                if (origin != null && !origin.isBlank()) {
+                    preferredHubs.add(origin);
+                }
+            }
+        }
+        if (preferredHubs.isEmpty()) {
+            preferredHubs.addAll(builder.productionHubs());
+        }
+        Collections.shuffle(preferredHubs, rnd);
+
+        OrderPlan plan = new OrderPlan(order.getId());
+        int remaining = order.getQuantity();
+        int stagnation = 0;
+        while (remaining > 0) {
+            boolean built = false;
+            for (String origin : preferredHubs) {
+                Route route = builder.buildRoute(order, origin, remaining);
+                if (route != null && route.getQuantity() > 0) {
+                    plan.addRoute(route);
+                    remaining -= route.getQuantity();
+                    built = true;
+                    break;
+                }
+            }
+            if (!built) {
+                stagnation++;
+                if (stagnation > preferredHubs.size()) {
+                    throw new IllegalStateException("No feasible route for remaining quantity of order " + order.getId());
+                }
+            } else {
+                stagnation = 0;
+            }
+        }
+        plan.setSlack(determinePlanSlack(world, order, plan));
+        if (plan.getSlack() == null || plan.getSlack().isNegative()) {
+            throw new IllegalStateException("Plan violates SLA for order " + order.getId());
+        }
+        return plan;
+    }
+
+    private static Set<String> selectOrderIds(List<Order> orders, int count, Random rnd) {
+        List<String> ids = new ArrayList<>();
+        for (Order order : orders) {
+            ids.add(order.getId());
+        }
+        Collections.shuffle(ids, rnd);
+        if (count >= ids.size()) {
+            return new HashSet<>(ids);
+        }
+        return new HashSet<>(ids.subList(0, count));
+    }
+
+    private static Order findOrder(List<Order> orders, String id) {
+        for (Order order : orders) {
+            if (order.getId().equals(id)) return order;
+        }
+        return null;
+    }
+
+    private static OrderPlan tryAdoptPlan(World world,
+                                          Order order,
+                                          OrderPlan source,
+                                          FlightSchedule flightSchedule,
+                                          AirportSchedule airportSchedule) {
+        if (source == null || source.getRoutes().isEmpty()) {
+            return null;
+        }
+        Airports airports = world.getAirports();
+        List<Route> adoptedRoutes = new ArrayList<>();
+        List<Runnable> rollbacks = new ArrayList<>();
+        try {
+            for (Route route : source.getRoutes()) {
+                Route clonedRoute = new Route(route.getQuantity());
+                List<RouteSegment> segmentCopies = new ArrayList<>();
+                for (RouteSegment segment : route.getSegments()) {
+                    Flight flight = segment.getFlight();
+                    LocalDate date = segment.getDate();
+                    int qty = segment.getRouteQuantity();
+                    if (flight == null || date == null || qty <= 0) {
+                        throw new IllegalStateException("Invalid segment to adopt");
+                    }
+                    if (!flightSchedule.tryReserve(flight, date, qty)) {
+                        throw new IllegalStateException("Unable to reserve flight " + flight.getId());
+                    }
+                    rollbacks.add(() -> {
+                        try {
+                            flightSchedule.release(flight, date, qty);
+                        } catch (Exception ignored) {}
+                    });
+
+                    Airport destinationAirport = airports.get(flight.getDestinationCode());
+                    if (destinationAirport == null) {
+                        throw new IllegalStateException("Unknown airport " + flight.getDestinationCode());
+                    }
+                    LocalDateTime arrivalLocal = LocalDateTime.ofInstant(flight.getArrivalInstant(date), destinationAirport.getZoneOffset());
+                    LocalDateTime departureLocal = arrivalLocal.plus(segment.isFinalLeg() ? Config.WAREHOUSE_DWELL : Config.TRANSFER_BUFFER);
+                    if (!airportSchedule.tryReserveTransit(destinationAirport.code, arrivalLocal, departureLocal, qty)) {
+                        throw new IllegalStateException("Unable to reserve airport transit for " + destinationAirport.code);
+                    }
+                    rollbacks.add(() -> {
+                        try {
+                            airportSchedule.releaseTransit(destinationAirport.code, arrivalLocal, departureLocal, qty);
+                        } catch (Exception ignored) {}
+                    });
+
+                    RouteSegment segCopy = new RouteSegment();
+                    segCopy.setFlight(flight);
+                    segCopy.setDate(date);
+                    segCopy.setRouteQuantity(qty);
+                    segCopy.setFinalLeg(segment.isFinalLeg());
+                    segCopy.setSlack(segment.getSlack());
+                    segCopy.setDeparted(segment.isDeparted());
+                    segCopy.setArrived(segment.isArrived());
+                    segCopy.setReceivedByNext(segment.isReceivedByNext());
+                    segmentCopies.add(segCopy);
+                }
+                clonedRoute.setSegments(segmentCopies);
+                clonedRoute.setSlack(route.getSlack());
+                adoptedRoutes.add(clonedRoute);
+            }
+
+            OrderPlan adopted = new OrderPlan(order.getId());
+            adopted.setRoutes(adoptedRoutes);
+            adopted.setSlack(determinePlanSlack(world, order, adopted));
+            return adopted.getSlack() == null || adopted.getSlack().isNegative() ? null : adopted;
+        } catch (Exception ex) {
+            Collections.reverse(rollbacks);
+            for (Runnable r : rollbacks) {
+                r.run();
+            }
+            return null;
+        }
+    }
+
+    private static void releasePlan(World world,
+                                    OrderPlan plan,
+                                    FlightSchedule flightSchedule,
+                                    AirportSchedule airportSchedule) {
+        if (plan == null) return;
+        Airports airports = world.getAirports();
+        for (Route route : plan.getRoutes()) {
+            for (RouteSegment segment : route.getSegments()) {
+                Flight flight = segment.getFlight();
+                LocalDate date = segment.getDate();
+                int qty = segment.getRouteQuantity();
+                if (flight == null || date == null || qty <= 0) {
+                    continue;
+                }
+                try {
+                    flightSchedule.release(flight, date, qty);
+                } catch (IllegalArgumentException ignored) {
+                    // Si no se puede liberar, continuamos para evitar romper el flujo
+                }
+                Airport destinationAirport = airports.get(flight.getDestinationCode());
+                if (destinationAirport != null) {
+                    LocalDateTime arrivalLocal = LocalDateTime.ofInstant(flight.getArrivalInstant(date), destinationAirport.getZoneOffset());
+                    LocalDateTime departureLocal = arrivalLocal.plus(segment.isFinalLeg() ? Config.WAREHOUSE_DWELL : Config.TRANSFER_BUFFER);
+                    try {
+                        airportSchedule.releaseTransit(destinationAirport.code, arrivalLocal, departureLocal, qty);
+                    } catch (IllegalArgumentException ignored) {
+                        // ya liberado o no reservado
+                    }
+                }
+            }
+        }
+    }
+
+    private static OrderPlan copyPlan(OrderPlan original) {
+        if (original == null) return null;
+        OrderPlan copy = new OrderPlan(original.getOrderId());
+        copy.setSlack(original.getSlack());
+        List<Route> routeCopies = new ArrayList<>();
+        for (Route route : original.getRoutes()) {
+            Route routeCopy = new Route(route.getQuantity());
+            routeCopy.setSlack(route.getSlack());
+            List<RouteSegment> segmentCopies = new ArrayList<>();
+            for (RouteSegment segment : route.getSegments()) {
+                RouteSegment segCopy = new RouteSegment();
+                segCopy.setFlight(segment.getFlight());
+                segCopy.setDate(segment.getDate());
+                segCopy.setRouteQuantity(segment.getRouteQuantity());
+                segCopy.setFinalLeg(segment.isFinalLeg());
+                segCopy.setSlack(segment.getSlack());
+                segCopy.setDeparted(segment.isDeparted());
+                segCopy.setArrived(segment.isArrived());
+                segCopy.setReceivedByNext(segment.isReceivedByNext());
+                segmentCopies.add(segCopy);
+            }
+            routeCopy.setSegments(segmentCopies);
+            routeCopies.add(routeCopy);
+        }
+        copy.setRoutes(routeCopies);
+        return copy;
     }
 
     private static List<OrderPlan> deepCopyPlans(List<OrderPlan> originals) {

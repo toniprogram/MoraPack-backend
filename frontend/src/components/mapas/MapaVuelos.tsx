@@ -1,14 +1,19 @@
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap, Tooltip } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap, Tooltip, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import type { LatLngExpression } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import planeIconUrl from '/images/plane-line.svg?url';
 import type { Airport } from '../../types/airport';
+
+import type { ActiveAirportTick } from '../../types/simulation';
+import { OrdersList, type OrderLoadView } from '../simulacion/OrdersList';
 import type { SegmentoVuelo, VueloEnMovimiento } from '../../hooks/useOperacion';
 import { Plane, Box, Building } from 'lucide-react';
 
 // Iconos Default Leaflet
-delete (L.Icon.Default.prototype as any)._getIconUrl;
+const iconProto = L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown };
+delete iconProto._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
   iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
@@ -19,19 +24,19 @@ L.Icon.Default.mergeOptions({
 const defaultAirportIcon = new L.Icon({
   iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-  iconSize: [15, 25],
-  iconAnchor: [7, 25],
-  popupAnchor: [1, -20],
-  shadowSize: [25, 25]
+  iconSize: [12, 16],
+  iconAnchor: [6, 15],
+  popupAnchor: [1, -18],
+  shadowSize: [20, 20]
 });
 
 const hubIcon = new L.Icon({
   iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-violet.png',
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  shadowSize: [41, 41]
+  iconSize: [12, 16],
+  iconAnchor: [6, 15],
+  popupAnchor: [1, -18],
+  shadowSize: [20, 20]
 });
 
 function MapResizer({ isLoading }: { isLoading: boolean }) {
@@ -52,6 +57,13 @@ function MapResizer({ isLoading }: { isLoading: boolean }) {
   return null;
 }
 
+function MapClickReset({ onClear }: { onClear?: () => void }) {
+  useMapEvents({
+    click: () => onClear?.(),
+  });
+  return null;
+}
+
 const isMainHub = (code: string) => {
   const c = code ? code.toUpperCase() : '';
   return ['SPIM', 'LIM', 'UBBB', 'GYD', 'EBCI', 'BRU', 'CRL'].includes(c);
@@ -65,48 +77,171 @@ const getHubColor = (originCode: string) => {
   return { hex: '#a6adbb', twClass: 'text-base-content' };
 };
 
-const PLANE_SIZE = 32;
-const PLANE_CENTER = 16;
+const PLANE_SIZE = 20; // tamaño visual del avión (reducido)
+const PLANE_HITBOX = 40; // área clickeable (no visible) más grande
+const PLANE_CENTER = PLANE_HITBOX / 2;
+
+const toRad = (deg: number) => (deg * Math.PI) / 180;
+const toDeg = (rad: number) => (rad * 180) / Math.PI;
+
+const haversine = (a: [number, number], b: [number, number]) => {
+  const R = 6371e3; // metros
+  const lat1 = toRad(a[0]);
+  const lat2 = toRad(b[0]);
+  const dLat = toRad(b[0] - a[0]);
+  const dLon = toRad(b[1] - a[1]);
+  const sinLat = Math.sin(dLat / 2);
+  const sinLon = Math.sin(dLon / 2);
+  const h = sinLat * sinLat + Math.cos(lat1) * Math.cos(lat2) * sinLon * sinLon;
+  const c = 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+  return R * c;
+};
+
+const bearingBetween = (from: [number, number], to: [number, number]) => {
+  const lat1 = toRad(from[0]);
+  const lat2 = toRad(to[0]);
+  const dLon = toRad(to[1] - from[1]);
+  const y = Math.sin(dLon) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+  const brng = Math.atan2(y, x);
+  return (toDeg(brng) + 360) % 360;
+};
+
+// Devuelve una lista de puntos siguiendo el arco de gran círculo entre dos coordenadas [lat, lon]
+const greatCirclePath = (from: [number, number], to: [number, number], steps = 64): [number, number][] => {
+  const [lat1, lon1] = from.map(toRad);
+  const [lat2, lon2] = to.map(toRad);
+
+  const delta = 2 * Math.asin(Math.sqrt(
+    Math.sin((lat2 - lat1) / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin((lon2 - lon1) / 2) ** 2
+  ));
+
+  if (!Number.isFinite(delta) || delta === 0) {
+    return [from, to];
+  }
+
+  const path: [number, number][] = [];
+  for (let i = 0; i <= steps; i++) {
+    const f = i / steps;
+    const A = Math.sin((1 - f) * delta) / Math.sin(delta);
+    const B = Math.sin(f * delta) / Math.sin(delta);
+    const x = A * Math.cos(lat1) * Math.cos(lon1) + B * Math.cos(lat2) * Math.cos(lon2);
+    const y = A * Math.cos(lat1) * Math.sin(lon1) + B * Math.cos(lat2) * Math.sin(lon2);
+    const z = A * Math.sin(lat1) + B * Math.sin(lat2);
+    const lat = Math.atan2(z, Math.sqrt(x * x + y * y));
+    const lon = Math.atan2(y, x);
+    path.push([toDeg(lat), toDeg(lon)]);
+  }
+  return path;
+};
+// Cacheamos rutas por origen-destino para no recalcular en cada render
+const pathCache = new Map<string, [number, number][]>();
+const getCachedPath = (from: [number, number], to: [number, number], steps = 64) => {
+  const key = `${from[0]},${from[1]}|${to[0]},${to[1]}|${steps}`;
+  const cached = pathCache.get(key);
+  if (cached) return cached;
+  const path = greatCirclePath(from, to, steps);
+  pathCache.set(key, path);
+  return path;
+};
+
+// Devuelve posición y rumbo aproximados sobre el arco, según porcentaje de progreso (0-100)
+const positionAlongPath = (path: [number, number][], progress: number) => {
+  if (!path.length) {
+    return { coord: [0, 0] as [number, number], bearing: 0 };
+  }
+  if (path.length === 1) {
+    return { coord: path[0], bearing: 0 };
+  }
+  const target = Math.max(0, Math.min(100, progress)) / 100;
+  const segLengths: number[] = [];
+  let total = 0;
+  for (let i = 0; i < path.length - 1; i++) {
+    const len = haversine(path[i], path[i + 1]);
+    segLengths.push(len);
+    total += len;
+  }
+  let dist = total * target;
+  for (let i = 0; i < segLengths.length; i++) {
+    if (dist <= segLengths[i]) {
+      const f = segLengths[i] === 0 ? 0 : dist / segLengths[i];
+      const p1 = path[i];
+      const p2 = path[i + 1];
+      const lat = p1[0] + (p2[0] - p1[0]) * f;
+      const lon = p1[1] + (p2[1] - p1[1]) * f;
+      return { coord: [lat, lon] as [number, number], bearing: bearingBetween(p1, p2) };
+    }
+    dist -= segLengths[i];
+  }
+  const last = path[path.length - 1];
+  const prev = path[path.length - 2];
+  return { coord: last, bearing: bearingBetween(prev, last) };
+};
+
+// Devuelve la porción restante del camino a partir del progreso (0-100).
+const getRemainingPath = (path: [number, number][], progress: number): [number, number][] => {
+  if (!path || path.length === 0) return [];
+  if (path.length === 1) return path;
+  const target = Math.max(0, Math.min(100, progress)) / 100;
+  const segLengths: number[] = [];
+  let total = 0;
+  for (let i = 0; i < path.length - 1; i++) {
+    const len = haversine(path[i], path[i + 1]);
+    segLengths.push(len);
+    total += len;
+  }
+  if (total === 0) return path;
+  let dist = total * target;
+  for (let i = 0; i < segLengths.length; i++) {
+    if (dist <= segLengths[i]) {
+      const f = segLengths[i] === 0 ? 0 : dist / segLengths[i];
+      const p1 = path[i];
+      const p2 = path[i + 1];
+      const lat = p1[0] + (p2[0] - p1[0]) * f;
+      const lon = p1[1] + (p2[1] - p1[1]) * f;
+      const current: [number, number] = [lat, lon];
+      return [current, ...path.slice(i + 1)];
+    }
+    dist -= segLengths[i];
+  }
+  // Si el progreso es 100% o más, no queda camino
+  return [];
+};
 
 const getPlaneIcon = (originCode: string, rotation: number) => {
   const { twClass } = getHubColor(originCode);
-
   const html = `
     <div style="
-      width: ${PLANE_SIZE}px;
-      height: ${PLANE_SIZE}px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transform: rotate(${rotation}deg);
-      transform-origin: center center;
-      transition: transform 150ms linear;
-      will-change: transform;
+      width: ${PLANE_HITBOX}px;
+      height: ${PLANE_HITBOX}px;
+      position: relative;
+      cursor: pointer;
     ">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="${twClass} fill-current drop-shadow-xl" width="${PLANE_SIZE}" height="${PLANE_SIZE}" style="display: block; filter: drop-shadow(0px 2px 2px rgba(0,0,0,0.5));">
-        <path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/>
-      </svg>
+      <div style="
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%) rotate(${rotation}deg);
+        transform-origin: center center;
+        transition: transform 150ms linear;
+        will-change: transform;
+        width: ${PLANE_SIZE}px;
+        height: ${PLANE_SIZE}px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      ">
+        <img src="${planeIconUrl}" alt="plane" class="${twClass}" width="${PLANE_SIZE}" height="${PLANE_SIZE}" style="display: block; filter: drop-shadow(0px 2px 2px rgba(0,0,0,0.5)); pointer-events: none;" />
+      </div>
     </div>
   `;
-
   return L.divIcon({
-    html: html,
+    html,
     className: 'bg-transparent border-none',
-    iconSize: [PLANE_SIZE, PLANE_SIZE],
+    iconSize: [PLANE_HITBOX, PLANE_HITBOX],
     iconAnchor: [PLANE_CENTER, PLANE_CENTER],
   });
-};
-
-const calculateBearing = (fromLat: number, fromLon: number, toLat: number, toLon: number) => {
-  const fromLatRad = (fromLat * Math.PI) / 180;
-  const toLatRad = (toLat * Math.PI) / 180;
-  const deltaLonRad = ((toLon - fromLon) * Math.PI) / 180;
-
-  const y = Math.sin(deltaLonRad) * Math.cos(toLatRad);
-  const x = Math.cos(fromLatRad) * Math.sin(toLatRad) - Math.sin(fromLatRad) * Math.cos(toLatRad) * Math.cos(deltaLonRad);
-
-  const rawBearing = (Math.atan2(y, x) * 180) / Math.PI;
-  return Number.isNaN(rawBearing) ? 0 : (rawBearing + 360) % 360;
 };
 
 const formatDateTime = (isoDate: string) => {
@@ -128,10 +263,29 @@ interface MapaVuelosProps {
   isLoading: boolean;
   vuelosEnMovimiento: VueloEnMovimiento[];
   filtroHubActivo: string;
-  airportStocks?: Record<string, number>;
+  activeAirports?: ActiveAirportTick[];
+  onSelectOrders?: (orderIds: string[] | null) => void;
+  selectedFlightId?: string | null;
+  onSelectFlight?: (flightId: string | null) => void;
+  selectedOrders?: string[] | null;
+  selectedAirportIds?: string[] | null;
+  onSelectAirport?: (airportId: string | null) => void;
 }
 
-export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMovimiento, filtroHubActivo, airportStocks = {} }: MapaVuelosProps) {
+export function MapaVuelos({
+  activeSegments,
+  aeropuertos,
+  isLoading,
+  vuelosEnMovimiento,
+  filtroHubActivo,
+  activeAirports = [],
+  onSelectOrders,
+  selectedFlightId,
+  onSelectFlight,
+  selectedOrders,
+  selectedAirportIds,
+  onSelectAirport,
+}: MapaVuelosProps) {
   const initialPosition: LatLngExpression = [20, 0];
   const [mapTheme, setMapTheme] = useState<'light' | 'dark'>('dark');
 
@@ -150,11 +304,39 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
     return () => observer.disconnect();
   }, []);
 
-  const coordsAeropuertos = new Map<string, LatLngExpression>(
+  const coordsAeropuertos = new Map<string, [number, number]>(
     aeropuertos
       .filter((a) => typeof a.latitude === 'number' && typeof a.longitude === 'number')
       .map((a) => [a.id, [a.latitude, a.longitude]])
   );
+  const pathsPorSegmento = useRef(new Map<string, [number, number][]>());
+  const segmentsMap = useMemo(() => {
+    const m = new Map<string, SegmentoVuelo>();
+    activeSegments.forEach(s => m.set(s.id, s));
+    return m;
+  }, [activeSegments]);
+
+  const airportHighlights = useMemo(() => {
+    const set = new Set<string>();
+    if (selectedAirportIds && selectedAirportIds.length > 0) {
+      selectedAirportIds.forEach(a => a && set.add(a));
+      return set;
+    }
+    if (selectedOrders && selectedOrders.length > 0) {
+      activeAirports.forEach(a => {
+        const has = a.orderLoads?.some(ol => selectedOrders.includes(ol.orderId));
+        if (has) set.add(a.airportCode);
+      });
+      return set;
+    }
+    if (selectedFlightId) {
+      const seg = segmentsMap.get(selectedFlightId);
+      if (seg?.origin) set.add(seg.origin);
+      if (seg?.destination) set.add(seg.destination);
+      return set;
+    }
+    return set;
+  }, [selectedAirportIds, selectedOrders, selectedFlightId, activeAirports, segmentsMap]);
 
   return (
     <MapContainer
@@ -164,6 +346,7 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
       className="w-full h-full z-0"
       style={{ backgroundColor: mapTheme === 'dark' ? '#1f2937' : '#e5e7eb' }}
     >
+      <MapClickReset onClear={() => { onSelectOrders?.(null); onSelectFlight?.(null); onSelectAirport?.(null); }} />
       {mapTheme === 'dark' ? (
         <TileLayer
           key="dark"
@@ -184,27 +367,33 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
 
       {/* LEYENDA */}
       <div className="leaflet-bottom leaflet-left m-2 z-[1000]">
-        <div className="card compact bg-base-100/90 shadow-xl border border-base-content/10 text-[10px] p-2 backdrop-blur-sm w-32">
-            <h4 className="font-bold mb-1 text-base-content uppercase tracking-wider border-b border-base-content/10 pb-1">Leyenda</h4>
-            <ul className="space-y-1 font-semibold">
-            <li className="flex items-center gap-2 text-success">
-                <span className="w-2 h-2 rounded-full bg-current"></span> Lima (SPIM)
+        <div className="card compact bg-base-100/90 shadow-xl border border-base-content/10 text-[10px] p-2 backdrop-blur-sm w-36">
+          <h4 className="font-bold mb-1 text-base-content uppercase tracking-wider border-b border-base-content/10 pb-1">
+            Leyenda
+          </h4>
+          <ul className="space-y-2 font-semibold">
+            <li className="flex items-center gap-2">
+              <span className="w-3 h-3 rounded-full bg-base-content/80 inline-block"></span>
+              <span>Aeropuerto</span>
             </li>
-            <li className="flex items-center gap-2 text-error">
-                <span className="w-2 h-2 rounded-full bg-current"></span> Bruselas (EBCI)
+            <li className="flex items-center gap-2">
+              <span className="h-[2px] w-3 border-t border-dashed border-info"></span>
+              <span>Vuelo en progreso</span>
             </li>
-            <li className="flex items-center gap-2 text-info">
-                <span className="w-2 h-2 rounded-full bg-current"></span> Baku (UBBB)
+            <li className="flex items-center gap-2">
+              <Plane size={14} className="text-base-content" />
+              <span>Avión</span>
             </li>
-            </ul>
+          </ul>
         </div>
       </div>
 
       {/* AEROPUERTOS */}
       {aeropuertos.slice(0, 50).map(aeropuerto => {
         const esSede = isMainHub(aeropuerto.id || aeropuerto.code || '');
-        const stockActual = airportStocks[aeropuerto.id || aeropuerto.code || ''] || 0;
-        const capacidadMax = aeropuerto.storageCapacity || 3000; //AHORA ESTA HARDCODEADO
+        const live = activeAirports.find(a => a.airportCode === (aeropuerto.id || aeropuerto.code));
+        const stockActual = live?.currentLoad ?? 0;
+        const capacidadMax = live?.maxThroughputPerHour ?? aeropuerto.storageCapacity ?? 0;
         const stockPct = Math.min(100, Math.round((stockActual / capacidadMax) * 100));
 
         return (
@@ -212,8 +401,20 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
             key={aeropuerto.id}
             position={[aeropuerto.latitude, aeropuerto.longitude]}
             icon={esSede ? hubIcon : defaultAirportIcon}
-            opacity={!filtroHubActivo || filtroHubActivo === aeropuerto.id ? 1.0 : 0.5}
+            opacity={
+              (!filtroHubActivo || filtroHubActivo === aeropuerto.id)
+                ? (airportHighlights.size > 0 && !airportHighlights.has(aeropuerto.id || aeropuerto.code || '') ? 0.2 : 1.0)
+                : 0.5
+            }
             zIndexOffset={esSede ? 1000 : 0}
+            eventHandlers={{
+              click: () => {
+                const code = aeropuerto.id || aeropuerto.code || null;
+                onSelectAirport?.(code);
+                const loads = live?.orderLoads?.map(ol => ol.orderId) ?? [];
+                if (loads.length) onSelectOrders?.(loads);
+              }
+            }}
           >
             {esSede && (
               <Tooltip
@@ -236,7 +437,7 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
                         <div className="text-[10px] opacity-60 truncate w-36">{aeropuerto.name}</div>
                     </div>
                 </div>
-                <div className="p-3">
+                <div className="p-3 space-y-2">
                     <div className="flex justify-between mb-1 text-[10px] font-semibold uppercase opacity-70">
                         <span>Almacén</span>
                         <span>{stockActual} / {capacidadMax}</span>
@@ -247,6 +448,17 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
                         max={capacidadMax}
                     ></progress>
                     <div className="text-right mt-1 text-[10px] font-mono opacity-50">{stockPct}% Ocupado</div>
+                    <div className="border-t border-base-300 pt-2">
+                      <div className="text-[10px] font-semibold uppercase opacity-70 mb-1">Pedidos en almacén</div>
+                      <OrdersList
+                        items={(live?.orderLoads ?? []).map(ol => ({ orderId: ol.orderId, cantidad: ol.quantity }))}
+                        selectedOrders={selectedOrders}
+                        onSelectOrder={(oid) => {
+                          onSelectOrders?.([oid]);
+                          onSelectAirport?.(aeropuerto.id || aeropuerto.code || null);
+                        }}
+                      />
+                    </div>
                 </div>
               </div>
             </Popup>
@@ -261,42 +473,95 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
         if (!origenCoords || !destinoCoords) return null;
 
         const { hex: colorHex } = getHubColor(segmento.origin);
-        const opacity = (filtroHubActivo && segmento.origin !== filtroHubActivo) ? 0.1 : 0.4;
+        const hasOrderMatch = selectedOrders && selectedOrders.length > 0
+          ? (segmento.orderLoads?.some(ol => selectedOrders.includes(ol.orderId)) ||
+              segmento.orderIds?.some(id => selectedOrders.includes(id)))
+          : true;
+        const hasAirportMatch = selectedAirportIds && selectedAirportIds.length > 0
+          ? selectedAirportIds.includes(segmento.origin) || selectedAirportIds.includes(segmento.destination)
+          : true;
+        const isSelected = selectedFlightId === segmento.id;
+        const shouldHighlight = isSelected || (!selectedFlightId && hasOrderMatch && hasAirportMatch);
+        const opacityBase = (filtroHubActivo && segmento.origin !== filtroHubActivo) ? 0.1 : 0.4;
+        const dimmed = !shouldHighlight;
+        const opacity = dimmed ? 0.1 : opacityBase;
+          const path = getCachedPath([origenCoords[0], origenCoords[1]], [destinoCoords[0], destinoCoords[1]], 64);
+          pathsPorSegmento.current.set(segmento.id, path);
 
-        return (
-          <Polyline
-            key={segmento.id}
-            positions={[origenCoords, destinoCoords]}
-            pathOptions={{
-                color: colorHex,
-                weight: 1.5,
-                opacity: opacity,
-                dashArray: '4, 8'
-            }}
-          />
-        );
+          // Si existe un vuelo correspondiente en movimiento, recortamos la ruta
+          const vueloMatch = vuelosEnMovimiento?.find(v => v.id === segmento.id);
+          let polyPositions: [number, number][] = path;
+          if (vueloMatch) {
+            polyPositions = getRemainingPath(path, vueloMatch.progreso);
+          }
+
+          if (!polyPositions || polyPositions.length < 2) return null;
+
+          return (
+            <Polyline
+              key={segmento.id}
+              positions={polyPositions}
+              pathOptions={{
+                  color: colorHex,
+                  weight: 1.5,
+                  opacity: opacity,
+                  dashArray: '4, 8'
+              }}
+            />
+          );
       })}
 
       {/* AVIONES */}
       {vuelosEnMovimiento?.map((vuelo) => {
         const origenCoords = coordsAeropuertos.get(vuelo.origenCode);
         const destinoCoords = coordsAeropuertos.get(vuelo.destinoCode);
+        if (!origenCoords || !destinoCoords) return null;
 
-        if (!origenCoords || !destinoCoords || isNaN(vuelo.latActual)) return null;
-
-        const [dLat, dLon] = destinoCoords as [number, number];
-        const bearing = calculateBearing(vuelo.latActual, vuelo.lonActual, dLat, dLon);
+        const path = pathsPorSegmento.current.get(vuelo.id) ??
+          getCachedPath([origenCoords[0], origenCoords[1]], [destinoCoords[0], destinoCoords[1]], 64);
+        const { coord, bearing } = positionAlongPath(path, vuelo.progreso);
+        const segMatch = activeSegments.find(s => s.id === vuelo.id);
+        const hasOrderMatch = selectedOrders && selectedOrders.length > 0
+          ? vuelo.pedidos.some(p => selectedOrders.includes(p.orderId)) ||
+            (segMatch?.orderLoads?.some(ol => selectedOrders.includes(ol.orderId)) ?? false)
+          : true;
+        const hasAirportMatch = selectedAirportIds && selectedAirportIds.length > 0
+          ? selectedAirportIds.includes(vuelo.origenCode) || selectedAirportIds.includes(vuelo.destinoCode)
+          : true;
+        const isSelected = selectedFlightId === vuelo.id;
+        const shouldHighlight = isSelected || (!selectedFlightId && hasOrderMatch && hasAirportMatch);
+        const dimmed = !shouldHighlight;
 
         const capacityPct = vuelo.capacidadTotal > 0
             ? Math.round((vuelo.capacidadUsada / vuelo.capacidadTotal) * 100)
             : 0;
 
+        const pedidosTooltip: OrderLoadView[] = vuelo.pedidos.length > 0
+          ? vuelo.pedidos.map(p => ({ orderId: p.orderId, cantidad: p.cantidad }))
+          : (segMatch?.orderLoads?.map(load => ({
+              orderId: load.orderId,
+              cantidad: load.quantity
+            })) ?? (segMatch?.orderIds ?? []).map(id => ({ orderId: id, cantidad: 1 })));
+
         return (
           <Marker
             key={vuelo.id}
-            position={[vuelo.latActual, vuelo.lonActual]}
+            position={[coord[0], coord[1]]}
             icon={getPlaneIcon(vuelo.origenCode, bearing)}
             zIndexOffset={2000}
+            opacity={dimmed ? 0.35 : 1}
+            eventHandlers={{
+              click: () => {
+                const orders = vuelo.pedidos?.map(p => p.orderId) ?? [];
+                onSelectOrders?.(orders);
+                onSelectFlight?.(vuelo.id);
+              },
+              popupclose: () => {
+                onSelectOrders?.(null);
+                onSelectFlight?.(null);
+                onSelectAirport?.(null);
+              },
+            }}
           >
             <Popup className="p-0 overflow-hidden rounded-xl" maxWidth={320}>
               <div className="bg-base-100 text-base-content text-xs w-72 shadow-xl overflow-hidden">
@@ -340,32 +605,14 @@ export function MapaVuelos({ activeSegments, aeropuertos, isLoading, vuelosEnMov
                     ></progress>
                 </div>
 
-                {/* TABLA DE PEDIDOS */}
-                <div className="max-h-40 overflow-y-auto scrollbar-thin bg-base-100">
-                    <table className="table table-xs table-pin-rows w-full">
-                        <thead className="bg-base-200">
-                            <tr>
-                                <th className="pl-3">Pedido</th>
-                                <th className="text-right pr-3">Carga</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {vuelo.pedidos.map((p, idx) => (
-                                <tr key={idx} className="hover:bg-base-200/50">
-                                    <td className="pl-3">
-                                        <div className="font-mono font-bold text-xs text-primary">{p.orderId}</div>
-                                    </td>
-                                    <td className="text-right font-mono pr-3">
-                                        <div className="flex items-center justify-end gap-1">
-                                            <Box size={10} className="opacity-50"/>
-                                            {p.cantidad}
-                                        </div>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
+                <OrdersList
+                  items={pedidosTooltip}
+                  selectedOrders={selectedOrders}
+                  onSelectOrder={(oid) => {
+                    onSelectOrders?.([oid]);
+                    onSelectFlight?.(vuelo.id);
+                  }}
+                />
               </div>
             </Popup>
           </Marker>

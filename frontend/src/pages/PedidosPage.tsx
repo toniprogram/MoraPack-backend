@@ -181,9 +181,10 @@ export default function PedidosPage() {
       });
       setOrdenesArchivo(ordenesParseadas);
       window.alert(`Se cargaron ${ordenesParseadas.length} órdenes correctamente`);
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
       console.error("❌ Error al parsear archivo:", error);
-      window.alert(`❌ Error: ${error.message ?? error}`);
+      window.alert(`❌ Error: ${message}`);
       setOrdenesArchivo([]);
     } finally {
       if (fileInputRef.current) {

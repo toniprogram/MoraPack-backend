@@ -10,7 +10,7 @@ import {
   type Shipment,
 } from "../services/packageService";
 
-interface PackageFormData extends Omit<Shipment, "id"> {}
+type PackageFormData = Omit<Shipment, "id">;
 
 const shipmentsListKey = ["shipments", "list"] as const;
 const shipmentDetailKey = (id: number | string) =>

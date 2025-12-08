@@ -269,7 +269,7 @@ export default function FlightsPage() {
           <select
             className="select select-bordered select-sm"
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as any)}
+            onChange={(e) => setStatusFilter(e.target.value as EstadoVuelo | "todos")}
           >
             <option value="todos">Todos los estados</option>
             <option value="en vuelo">En vuelo</option>

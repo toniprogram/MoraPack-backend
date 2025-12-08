@@ -1,8 +1,10 @@
 package com.morapack.skyroute.simulation.controller;
 
+import com.morapack.skyroute.simulation.dto.PrewarmResponse;
 import com.morapack.skyroute.simulation.dto.SimulationStartRequest;
 import com.morapack.skyroute.simulation.dto.SimulationStartResponse;
 import com.morapack.skyroute.simulation.dto.SimulationStatus;
+import com.morapack.skyroute.simulation.live.SimulationFinalReport;
 import com.morapack.skyroute.simulation.service.SimulationService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -26,14 +28,42 @@ public class SimulationController {
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(response);
     }
 
+    @PostMapping("/prewarm")
+    public PrewarmResponse prewarm() {
+        return simulationService.prewarmWorld();
+    }
+
     @GetMapping("/{simulationId}/status")
     public SimulationStatus status(@PathVariable UUID simulationId) {
         return simulationService.getStatus(simulationId);
+    }
+
+    @PostMapping("/{simulationId}/pause")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void pause(@PathVariable UUID simulationId) {
+        simulationService.pause(simulationId);
+    }
+
+    @PostMapping("/{simulationId}/resume")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void resume(@PathVariable UUID simulationId) {
+        simulationService.resume(simulationId);
+    }
+
+    @PostMapping("/{simulationId}/touch")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void touch(@PathVariable UUID simulationId) {
+        simulationService.touch(simulationId);
     }
 
     @DeleteMapping("/{simulationId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void cancel(@PathVariable UUID simulationId) {
         simulationService.cancel(simulationId);
+    }
+
+    @GetMapping("/{simulationId}/report")
+    public SimulationFinalReport report(@PathVariable UUID simulationId) {
+        return simulationService.getReport(simulationId);
     }
 }

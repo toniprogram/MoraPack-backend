@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useOperacion, type OrderStatusDetail } from '../hooks/useOperacion';
 import { MapaVuelos } from '../components/mapas/MapaVuelos';
 import {
     Radio, Server, ArrowRight,
     Plane, Package, CheckCircle,
-    Activity, Calendar, RefreshCw, Box} from 'lucide-react';
+    Activity, Calendar, RefreshCw, Box
+} from 'lucide-react';
+import type { ActiveAirportTick } from '../types/simulation';
 
 export default function OperacionPage() {
     const {
@@ -20,6 +22,17 @@ export default function OperacionPage() {
         isReplanning,
         lastUpdated
     } = useOperacion();
+
+    const activeAirports: ActiveAirportTick[] = useMemo(() => {
+        return aeropuertos.map(a => {
+            const code = a.id || a.code || '';
+            return {
+                airportCode: code,
+                currentLoad: airportStocks[code] || 0,
+                maxThroughputPerHour: a.storageCapacity || 0
+            };
+        });
+    }, [aeropuertos, airportStocks]);
 
     // Estado local para el input de fecha
     const [manualDateStr, setManualDateStr] = useState('');
@@ -67,19 +80,19 @@ export default function OperacionPage() {
     };
 
     return (
-        <div className="flex -m-8 h-[calc(100vh-4rem)] w-[calc(100%+4rem)] bg-base-200 text-base-content overflow-hidden font-sans">
+        <div className="flex h-[calc(100vh-4rem)] w-full bg-base-200 text-base-content overflow-hidden font-sans">
 
             {/* SIDEBAR */}
-            <div className="w-[400px] flex flex-col border-r border-base-300 bg-base-200 shadow-2xl z-20 h-full shrink-0">
+            <div className="w-[400px] max-w-full flex flex-col bg-base-200 z-20 h-full shrink-0 overflow-y-auto">
 
                 {/* 1. HEADER & RELOJ */}
                 <div className="p-5 bg-base-100 border-b border-base-300 shadow-lg shrink-0">
                     <div className="flex justify-between items-center mb-4">
                         <h1 className="text-lg font-bold tracking-tight flex items-center gap-2">
-                            <Radio className={status === 'running' ? 'text-success animate-pulse' : 'text-base-content/50'} size={20} />
+                            <Radio className={status === 'running' ? 'text-success animate-pulse' : 'text-base-content/70'} size={20} />
                             OPERACION DÍA A DÍA
                         </h1>
-                        <span className="badge badge-outline text-xs font-mono opacity-50">UTC ZONE</span>
+                        <span className="badge badge-outline text-xs font-mono opacity-80">UTC ZONE</span>
                     </div>
 
                     {/* RELOJ */}
@@ -87,7 +100,7 @@ export default function OperacionPage() {
                         <div className="text-5xl font-black font-mono tracking-widest text-primary tabular-nums">
                             {formatTime(simClock)}
                         </div>
-                        <div className="text-sm text-base-content/70 font-medium mt-1 uppercase tracking-widest">
+                        <div className="text-sm text-base-content/80 font-medium mt-1 uppercase tracking-widest">
                             {simClock.toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'short', timeZone: 'UTC' })}
                         </div>
 
@@ -100,7 +113,7 @@ export default function OperacionPage() {
                                     value={getInputValue()}
                                     onChange={handleTimeChange}
                                 />
-                                <Calendar className="absolute right-2 top-1 text-base-content/60 pointer-events-none" size={14}/>
+                                <Calendar className="absolute right-2 top-1 text-base-content/80 pointer-events-none" size={14}/>
                             </div>
                             <button
                                 onClick={handleResetTime}
@@ -172,7 +185,7 @@ export default function OperacionPage() {
                         </div>
                     ) : (
                         orderStatusList.map((order) => (
-                            <OrderCardDetail key={order.orderId} order={order} formatTime={formatShortTime} formatDateTime={formatDateTime}/>
+                            <OrderCardDetail key={order.orderId} order={order} formatDateTime={formatDateTime}/>
                         ))
                     )}
                 </div>
@@ -194,12 +207,12 @@ export default function OperacionPage() {
             </div>
 
             {/* MAPA */}
-            <div className="flex-1 relative z-0 bg-base-200 h-full border-l border-base-300">
+            <div className="flex-1 relative z-0 bg-base-200 h-full">
                 <MapaVuelos
                     aeropuertos={aeropuertos}
                     activeSegments={activeSegments}
                     vuelosEnMovimiento={vuelosEnMovimiento}
-                    airportStocks={airportStocks}
+                    activeAirports={activeAirports}
                     isLoading={status === 'buffering'}
                     filtroHubActivo=""
                 />
@@ -217,7 +230,7 @@ export default function OperacionPage() {
     );
 }
 
-function OrderCardDetail({ order, formatDateTime }: { order: OrderStatusDetail, formatTime: (s: string) => string, formatDateTime: (s: string) => string }) {
+function OrderCardDetail({ order, formatDateTime }: { order: OrderStatusDetail, formatDateTime: (s: string) => string }) {
     const getStatusColor = (s: string, delayed: boolean) => {
         if (delayed) return 'border-l-4 border-l-red-500 bg-neutral-800';
         switch(s) {

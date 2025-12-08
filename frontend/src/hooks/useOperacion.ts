@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect, useCallback } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { planService } from '../services/planService';
@@ -15,6 +16,7 @@ export interface SegmentoVuelo {
     arrivalUtc: string;
     orderIds: string[];
     retrasado: boolean;
+    routeQuantity?: number;
 }
 
 export interface VueloEnMovimiento {
@@ -33,6 +35,8 @@ export interface VueloEnMovimiento {
     llegadaProgramada: string;
     capacidadTotal: number;
     capacidadUsada: number;
+    origen?: string;
+    destino?: string;
     pedidos: {
         orderId: string;
         cliente: string;
@@ -110,16 +114,16 @@ export const useOperacion = () => {
 
     const fetchRealTimePlan = useCallback(async () => {
         try {
-            const rawResponse: any = await planService.getCurrentPlan();
-            let parsedPlan: any = rawResponse;
+            const rawResponse: unknown = await planService.getCurrentPlan();
+            let parsedPlan: unknown = rawResponse;
 
             if (typeof rawResponse === 'string') {
                 try {
                     parsedPlan = JSON.parse(rawResponse);
-                } catch (e) {
+                } catch {
                     console.warn("⚠️ JSON roto, intentando reparar...");
                     try {
-                        const sanitized = rawResponse.replace(/,"plan":\{.*?(?=\}\]|\}\,)/g, '');
+                        const sanitized = (rawResponse as string).replace(/,"plan":\{.*?(?=}\]|},)/g, '');
                         parsedPlan = JSON.parse(sanitized);
                     } catch (e2) {
                         console.error("❌ Imposible reparar JSON:", e2);
@@ -127,11 +131,12 @@ export const useOperacion = () => {
                 }
             }
 
-            if (parsedPlan) {
+            if (parsedPlan && typeof parsedPlan === 'object') {
+                const planObj = parsedPlan as { generatedAt?: string; fitness?: number; orderPlans?: unknown };
                 const cleanPlan: CurrentPlanResponse = {
-                    generatedAt: parsedPlan.generatedAt,
-                    fitness: parsedPlan.fitness,
-                    orderPlans: Array.isArray(parsedPlan.orderPlans) ? parsedPlan.orderPlans : []
+                    generatedAt: planObj.generatedAt ?? new Date().toISOString(),
+                    fitness: planObj.fitness ?? 0,
+                    orderPlans: Array.isArray(planObj.orderPlans) ? planObj.orderPlans : []
                 };
                 setDayPlan(cleanPlan);
                 setLastUpdated(new Date());
@@ -195,14 +200,14 @@ export const useOperacion = () => {
         let countDelayed = 0;
         let countInTransit = 0;
 
-        orders.forEach((plan: any) => {
+        orders.forEach((plan: { routes?: any[]; slack?: unknown; slackMinutes?: number; orderId?: string; customerReference?: string; creationUtc?: string }) => {
             let orderStatus: OrderStatusDetail['status'] = 'WAITING';
             let currentFlightId = undefined;
             let nextAirport = undefined;
             let currentSegDep = undefined;
             let currentSegArr = undefined;
 
-            const quantity = (plan.routes || []).reduce((sum: number, r: any) => sum + (r.quantity || 0), 0);
+            const quantity = (plan.routes || []).reduce((sum: number, r: { quantity?: number }) => sum + (r.quantity || 0), 0);
 
             let slackVal = 10;
             if (typeof plan.slack === 'string') slackVal = 10;
@@ -213,7 +218,7 @@ export const useOperacion = () => {
 
             const routes = plan.routes || [];
 
-            const allSegments = routes.flatMap((r: any) => r.segments || []).map((s: any) => {
+            const allSegments = routes.flatMap((r: { segments?: any[]; quantity?: number }) => r.segments || []).map((s: any) => {
                 const fixDate = (d: string) => {
                     if (!d) return new Date().toISOString();
                     if (d.includes('T') && !d.endsWith('Z') && !d.includes('+') && !d.includes('-')) return d + 'Z';
@@ -285,16 +290,17 @@ export const useOperacion = () => {
                             if (!mapSegmentos.has(uniqueId)) {
                                 mapSegmentos.set(uniqueId, {
                                     id: uniqueId,
-                                    flightId: seg.flightId,
-                                    origin: seg.origin,
-                                    destination: seg.destination,
-                                    departureUtc: seg.departure,
-                                    arrivalUtc: seg.arrival,
-                                    orderIds: [plan.orderId],
-                                    retrasado: isDelayed
+                                    flightId: seg.flightId ?? 'FL-UNK',
+                                    origin: seg.origin ?? 'UNK',
+                                    destination: seg.destination ?? 'UNK',
+                                    departureUtc: seg.departure ?? '',
+                                    arrivalUtc: seg.arrival ?? '',
+                                    orderIds: [plan.orderId ?? 'UNK'],
+                                    retrasado: isDelayed,
+                                    routeQuantity: seg.routeQuantity ?? quantity
                                 });
                             } else {
-                                mapSegmentos.get(uniqueId)?.orderIds.push(plan.orderId);
+                                mapSegmentos.get(uniqueId)?.orderIds.push(plan.orderId ?? 'UNK');
                             }
 
                             const pct = ((currentMs - depMs) / (arrMs - depMs)) * 100;
@@ -302,21 +308,24 @@ export const useOperacion = () => {
                             if (!mapVuelos.has(uniqueId)) {
                                 mapVuelos.set(uniqueId, {
                                     id: uniqueId,
-                                    flightId: seg.flightId,
+                                    orderId: plan.orderId ?? 'UNK',
+                                    flightId: seg.flightId ?? 'FL-UNK',
                                     latActual: origin[0] + (dest[0] - origin[0]) * (pct / 100),
                                     lonActual: origin[1] + (dest[1] - origin[1]) * (pct / 100),
                                     progreso: pct,
                                     estadoVisual: isDelayed ? 'retrasado' : 'en curso',
-                                    origenCode: seg.origin,
-                                    destinoCode: seg.destination,
-                                    salidaProgramada: seg.departure,
-                                    llegadaProgramada: seg.arrival,
-                                    capacidadTotal: seg.capacity,
-                                    capacidadUsada: seg.routeQuantity,
+                                    origenCode: seg.origin ?? 'UNK',
+                                    destinoCode: seg.destination ?? 'UNK',
+                                    salidaProgramada: seg.departure ?? '',
+                                    llegadaProgramada: seg.arrival ?? '',
+                                    capacidadTotal: seg.capacity ?? 0,
+                                    capacidadUsada: seg.routeQuantity ?? 0,
                                     pedidos: [{
-                                        orderId: plan.orderId,
+                                        orderId: plan.orderId ?? 'UNK',
                                         cliente: plan.customerReference || "N/A",
                                         fechaCreacion: plan.creationUtc || "---",
+                                        cantidad: seg.routeQuantity ?? 0
+                                    }]
                                         cantidad: seg.routeQuantity
                                     }],
                                     orderId: ''
@@ -324,13 +333,13 @@ export const useOperacion = () => {
                             } else {
                                 const v = mapVuelos.get(uniqueId);
                                 if(v) {
-                                    if (!v.pedidos.some(p => p.orderId === plan.orderId)) {
-                                        v.capacidadUsada += seg.routeQuantity;
+                                    if (!v.pedidos.some(p => p.orderId === (plan.orderId ?? 'UNK'))) {
+                                        v.capacidadUsada += seg.routeQuantity ?? 0;
                                         v.pedidos.push({
-                                            orderId: plan.orderId,
+                                            orderId: plan.orderId ?? 'UNK',
                                             cliente: plan.customerReference || "N/A",
                                             fechaCreacion: plan.creationUtc || "---",
-                                            cantidad: seg.routeQuantity
+                                            cantidad: seg.routeQuantity ?? 0
                                         });
                                         if (isDelayed) v.estadoVisual = 'retrasado';
                                     }
@@ -358,18 +367,18 @@ export const useOperacion = () => {
             }
 
             processedOrders.push({
-                orderId: plan.orderId,
+                orderId: plan.orderId ?? 'UNK',
                 status: orderStatus,
                 currentFlightId: currentFlightId,
                 nextAirport: nextAirport,
-                finalDestination: allSegments[allSegments.length - 1].destination,
-                departureTime: allSegments[0].departure,
-                arrivalTime: allSegments[allSegments.length - 1].arrival,
-                currentSegDeparture: currentSegDep,
-                currentSegArrival: currentSegArr,
+                finalDestination: allSegments[allSegments.length - 1].destination ?? 'UNK',
+                departureTime: allSegments[0].departure ?? '',
+                arrivalTime: allSegments[allSegments.length - 1].arrival ?? '',
+                currentSegDeparture: currentSegDep ?? '',
+                currentSegArrival: currentSegArr ?? '',
                 progress: totalProgress,
                 isDelayed: isDelayed,
-                originAirport: allSegments[0].origin,
+                originAirport: allSegments[0].origin ?? 'UNK',
                 quantity: quantity
             });
         });

@@ -3,8 +3,21 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import { Client } from '@stomp/stompjs';
 import { aeropuertoService } from '../services/aeropuertoService';
 import { simulacionService } from '../services/simulacionService';
+import { API } from '../api/api';
 import type { Airport } from '../types/airport';
-import type { SimulationSnapshot, SimulationMessage, SimulationStartRequest, SimulationOrderPlan, SimulationRoute, SimulationSegment } from '../types/simulation';
+import type { Flight } from '../types/flight';
+import type {
+  SimulationSnapshot,
+  SimulationMessage,
+  SimulationStartRequest,
+  SimulationSegment,
+  SimulationTick,
+  ActiveSegmentTick,
+  ActiveAirportTick,
+  SimulationOrderPlan,
+  OrderPlansDiff
+} from '../types/simulation';
+import type { OrderStatusTick } from '../types/simulation';
 
 export interface VueloEnMovimiento {
   id: string;
@@ -14,8 +27,8 @@ export interface VueloEnMovimiento {
   lonActual: number;
   progreso: number;
   estadoVisual: 'en curso' | 'retrasado' | 'completado';
-  origen: string;
-  destino: string;
+  origen?: string;
+  destino?: string;
   destinoActual?: string;
   departureTime?: string;
   arrivalTime?: string;
@@ -43,18 +56,29 @@ export interface SegmentoVuelo {
   arrivalUtc: string;
   orderIds: string[];
   retrasado: boolean;
-  routeQuantity: number;
+  routeQuantity?: number;
+  capacityTotal?: number;
+  orderLoads?: { orderId: string; quantity: number }[];
 }
 
 // URL de WebSocket nativo
+const resolveWsUrl = () => {
+  const envWs = import.meta.env.VITE_WS_URL as string | undefined;
+  if (envWs) return envWs;
+  const apiBase = import.meta.env.VITE_API_URL as string | undefined;
+  const base = apiBase ?? 'http://localhost:8080/api';
+  const wsBase = base.replace(/^http/, 'ws').replace(/\/api\/?$/, '');
+  return `${wsBase}/ws`;
+};
+const BROKER_URL = resolveWsUrl();
  const BROKER_URL =
   import.meta.env.PROD
     ? 'ws://200.16.7.179/ws'  // producción
     : 'ws://localhost:8080/ws'; // desarrollo local
 const TOPIC_PREFIX = '/topic/simulations/';
 
-// 2000x (configuración solicitada)
-const DEFAULT_SPEED = 2000;
+// Velocidad base; se puede ajustar desde el panel
+const DEFAULT_SPEED = 500;
 
 export const useSimulacion = () => {
   const [simulationId, setSimulationId] = useState<string | null>(null);
@@ -63,98 +87,104 @@ export const useSimulacion = () => {
   const [finalSnapshot, setFinalSnapshot] = useState<SimulationSnapshot | null>(null);
   const [visibleSnapshot, setVisibleSnapshot] = useState<SimulationSnapshot | null>(null);
   const [hasSnapshots, setHasSnapshots] = useState(false);
-  const [status, setStatus] = useState<'idle' | 'running' | 'completed' | 'error'>('idle');
-  const [tiempoMovimiento, setTiempoMovimiento] = useState(0);
+  const [status, setStatus] = useState<'idle' | 'running' | 'completed' | 'error' | 'paused'>('idle');
   const [tiempoSimulado, setTiempoSimulado] = useState<Date | null>(null);
-  const [simBaseSimulado, setSimBaseSimulado] = useState<number | null>(null);
-  const [simBaseReal, setSimBaseReal] = useState<number | null>(null);
-  const [simSpeed, setSimSpeed] = useState(DEFAULT_SPEED);
-  const [timelineEndMs, setTimelineEndMs] = useState<number | null>(null);
-  const timelineStartRef = useRef<number | null>(null);
-  const firstSnapshotRealRef = useRef<number | null>(null);
-  const [segmentosVuelo, setSegmentosVuelo] = useState<Map<string, SegmentoVuelo>>(new Map());
+  const [engineSpeed, setEngineSpeed] = useState(DEFAULT_SPEED);  // del backend
+  const [renderSpeed, setRenderSpeed] = useState(1);              // solo visual
+  const [segmentosTick, setSegmentosTick] = useState<SegmentoVuelo[]>([]);
+  const [activeAirports, setActiveAirports] = useState<ActiveAirportTick[]>([]);
+  const [deliveredOrders, setDeliveredOrders] = useState(0);
+  const [inTransitOrders, setInTransitOrders] = useState(0);
+  const [orderStatuses, setOrderStatuses] = useState<OrderStatusTick[]>([]);
+  const [orderPlansLive, setOrderPlansLive] = useState<SimulationOrderPlan[]>([]);
   const [animPaused, setAnimPaused] = useState(false);
+  const firstSimTickMsRef = useRef<number | null>(null);
+  const heartbeatRef = useRef<NodeJS.Timeout | null>(null);
+  const [startRealMs, setStartRealMs] = useState<number | null>(null);
+  const [elapsedRealMs, setElapsedRealMs] = useState(0);
+  const engineSpeedRef = useRef(DEFAULT_SPEED);
+  const [tickBuffer, setTickBuffer] = useState<SimulationTick[]>([]);
+  const [tickPlaybackReady, setTickPlaybackReady] = useState(false);
+  const tickReadyRef = useRef(false);
+  const lastPlansSimTimeRef = useRef<string | null>(null);
+  const preprocNotifiedRef = useRef(false);
+  const prewarmStorageKey = 'sim_prewarm_token';
+  const [prewarmToken, setPrewarmToken] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(prewarmStorageKey);
+    } catch {
+      return null;
+    }
+  });
+  const prewarmRequested = useRef(false);
+  const [notificacion, setNotificacion] = useState<string | null>(null);
 
   const { data: aeropuertos = [], isLoading: isLoadingAeropuertos } = useQuery<Airport[]>({
     queryKey: ['aeropuertos'],
     queryFn: aeropuertoService.getAll,
   });
+  const { data: baseFlights = [] } = useQuery<Flight[]>({
+    queryKey: ['sim-base-flights'],
+    queryFn: async () => {
+      const res = await API.get<Flight[]>('/base/flights');
+      return res.data;
+    },
+    staleTime: 1000 * 60 * 5,
+  });
 
-  const parseUtcMillis = (value?: string | null) => {
-    if (!value) return null;
-    const iso = value.endsWith('Z') ? value : `${value}Z`;
-    const ms = Date.parse(iso);
-    return Number.isNaN(ms) ? null : ms;
-  };
-
-  const adjustSnapshotTimestamp = useCallback((snapshot: SimulationSnapshot | null) => {
-    if (!snapshot?.generatedAt) return snapshot;
-
-    const realMs = Date.parse(snapshot.generatedAt);
-    if (Number.isNaN(realMs)) return snapshot;
-
-    if (timelineStartRef.current === null) return snapshot;
-
-    if (firstSnapshotRealRef.current === null) {
-      firstSnapshotRealRef.current = realMs;
-    }
-    const baseReal = firstSnapshotRealRef.current ?? realMs;
-    const virtualMs = timelineStartRef.current + (realMs - baseReal);
-    const iso = new Date(virtualMs).toISOString();
-
-    if (iso === snapshot.generatedAt) return snapshot;
-
-    return { ...snapshot, generatedAt: iso };
-  }, []);
-
-  const mergeFlightSegments = useCallback((snapshot: SimulationSnapshot | null) => {
-    if (!snapshot?.orderPlans) return;
-    setSegmentosVuelo(prev => {
-      const next = new Map(prev);
-      snapshot.orderPlans.forEach((plan: SimulationOrderPlan) => {
-        plan.routes.forEach((ruta: SimulationRoute) => {
-          ruta.segments.forEach((segmento: SimulationSegment) => {
-            if (!segmento.departureUtc || !segmento.arrivalUtc) return;
-
-            // ID único por vuelo y hora
-            const id = `${segmento.flightId}-${segmento.departureUtc}`;
-
-            const existing = next.get(id);
-            const existingOrders = existing?.orderIds ?? [];
-            const orderIds = existingOrders.includes(plan.orderId)
-              ? existingOrders
-              : [...existingOrders, plan.orderId];
-
-            // Acumulamos la carga si es el mismo vuelo llevando varios pedidos
-            const currentQuantity = existing?.routeQuantity || 0;
-            const segmentoQty = segmento.quantity ?? 0;
-
-            next.set(id, {
-              id,
-              flightId: segmento.flightId,
-              origin: segmento.origin,
-              destination: segmento.destination,
-              departureUtc: segmento.departureUtc,
-              arrivalUtc: segmento.arrivalUtc,
-              orderIds,
-              retrasado: plan.slackMinutes <= 0,
-              routeQuantity: currentQuantity + segmentoQty
-            });
-          });
-        });
+  // Precalienta el mundo al entrar a la página de simulación
+  useEffect(() => {
+    if (prewarmRequested.current) return;
+    prewarmRequested.current = true;
+    simulacionService.prewarmWorld()
+      .then(token => {
+        setPrewarmToken(token);
+      })
+      .catch(err => {
+        console.warn('[SIM] No se pudo precalentar mundo:', err);
+        setPrewarmToken(null);
+        prewarmRequested.current = false;
       });
-      return next;
-    });
   }, []);
 
-  const snapshotConRutas = visibleSnapshot ?? finalSnapshot ?? latestProgress;
+  useEffect(() => {
+    try {
+      if (prewarmToken) {
+        localStorage.setItem(prewarmStorageKey, prewarmToken);
+      } else {
+        localStorage.removeItem(prewarmStorageKey);
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, [prewarmToken, prewarmStorageKey]);
+
+  const flightCapacities = useMemo(() => {
+    const map = new Map<string, number>();
+    baseFlights.forEach(flight => {
+      const fallback = flight as Partial<Flight> & { capacity?: number; capacidad?: number };
+      const cap = flight.dailyCapacity ?? fallback.capacity ?? fallback.capacidad ?? 0;
+      map.set(flight.id, cap);
+    });
+    return map;
+  }, [baseFlights]);
+
+  const snapshotConRutas = useMemo(
+    () => visibleSnapshot ?? finalSnapshot ?? latestProgress,
+    [visibleSnapshot, finalSnapshot, latestProgress]
+  );
+  useEffect(() => {
+    engineSpeedRef.current = engineSpeed;
+  }, [engineSpeed]);
+  const planSource: SimulationOrderPlan[] = useMemo(() => {
+    return orderPlansLive.length > 0
+      ? orderPlansLive
+      : (snapshotConRutas?.orderPlans ?? []);
+  }, [orderPlansLive, snapshotConRutas]);
 
   const segmentosPorOrden = useMemo(() => {
-    if (!snapshotConRutas?.orderPlans) {
-      return new Map<string, SimulationSegment[]>();
-    }
     const mapa = new Map<string, SimulationSegment[]>();
-    snapshotConRutas.orderPlans.forEach(plan => {
+    planSource.forEach(plan => {
       const segmentos = plan.routes?.flatMap(ruta => ruta.segments ?? []) ?? [];
       const ordenados = segmentos
         .filter(seg => seg.departureUtc && seg.arrivalUtc)
@@ -162,7 +192,7 @@ export const useSimulacion = () => {
       mapa.set(plan.orderId, ordenados);
     });
     return mapa;
-  }, [snapshotConRutas]);
+  }, [planSource]);
 
   const obtenerDestinoActualOrden = useCallback((orderId: string | undefined, currentMs: number) => {
     if (!orderId) return null;
@@ -191,7 +221,8 @@ export const useSimulacion = () => {
   // ===== WEBSOCKET CONNECTION =====
   useEffect(() => {
     if (!simulationId) return;
-
+    // Si nos conectamos a una simulación existente, asumimos que está en marcha
+    setStatus(prev => prev === 'idle' ? 'running' : prev);
     const client = new Client({
       brokerURL: BROKER_URL,
       reconnectDelay: 5000,
@@ -200,24 +231,68 @@ export const useSimulacion = () => {
         setStatus('running');
         client.subscribe(TOPIC_PREFIX + simulationId, (message) => {
           const simMessage: SimulationMessage = JSON.parse(message.body);
+          const tick: SimulationTick | null | undefined = simMessage.tick;
 
-          if (simMessage.snapshot) {
-            const adjusted = adjustSnapshotTimestamp(simMessage.snapshot);
-            if (adjusted) {
-              setLatestProgress(adjusted);
-              setVisibleSnapshot(adjusted);
-              mergeFlightSegments(adjusted);
-              setHasSnapshots(true);
-              const snapshotMs = Date.parse(adjusted.generatedAt);
-              if (!Number.isNaN(snapshotMs)) {
-                setSimBaseSimulado(prev => prev ?? (timelineStartRef.current ?? snapshotMs));
-                setSimBaseReal(prev => prev ?? Date.now());
+          if (tick?.simTime) {
+            console.info('[SIM] Recibiendo tick del backend (nueva ruta)');
+            setHasSnapshots(true); // liberamos overlay con ticks reales
+            const simMs = Date.parse(tick.simTime);
+            if (Number.isFinite(simMs)) {
+              if (firstSimTickMsRef.current === null) {
+                firstSimTickMsRef.current = simMs;
               }
+              if (typeof tick.realElapsedMs === 'number' && Number.isFinite(tick.realElapsedMs)) {
+                setElapsedRealMs(tick.realElapsedMs);
+                setStartRealMs(Date.now() - tick.realElapsedMs);
+              } else if (firstSimTickMsRef.current !== null && engineSpeedRef.current > 0) {
+                const elapsedMs = Math.max(0, (simMs - firstSimTickMsRef.current) / engineSpeedRef.current);
+                setElapsedRealMs(elapsedMs);
+                setStartRealMs(Date.now() - elapsedMs);
+              }
+            }
+            setTickBuffer(prev => {
+              const next = [...prev, tick].slice(-6);
+              if (!tickReadyRef.current && next.length >= 3) {
+                tickReadyRef.current = true;
+                setTickPlaybackReady(true);
+              }
+              return next;
+            });
+            if (typeof tick.speed === 'number' && Number.isFinite(tick.speed) && tick.speed > 0) {
+              setEngineSpeed(tick.speed);
+            }
+            const tickStatus = (tick.status || '').toLowerCase();
+            if (tickStatus === 'completed') {
+              setStatus('completed');
+              setNotificacion('Hora de fin alcanzada, despachando pendientes');
+            } else if (tickStatus === 'paused') {
+              setStatus('paused');
+              setAnimPaused(true);
+            } else if (tickStatus === 'collapsed') {
+              setStatus('running');
+              if (tick.collapseMessage) {
+                setNotificacion(tick.collapseMessage);
+              } else {
+                setNotificacion('Colapso logístico detectado; despachando pendientes');
+              }
+            } else {
+              setStatus('running');
             }
           }
 
-          if (simMessage.type === 'COMPLETED') {
+          if (simMessage.type === 'COMPLETED' && simMessage.snapshot) {
+            setFinalSnapshot(simMessage.snapshot);
+            setVisibleSnapshot(simMessage.snapshot);
+            setHasSnapshots(true);
             setStatus('completed');
+          } else if (simMessage.snapshot) {
+            // Snapshot de progreso (pre-proceso GA)
+            setLatestProgress(simMessage.snapshot);
+            const snap = simMessage.snapshot;
+            if (!preprocNotifiedRef.current && snap.processedOrders === snap.totalOrders) {
+              preprocNotifiedRef.current = true;
+              setNotificacion('Pedidos terminados de pre-procesar');
+            }
           } else if (simMessage.type === 'ERROR') {
             console.error("❌ Error en simulación:", simMessage.error);
             setStatus('error');
@@ -239,56 +314,97 @@ export const useSimulacion = () => {
       client.deactivate();
       setStompClient(null);
     };
-  }, [simulationId, adjustSnapshotTimestamp, mergeFlightSegments]);
+  }, [simulationId]);
 
-  // ===== INCREMENTO DE TIEMPO SIMULADO (ANIMACIÓN) =====
-  const shouldAnimate = !animPaused && (status === 'running' || status === 'completed');
-
+  // Heartbeat para evitar cancelación por inactividad en backend
   useEffect(() => {
-    if (!shouldAnimate || simBaseReal === null || simBaseSimulado === null) return;
+    if (!simulationId) return;
+    heartbeatRef.current = setInterval(() => {
+      simulacionService.touchSimulation(simulationId).catch(() => {});
+    }, 30_000);
+    return () => {
+      if (heartbeatRef.current) {
+        clearInterval(heartbeatRef.current);
+        heartbeatRef.current = null;
+      }
+    };
+  }, [simulationId]);
 
-    const interval = setInterval(() => {
-      setTiempoMovimiento(Date.now() - simBaseReal);
-    }, 20);
-
-    return () => clearInterval(interval);
-  }, [shouldAnimate, simBaseReal, simBaseSimulado]);
-
-  // ===== CÁLCULO DE TIEMPO SIMULADO =====
+  // Usar buffer de ticks para actualizar el frame actual/objetivo
   useEffect(() => {
-    if (simBaseSimulado === null) {
-      setTiempoSimulado(null);
-      return;
+    if (!tickPlaybackReady) return;
+    if (tickBuffer.length < 2) return;
+    if (animPaused) return;
+    const renderTick = tickBuffer[0];
+    const nextTick = tickBuffer[1] ?? renderTick;
+    if (!renderTick?.simTime) return;
+    const currentMs = Date.parse(renderTick.simTime);
+    if (Number.isNaN(currentMs)) return;
+    const nextMs = nextTick.simTime ? Date.parse(nextTick.simTime) : currentMs + 1000;
+    const deltaMs = Math.max(1, nextMs - currentMs); // evita división por cero
+    const interpSpeed = deltaMs / 1000;
+
+    setRenderSpeed(interpSpeed);      // ✅ SOLO visual
+    setTiempoSimulado(new Date(currentMs)); // ✅ EL TICK YA DEFINE EL TIEMPO
+    if (renderTick.activeSegments) {
+      const mapped: SegmentoVuelo[] = renderTick.activeSegments.map((seg: ActiveSegmentTick) => ({
+        id: seg.id,
+        flightId: seg.flightId,
+        origin: seg.origin,
+        destination: seg.destination,
+        departureUtc: seg.departureUtc,
+        arrivalUtc: seg.arrivalUtc,
+        orderIds: seg.orderIds ?? [],
+        retrasado: false,
+        routeQuantity: seg.capacityUsed,
+        capacityTotal: seg.capacityTotal,
+        orderLoads: seg.orderLoads ?? seg.orderIds?.map(id => ({ orderId: id, quantity: seg.capacityUsed })) ?? [],
+      }));
+      setSegmentosTick(mapped);
     }
-    const msSimuladosPasados = tiempoMovimiento * simSpeed;
-    let targetMs = simBaseSimulado + msSimuladosPasados;
-    if (timelineEndMs !== null) {
-      targetMs = Math.min(targetMs, timelineEndMs);
+    if (renderTick.activeAirports) {
+      setActiveAirports(renderTick.activeAirports);
     }
-    setTiempoSimulado(new Date(targetMs));
-  }, [simBaseSimulado, tiempoMovimiento, simSpeed, timelineEndMs]);
+    if (typeof renderTick.deliveredOrders === 'number') {
+      setDeliveredOrders(renderTick.deliveredOrders);
+    }
+    if (typeof renderTick.inTransitOrders === 'number') {
+      setInTransitOrders(renderTick.inTransitOrders);
+    }
+    if (renderTick.orderStatuses) {
+      setOrderStatuses(renderTick.orderStatuses);
+    }
+    // orderPlans completos (fallback) o diffs
+    const simTimeKey = renderTick.simTime ?? '';
+    if (renderTick.orderPlansDiff) {
+      const diff: OrderPlansDiff = renderTick.orderPlansDiff;
+      const currentMap = new Map<string, SimulationOrderPlan>();
+      orderPlansLive.forEach(p => currentMap.set(p.orderId, p));
+      diff.removed?.forEach(id => currentMap.delete(id));
+      diff.updated?.forEach(p => currentMap.set(p.orderId, p));
+      diff.added?.forEach(p => currentMap.set(p.orderId, p));
+      lastPlansSimTimeRef.current = simTimeKey;
+      setOrderPlansLive(Array.from(currentMap.values()));
+    } else if (renderTick.orderPlans && renderTick.orderPlans.length > 0) {
+      if (lastPlansSimTimeRef.current !== simTimeKey) {
+        lastPlansSimTimeRef.current = simTimeKey;
+        setOrderPlansLive(renderTick.orderPlans);
+      }
+    }
+    // Avanza el buffer descartando el frame renderizado
+    setTickBuffer(prev => prev.slice(1));
+  }, [tickBuffer, tickPlaybackReady, animPaused, orderPlansLive, engineSpeed]);
 
   // ===== CÁLCULO DE VUELOS EN MOVIMIENTO =====
   useEffect(() => {
-    if (status === 'completed' && finalSnapshot) {
+    if (status === 'completed' && finalSnapshot && visibleSnapshot !== finalSnapshot) {
       setVisibleSnapshot(finalSnapshot);
-      mergeFlightSegments(finalSnapshot);
     }
-  }, [status, finalSnapshot, mergeFlightSegments]);
+  }, [status, finalSnapshot, visibleSnapshot]);
 
   const activeSegments = useMemo(() => {
-    if (!tiempoSimulado) return [];
-    const currentMs = tiempoSimulado.getTime();
-
-    return Array.from(segmentosVuelo.values()).filter(segmento => {
-      const depMs = Date.parse(segmento.departureUtc);
-      const arrMs = Date.parse(segmento.arrivalUtc);
-      if (Number.isNaN(depMs) || Number.isNaN(arrMs)) return false;
-
-      // Filtra vuelos que están ocurriendo en este momento exacto
-      return depMs <= currentMs && currentMs <= arrMs;
-    });
-  }, [segmentosVuelo, tiempoSimulado]);
+    return segmentosTick;
+  }, [segmentosTick]);
 
   const vuelosEnMovimiento: VueloEnMovimiento[] = useMemo(() => {
     if (!tiempoSimulado || activeSegments.length === 0) {
@@ -343,6 +459,9 @@ export const useSimulacion = () => {
 
       const orderIdReferencia = segmento.orderIds[0];
       const destinoRuta = obtenerDestinoActualOrden(orderIdReferencia, tiempoActualMs);
+      const capacidadTotal = segmento.capacityTotal ?? flightCapacities.get(segmento.flightId) ?? segmento.routeQuantity ?? 0;
+      const capacidadUsada = segmento.routeQuantity ?? 0;
+      const pedidosConCantidad = (segmento.orderLoads ?? segmento.orderIds.map(id => ({ orderId: id, quantity: 1 })));
 
       // Construimos el objeto VueloEnMovimiento sin referenciar 'plan' (que no existe aquí)
       vuelosEnCurso.push({
@@ -363,20 +482,20 @@ export const useSimulacion = () => {
         destinoCode: segmento.destination,
         salidaProgramada: segmento.departureUtc,
         llegadaProgramada: segmento.arrivalUtc,
-        capacidadTotal: segmento.routeQuantity,
-        capacidadUsada: segmento.routeQuantity,
+        capacidadTotal,
+        capacidadUsada,
 
-        pedidos: segmento.orderIds.map(id => ({
-            orderId: id,
+        pedidos: pedidosConCantidad.map(load => ({
+            orderId: load.orderId,
             cliente: "---",
             fechaCreacion: "---",
-            cantidad: 1 //hardcodeado CAMBIAR
+            cantidad: load.quantity
         }))
       });
     });
 
     return vuelosEnCurso;
-  }, [activeSegments, tiempoSimulado, aeropuertos, obtenerDestinoActualOrden]);
+  }, [activeSegments, tiempoSimulado, aeropuertos, obtenerDestinoActualOrden, flightCapacities]);
 
   // ===== MUTACIÓN PARA INICIAR SIMULACIÓN =====
   const simulationMutation = useMutation({
@@ -387,7 +506,6 @@ export const useSimulacion = () => {
       setFinalSnapshot(null);
       setVisibleSnapshot(null);
       setSimulationId(response.simulationId);
-      setTiempoMovimiento(0);
       setStatus('running');
     },
     onError: (error) => {
@@ -396,31 +514,46 @@ export const useSimulacion = () => {
     }
   });
 
-  const iniciar = useCallback((payload: SimulationStartRequest, timeline?: { start?: string; end?: string }) => {
-    const startMs = parseUtcMillis(timeline?.start);
-    const endMs = parseUtcMillis(timeline?.end);
-    setSegmentosVuelo(new Map());
+  const iniciar = useCallback((payload: SimulationStartRequest) => {
     setHasSnapshots(false);
     setAnimPaused(false);
-    setTimelineEndMs(endMs);
-    timelineStartRef.current = startMs;
-    firstSnapshotRealRef.current = null;
-    setTiempoMovimiento(0);
-    if (startMs !== null) {
-      setSimBaseSimulado(startMs);
-      setSimBaseReal(Date.now());
-      setTiempoSimulado(new Date(startMs));
-    } else {
-      setSimBaseSimulado(null);
-      setSimBaseReal(null);
-      setTiempoSimulado(null);
-    }
-    simulationMutation.mutate(payload);
-  }, [simulationMutation]);
+    setTiempoSimulado(null);
+    setTickBuffer([]);
+    setTickPlaybackReady(false);
+    tickReadyRef.current = false;
+    preprocNotifiedRef.current = false;
+    const enriched: SimulationStartRequest = {
+      ...payload,
+      prewarmToken: prewarmToken || undefined,
+    };
+    simulationMutation.mutate(enriched, {
+      onSuccess: () => {
+        setPrewarmToken(null);
+        prewarmRequested.current = false;
+      }
+    });
+  }, [simulationMutation, prewarmToken]);
 
-  const pausar = useCallback(() => {
-    setAnimPaused(prev => !prev);
-  }, []);
+  const pausar = useCallback(async () => {
+    if (!simulationId) {
+      setAnimPaused(prev => !prev);
+      setStatus(prev => (prev === 'paused' ? 'running' : 'paused'));
+      return;
+    }
+    try {
+      if (animPaused) {
+        await simulacionService.resumeSimulation(simulationId);
+        setStatus('running');
+        setAnimPaused(false);
+      } else {
+        await simulacionService.pauseSimulation(simulationId);
+        setStatus('paused');
+        setAnimPaused(true);
+      }
+    } catch (error) {
+      console.error("Error al pausar/reanudar la simulación en el backend:", error);
+    }
+  }, [simulationId, animPaused]);
 
   const terminar = useCallback(async () => {
     if (simulationId) {
@@ -438,31 +571,68 @@ export const useSimulacion = () => {
     setLatestProgress(null);
     setFinalSnapshot(null);
     setVisibleSnapshot(null);
-    setSegmentosVuelo(new Map());
-    setSimBaseSimulado(null);
-    setSimBaseReal(null);
-    setTimelineEndMs(null);
-    timelineStartRef.current = null;
-    firstSnapshotRealRef.current = null;
     setStatus('idle');
-    setTiempoMovimiento(0);
     setTiempoSimulado(null);
     setHasSnapshots(false);
     setAnimPaused(false);
+    setEngineSpeed(DEFAULT_SPEED);
+    setRenderSpeed(1);
+    setTickBuffer([]);
+    setTickPlaybackReady(false);
+    tickReadyRef.current = false;
+    preprocNotifiedRef.current = false;
+    setStartRealMs(null);
+    setElapsedRealMs(0);
+    setSegmentosTick([]);
+    setActiveAirports([]);
+    setDeliveredOrders(0);
+    setInTransitOrders(0);
+    setOrderStatuses([]);
+    setPrewarmToken(null);
+    prewarmRequested.current = false;
+    setOrderPlansLive([]);
   }, [stompClient, simulationId]);
+
+  const conectarSimulacion = useCallback((simId: string) => {
+    if (!simId) return;
+    setSimulationId(simId);
+    setStatus('running');
+  }, []);
 
   // ===== KPIs =====
   const kpis = useMemo(() => {
-    const snapshot = visibleSnapshot ?? finalSnapshot;
-    if (!snapshot?.orderPlans) return { entregas: 0, retrasados: 0 };
+    const plans = planSource;
+    if (!plans) return { entregas: 0, retrasados: 0 };
     return {
-      entregas: snapshot.orderPlans.filter(p => p.slackMinutes > 0).length,
-      retrasados: snapshot.orderPlans.filter(p => p.slackMinutes <= 0).length,
+      entregas: plans.filter(p => p.slackMinutes > 0).length,
+      retrasados: plans.filter(p => p.slackMinutes <= 0).length,
     };
-  }, [visibleSnapshot, finalSnapshot]);
+  }, [planSource]);
 
   // ===== RELOJ DE PROGRESO =====
-  const reloj = `${latestProgress?.processedOrders ?? 0} / ${latestProgress?.totalOrders ?? 0} Órdenes`;
+  const reloj = `${latestProgress?.processedOrders ?? 0} / ${latestProgress?.totalOrders ?? 0}`;
+
+  const resetVisual = () => {
+    setVisibleSnapshot(null);
+    setLatestProgress(null);
+    setFinalSnapshot(null);
+    setHasSnapshots(false);
+    setSegmentosTick([]);
+    setTiempoSimulado(null);
+    setEngineSpeed(DEFAULT_SPEED);
+    setRenderSpeed(1);
+    setTickBuffer([]);
+    setTickPlaybackReady(false);
+    tickReadyRef.current = false;
+    preprocNotifiedRef.current = false;
+    setActiveAirports([]);
+    setDeliveredOrders(0);
+    setInTransitOrders(0);
+    setOrderStatuses([]);
+    setOrderPlansLive([]);
+    setPrewarmToken(null);
+    prewarmRequested.current = false;
+  };
 
   return {
     aeropuertos,
@@ -477,14 +647,27 @@ export const useSimulacion = () => {
     snapshotVisible: visibleSnapshot,
     snapshotProgreso: latestProgress,
     tiempoSimulado,
-    simSpeed,
-    setSimSpeed,
+    engineSpeed,
+    renderSpeed,
+    animPaused,
+    activeAirports,
+    orderPlans: planSource,
     iniciar,
     pausar,
     terminar,
+    resetVisual,
     kpis,
     reloj,
+    simulationId,
     hasSnapshots,
     status,
+    deliveredOrders,
+    inTransitOrders,
+    orderStatuses,
+    startRealMs,
+    elapsedRealMs,
+    conectarSimulacion,
+    notificacion,
+    setNotificacion,
   };
 };
