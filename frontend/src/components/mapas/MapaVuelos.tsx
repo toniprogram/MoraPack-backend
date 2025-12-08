@@ -8,7 +8,7 @@ import type { Airport } from '../../types/airport';
 
 import type { ActiveAirportTick } from '../../types/simulation';
 import { OrdersList, type OrderLoadView } from '../simulacion/OrdersList';
-import type { SegmentoVuelo, VueloEnMovimiento } from '../../hooks/useOperacion';
+import type { SegmentoVuelo, VueloEnMovimiento } from '../../hooks/useSimulacion';
 import { Plane, Box, Building } from 'lucide-react';
 
 // Iconos Default Leaflet
