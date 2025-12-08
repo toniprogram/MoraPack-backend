@@ -19,7 +19,6 @@ export function FlightsList({ vuelos, onSelectFlight, onSelectOrders }: FlightsL
           key={vuelo.id}
           className="flex justify-between items-center bg-base-200 p-1.5 rounded text-[10px] hover:bg-base-300 cursor-pointer transition-colors"
           onClick={() => {
-            // Al hacer clic en un vuelo de la lista, lo seleccionamos
             onSelectFlight?.(vuelo.id);
             onSelectOrders?.(vuelo.orderIds || []);
           }}

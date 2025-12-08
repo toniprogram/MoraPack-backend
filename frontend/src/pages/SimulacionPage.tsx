@@ -474,6 +474,7 @@ export default function SimulacionPage() {
           vuelosTotal={vuelosLive.length}
          //aeropuertos={aeropuertos}
           activeAirports={activeAirports}
+          activeSegments={activeSegments}
           filtroHub={filtroHub}
           setFiltroHub={setFiltroHub}
           selectedOrderIds={selectedOrderIds}

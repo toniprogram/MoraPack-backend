@@ -1,7 +1,9 @@
 import type { Airport } from '../../types/airport';
 import type { ActiveAirportTick } from '../../types/simulation';
+import type { SegmentoVuelo } from '../../hooks/useSimulacion';
 import { useEffect, useMemo, useState } from 'react';
 import { OrdersList } from './OrdersList';
+import { FlightsList } from './FlightsList';
 
 interface SidebarAeropuertosPanelProps {
   aeropuertos: Airport[];
@@ -11,6 +13,7 @@ interface SidebarAeropuertosPanelProps {
   selectedOrders?: string[] | null;
   scrollParent?: HTMLDivElement | null;
   onSelectOrders?: (orderIds: string[] | null) => void;
+  onSelectFlight?: (flightId: string | null) => void;
 }
 
 const ITEM_HEIGHT = 190;
@@ -26,11 +29,13 @@ const isInfiniteHub = (a: Airport) => {
 export function SidebarAeropuertosPanel({
   aeropuertos,
   activeAirports,
+  activeSegments,
   selectedAirportIds,
   onSelectAirport,
   selectedOrders,
   scrollParent,
   onSelectOrders,
+  onSelectFlight,
 }: SidebarAeropuertosPanelProps) {
   const orderedAirports = useMemo(() => {
     if (!selectedAirportIds || selectedAirportIds.length === 0) return aeropuertos;
@@ -99,7 +104,7 @@ export function SidebarAeropuertosPanel({
             const flightOrders = live?.orderLoads ?? [];
             const isSelected = !!selectedAirportIds?.includes((aeropuerto.id || aeropuerto.code || ''));
             const dimmed = !!(selectedAirportIds && selectedAirportIds.length > 0 && !isSelected);
-
+            const vuelosSalientes = (activeSegments ?? []).filter(s => s.origin === (aeropuerto.id || aeropuerto.code));
             let progressColorClass = 'progress-success'; // Verde (< 70%)
             let textColorClass = 'text-success';
             if (pct > 90) {
@@ -145,6 +150,14 @@ export function SidebarAeropuertosPanel({
                   onSelectOrders?.([orderId]);
                 }}
               />
+            </div>
+            <div className="border-t border-base-300 pt-2 mt-2">
+                <div className="text-[10px] font-semibold uppercase opacity-70 mb-1">Vuelos Salientes</div>
+                <FlightsList
+                    vuelos={vuelosSalientes}
+                    onSelectFlight={onSelectFlight}
+                    onSelectOrders={onSelectOrders}
+                />
             </div>
           </div>
         </div>

@@ -9,7 +9,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import type { Airport } from '../../types/airport';
 import type { EnvioInfo, FlightGroup } from '../../types/simulacionUI';
 import type { ActiveAirportTick } from '../../types/simulation';
-import type { VueloEnMovimiento } from '../../hooks/useSimulacion';
+import type { VueloEnMovimiento, SegmentoVuelo } from '../../hooks/useSimulacion';
 import type { OrderRequest } from '../../types/orderRequest';
 
 type VistaPanel = 'envios' | 'vuelos' | 'aeropuertos';
@@ -40,6 +40,7 @@ interface SimSidebarProps {
   vuelosTotal: number;
   aeropuertos: Airport[];
   activeAirports: ActiveAirportTick[];
+  activeSegments: SegmentoVuelo[];
   filtroHub: string;
   setFiltroHub: Dispatch<SetStateAction<string>>;
   selectedOrderIds: string[] | null;
@@ -80,6 +81,7 @@ export function SimSidebar({
   vuelosTotal,
   aeropuertos,
   activeAirports,
+  activeSegments,
   filtroHub,
   setFiltroHub,
   selectedOrderIds,
@@ -239,6 +241,7 @@ export function SimSidebar({
           <SidebarAeropuertosPanel
             aeropuertos={aeropuertos}
             activeAirports={activeAirports}
+            activeSegments={activeSegments}
             selectedAirportIds={selectedAirportIds}
             onSelectAirport={onSelectAirport}
             selectedOrders={selectedOrderIds}
