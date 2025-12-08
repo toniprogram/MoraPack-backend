@@ -5,7 +5,7 @@ import type { LatLngExpression } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import planeIconUrl from '/images/plane-line.svg?url';
 import type { Airport } from '../../types/airport';
-
+import { FlightsList } from '../simulacion/FlightsList';
 import type { ActiveAirportTick } from '../../types/simulation';
 import { OrdersList, type OrderLoadView } from '../simulacion/OrdersList';
 import type { SegmentoVuelo, VueloEnMovimiento } from '../../hooks/useSimulacion';
@@ -538,6 +538,16 @@ export function MapaVuelos({
                           onSelectOrders?.([oid]);
                           onSelectAirport?.(aeropuerto.id || aeropuerto.code || null);
                         }}
+                      />
+                    </div>
+                    <div className="border-t border-base-300 pt-2">
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="text-[10px] font-semibold uppercase opacity-70">Vuelos Salientes</span>
+                      </div>
+                      <FlightsList
+                        vuelos={activeSegments.filter(s => s.origin === (aeropuerto.id || aeropuerto.code))}
+                        onSelectFlight={onSelectFlight}
+                        onSelectOrders={onSelectOrders}
                       />
                     </div>
                 </div>
