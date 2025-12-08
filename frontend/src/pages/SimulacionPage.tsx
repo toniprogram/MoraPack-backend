@@ -487,23 +487,23 @@ export default function SimulacionPage() {
 
       {/* ========== ÁREA DEL MAPA ========== */}
       <div className="flex-1 flex flex-col min-h-0">
-
-          {/* Barra superior con KPIs y Reloj */}
-          <SimTopBar
-            entregados={deliveredOrders}
-            enTransito={inTransitOrders}
-            vuelosActivos={activeSegments.length}
-            reloj={reloj}
-            tiempoSimulado={tiempoSimulado}
-            estaActivo={estaActivo}
-            engineSpeed={engineSpeed}
-            startRealMs={startRealMs}
-            elapsedRealMs={elapsedRealMs}
-            formatElapsed={formatElapsed}
-          />
-
-        {/* Mapa */}
         <div className="flex-1 relative min-h-0">
+          <div className="absolute top-0 left-0 right-0 z-30 pointer-events-none">
+            <div className="pointer-events-auto">
+              <SimTopBar
+                entregados={deliveredOrders}
+                enTransito={inTransitOrders}
+                vuelosActivos={activeSegments.length}
+                reloj={reloj}
+                tiempoSimulado={tiempoSimulado}
+                estaActivo={estaActivo}
+                engineSpeed={engineSpeed}
+                startRealMs={startRealMs}
+                elapsedRealMs={elapsedRealMs}
+                formatElapsed={formatElapsed}
+              />
+            </div>
+          </div>
 
           {/* Mostramos overlay de carga si el GA está corriendo */}
           {mostrandoOverlay && (

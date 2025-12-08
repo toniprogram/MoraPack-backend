@@ -1,4 +1,4 @@
-import { Package, Plane, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Package, Plane, ChevronLeft, ChevronRight, Play, Pause, XCircle } from 'lucide-react';
 import { SidebarFilters } from './SidebarFilters';
 import { useState } from 'react';
 import { SidebarEnviosPanel } from './SidebarEnviosPanel';
@@ -97,20 +97,53 @@ export function SimSidebar({
   const enviosToShow = enviosFiltrados;
   const vuelosToShow = vuelosFiltrados;
   const scrollRef = useRef<HTMLDivElement>(null);
+  const controlIsDisabled = estaSincronizando || isStarting;
+  const terminarDisabled = isStarting ? true : (!estaActivo && !estaVisualizando);
+  const isPaused = animPaused || status === 'paused';
+  const playPauseIcon = isPaused || (!estaActivo && !estaVisualizando) ? <Play size={16} /> : <Pause size={16} />;
+  const playPauseClass = isPaused || (!estaActivo && !estaVisualizando)
+    ? 'btn-success'
+    : (estaActivo ? 'btn-warning' : 'btn-success');
   return (
     <div className={`bg-base-100 shadow-lg flex flex-col border-r border-base-300 transition-all ${collapsed ? 'w-9' : 'w-80'}`}>
-      <div className="flex items-center justify-between p-2">
+      <div className="flex items-center justify-between px-2 py-1 border-b border-base-300">
         <div className={`flex items-center gap-2 ${collapsed ? 'hidden' : ''}`}>
-          <span className="font-bold text-sm ml-2">Simulación</span>
+          <span className="font-semibold text-xs ml-1 tracking-wide">Parámetros de simulación</span>
         </div>
         <button
           aria-label={collapsed ? 'Expandir sidebar' : 'Colapsar sidebar'}
-          className="btn btn-ghost btn-sm btn-square"
+          className="btn btn-ghost btn-xs btn-square"
           onClick={() => setCollapsed(c => !c)}
         >
           {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
         </button>
       </div>
+      {collapsed && (
+        <div className="flex flex-col items-center gap-2 pb-2 pt-2">
+          <button
+            className={`btn btn-circle btn-xs ${playPauseClass}`}
+            onClick={() => {
+              if (!estaActivo && !estaVisualizando) {
+                onIniciar();
+              } else {
+                onPausar();
+              }
+            }}
+            disabled={controlIsDisabled}
+            title={animPaused ? 'Reanudar' : (!estaActivo && !estaVisualizando ? 'Iniciar' : 'Pausar/Reanudar')}
+          >
+            {playPauseIcon}
+          </button>
+          <button
+            className="btn btn-circle btn-xs btn-error"
+            onClick={onTerminar}
+            disabled={terminarDisabled}
+            title="Terminar simulación"
+          >
+            <XCircle size={16} />
+          </button>
+        </div>
+      )}
       {!collapsed && (
       <SidebarFilters
         ordenesParaSimular={ordenesParaSimular}
