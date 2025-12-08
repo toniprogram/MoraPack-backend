@@ -50,23 +50,23 @@ export function SimTopBar({
   }, [tiempoSimulado]);
 
   return (
-    <div className="bg-base-100/80 backdrop-blur-md shadow-sm border-b border-base-content/10 px-3 py-2 flex justify-between items-center z-10">
+    <div className="bg-transparent shadow-none border-none px-3 py-2 flex justify-between items-center z-20">
       <div className="flex gap-4 text-xs">
-        <div className="flex items-center gap-1.5 tooltip" data-tip="Entregados">
+        <div className="flex items-center gap-1.5 tooltip tooltip-bottom" data-tip="Entregados">
           <Check size={16} className="text-success" />
           <span className="font-mono font-semibold">{entregados}</span>
         </div>
-        <div className="flex items-center gap-1.5 tooltip" data-tip="En tránsito">
+        <div className="flex items-center gap-1.5 tooltip tooltip-bottom" data-tip="En tránsito">
           <Box size={16} className="text-info" />
           <span className="font-mono font-semibold">{enTransito}</span>
         </div>
-        <div className="flex items-center gap-1.5 tooltip" data-tip="Vuelos en uso">
+        <div className="flex items-center gap-1.5 tooltip tooltip-bottom" data-tip="Vuelos en uso">
           <Plane size={16} className="text-warning" />
           <span className="font-mono font-semibold">{vuelosActivos}</span>
         </div>
       </div>
       <div className="flex items-center gap-3">
-        <div className="text-xs tooltip" data-tip="Pedidos procesados por el backend">
+        <div className="text-xs tooltip tooltip-bottom" data-tip="Pedidos procesados por el backend">
           <span className="font-mono font-semibold">{reloj}</span>
         </div>
 
@@ -78,7 +78,7 @@ export function SimTopBar({
         <div className="flex gap-2 items-center">
           {badgesTiempo}
           {estaActivo && startRealMs !== null && (
-            <div className="tooltip" data-tip="Tiempo real desde inicio">
+            <div className="tooltip tooltip-bottom" data-tip="Tiempo real desde inicio">
               <div className="badge badge-warning badge-outline text-[11px]">
                 ⏱️ {formatElapsed(elapsedRealMs)}
               </div>
