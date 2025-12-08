@@ -16,5 +16,6 @@ public record SimulationTick(
         List<ActiveAirportTick> activeAirports,
         int deliveredOrders,
         int inTransitOrders,
-        java.util.List<OrderStatusTick> orderStatuses
+        java.util.List<OrderStatusTick> orderStatuses,
+        java.util.List<OrderStatusTick> deliveredStatuses
 ) {}

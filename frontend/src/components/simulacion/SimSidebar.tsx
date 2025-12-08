@@ -1,10 +1,9 @@
 import { Package, Plane, ChevronLeft, ChevronRight, Play, Pause, XCircle } from 'lucide-react';
 import { SidebarFilters } from './SidebarFilters';
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { SidebarEnviosPanel } from './SidebarEnviosPanel';
 import { SidebarVuelosPanel } from './SidebarVuelosPanel';
 import { SidebarAeropuertosPanel } from './SidebarAeropuertosPanel';
-import { useRef } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { Airport } from '../../types/airport';
 import type { EnvioInfo, FlightGroup } from '../../types/simulacionUI';

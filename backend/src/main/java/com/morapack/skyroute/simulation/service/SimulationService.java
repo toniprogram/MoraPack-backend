@@ -535,6 +535,7 @@ public class SimulationService {
         Map<String, Integer> loads = session.liveWorld.getAirportLoads();
         Map<String, Map<String, Integer>> inventory = session.liveWorld.getAirportInventory();
         List<OrderStatusTick> orderStatuses = session.liveWorld.buildOrderStatuses();
+        List<OrderStatusTick> deliveredStatuses = session.liveWorld.buildDeliveredStatuses();
 
         // filtrar planes: solo pedidos activos (no planificados)
         Set<String> activeOrderIds = new HashSet<>();
@@ -598,7 +599,7 @@ public class SimulationService {
 
         // orderPlans se envía vacío para reducir payload; diffs llevan los cambios
         List<SimulationOrderPlan> orderPlans = List.of();
-        return new SimulationTick(session.id.toString(), simTime, realElapsedMs, speed, status, session.collapseMessage, orderPlans, diff, actives, airportTicks, deliveredOrders, inTransitOrders, orderStatuses);
+        return new SimulationTick(session.id.toString(), simTime, realElapsedMs, speed, status, session.collapseMessage, orderPlans, diff, actives, airportTicks, deliveredOrders, inTransitOrders, orderStatuses, deliveredStatuses);
     }
 
     private SimulationSegment toSegmentDto(RouteSegment segment) {

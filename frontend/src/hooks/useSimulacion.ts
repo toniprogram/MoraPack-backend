@@ -96,6 +96,7 @@ export const useSimulacion = () => {
   const [deliveredOrders, setDeliveredOrders] = useState(0);
   const [inTransitOrders, setInTransitOrders] = useState(0);
   const [orderStatuses, setOrderStatuses] = useState<OrderStatusTick[]>([]);
+  const [deliveredLog, setDeliveredLog] = useState<{ orderId: string; quantity: number; location: string; simTime: string }[]>([]);
   const [orderPlansLive, setOrderPlansLive] = useState<SimulationOrderPlan[]>([]);
   const [animPaused, setAnimPaused] = useState(false);
   const firstSimTickMsRef = useRef<number | null>(null);
@@ -110,6 +111,7 @@ export const useSimulacion = () => {
   const preprocNotifiedRef = useRef(false);
   const prewarmStorageKey = 'sim_prewarm_token';
   const firstSnapshotLoggedRef = useRef(false);
+  const deliveredRef = useRef<Map<string, { orderId: string; quantity: number; location: string; simTime: string }>>(new Map());
   const [prewarmToken, setPrewarmToken] = useState<string | null>(() => {
     try {
       return localStorage.getItem(prewarmStorageKey);
@@ -233,6 +235,9 @@ export const useSimulacion = () => {
         client.subscribe(TOPIC_PREFIX + simulationId, (message) => {
           const simMessage: SimulationMessage = JSON.parse(message.body);
           const tick: SimulationTick | null | undefined = simMessage.tick;
+          if (tick?.deliveredStatuses && tick.deliveredStatuses.length > 0) {
+            console.log('[SIM] Entregados en tick:', tick.deliveredStatuses);
+          }
 
           if (tick?.simTime) {
             console.info('[SIM] Recibiendo tick del backend (nueva ruta)');
@@ -399,6 +404,24 @@ export const useSimulacion = () => {
     }
     if (renderTick.orderStatuses) {
       setOrderStatuses(renderTick.orderStatuses);
+      const deliveredSource = renderTick.deliveredStatuses ?? renderTick.orderStatuses;
+      if (deliveredSource?.length) {
+        deliveredSource.forEach((os: OrderStatusTick) => {
+          if (!os || typeof os.status !== 'string') return;
+          if (os.status.toUpperCase() !== 'DELIVERED') return;
+          if (!deliveredRef.current.has(os.orderId)) {
+            const entry = {
+              orderId: os.orderId,
+              quantity: os.quantity ?? 0,
+              location: os.location ?? '',
+              simTime: renderTick.simTime,
+            };
+            deliveredRef.current.set(os.orderId, entry);
+            setDeliveredLog(prev => [entry, ...prev]);
+            console.log('[SIM] Pedido entregado en tick:', entry);
+          }
+        });
+      }
     }
     // orderPlans completos (fallback) o diffs
     const simTimeKey = renderTick.simTime ?? '';
@@ -548,6 +571,8 @@ export const useSimulacion = () => {
     setTickPlaybackReady(false);
     tickReadyRef.current = false;
     preprocNotifiedRef.current = false;
+    deliveredRef.current.clear();
+    setDeliveredLog([]);
     const enriched: SimulationStartRequest = {
       ...payload,
       prewarmToken: prewarmToken || undefined,
@@ -614,6 +639,8 @@ export const useSimulacion = () => {
     setDeliveredOrders(0);
     setInTransitOrders(0);
     setOrderStatuses([]);
+    deliveredRef.current.clear();
+    setDeliveredLog([]);
     setPrewarmToken(null);
     prewarmRequested.current = false;
     setOrderPlansLive([]);
@@ -658,6 +685,8 @@ export const useSimulacion = () => {
     setOrderPlansLive([]);
     setPrewarmToken(null);
     prewarmRequested.current = false;
+    deliveredRef.current.clear();
+    setDeliveredLog([]);
   };
 
   return {
@@ -695,5 +724,6 @@ export const useSimulacion = () => {
     conectarSimulacion,
     notificacion,
     setNotificacion,
+    deliveredLog,
   };
 };
