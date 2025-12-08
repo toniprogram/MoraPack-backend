@@ -62,6 +62,8 @@ export default function SimulacionPage() {
   const [downloadingReport, setDownloadingReport] = useState(false);
   const lastSimulationIdRef = useRef<string | null>(null);
 
+  const [filtroTexto, setFiltroTexto] = useState<string>('');
+
   useEffect(() => {
     statusRef.current = status;
   }, [status]);
@@ -269,8 +271,28 @@ export default function SimulacionPage() {
   }, [activeSegments, filtroHub]);
 
   const vuelosFiltrados = useMemo<FlightGroup[]>(() => {
-    return vuelosLive;
-  }, [vuelosLive]);
+      const term = filtroTexto.toLowerCase();
+      return vuelosLive.filter(v => {
+        if (!term) return true;
+        return (
+          v.flightId.toLowerCase().includes(term) ||
+          v.origen.toLowerCase().includes(term) ||
+          v.destino.toLowerCase().includes(term)
+        );
+      });
+  }, [vuelosLive, filtroTexto]);
+
+  const aeropuertosFiltrados = useMemo(() => {
+      const term = filtroTexto.toLowerCase();
+      return aeropuertos.filter(a => {
+        if (!term) return true;
+        return (
+          a.name?.toLowerCase().includes(term) ||
+          a.city?.toLowerCase().includes(term) ||
+          a.airportCode.toLowerCase().includes(term)
+        );
+      });
+  }, [aeropuertos, filtroTexto]);
 
   const handleIniciarSimulacion = () => {
     const startUtc = ensureSeconds(startDate);
@@ -279,6 +301,7 @@ export default function SimulacionPage() {
     setSelectedOrderIds(null);
     setSelectedFlightId(null);
     setSelectedAirportIds(null);
+    setFiltroTexto('');
     const payload = {
       startDate: startUtc,
       endDate: endUtc,
@@ -299,6 +322,7 @@ export default function SimulacionPage() {
     setSelectedFlightId(null);
     setSelectedAirportIds(null);
     resetVisual();
+    setFiltroTexto('');
     setDialogInfo({
       titulo: 'Simulación terminada',
       mensaje: 'Se detuvo la simulación actual. Puedes descargar el reporte o iniciar una nueva corrida.',
@@ -419,8 +443,11 @@ export default function SimulacionPage() {
           onPausar={pausar}
           vistaPanel={vistaPanel}
           setVistaPanel={setVistaPanel}
+          filtroTexto={filtroTexto}
+          setFiltroTexto={setFiltroTexto}
           enviosFiltrados={enviosFiltrados}
           vuelosFiltrados={vuelosFiltrados}
+          aeropuertos={aeropuertosFiltrados}
           vuelosTotal={vuelosLive.length}
           aeropuertos={aeropuertos}
           activeAirports={activeAirports}

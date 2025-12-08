@@ -1,4 +1,4 @@
-import { Play, Pause, XCircle } from 'lucide-react';
+import { Play, Pause, XCircle, Search } from 'lucide-react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { OrderRequest } from '../../types/orderRequest';
 
@@ -23,6 +23,9 @@ interface SidebarFiltersProps {
   selectedOrderIds: string[] | null;
   clearSelectedOrders: () => void;
   status: string;
+  filtroTexto: string;
+  setFiltroTexto: Dispatch<SetStateAction<string>>;
+  vistaPanel: 'envios' | 'vuelos' | 'aeropuertos';
 }
 
 export function SidebarFilters({
@@ -46,6 +49,9 @@ export function SidebarFilters({
   selectedOrderIds,
   clearSelectedOrders,
   status,
+  filtroTexto,
+  setFiltroTexto,
+  vistaPanel,
 }: SidebarFiltersProps) {
   const inputsBloqueados = status !== 'idle' && status !== 'completed';
   const formatLocalNoSeconds = (d: Date) => {
@@ -67,6 +73,15 @@ export function SidebarFilters({
       setEndDate(formatLocalNoSeconds(d));
     } catch (e) {
       // ignore parse errors
+    }
+  };
+
+  const getPlaceholder = () => {
+    switch (vistaPanel) {
+      case 'envios': return 'Buscar pedido (ID)...';
+      case 'vuelos': return 'Buscar vuelo (ID, Origen)...';
+      case 'aeropuertos': return 'Buscar aeropuerto (Ciudad, Código)...';
+      default: return 'Buscar...';
     }
   };
   return (
@@ -93,16 +108,6 @@ export function SidebarFilters({
               />
             </div>
             <div>
-              <label className="block uppercase tracking-wide text-[10px] text-base-content/90 mb-1">
-                Fin (UTC)
-              </label>  
-              <input
-                type="datetime-local"
-              className="input input-sm w-full text-base-content/90"
-              value={hastaColapso ? '' : endDate}
-              onChange={(event) => setEndDate(event.target.value)}
-              disabled={inputsBloqueados || hastaColapso}
-            />
             <div className="flex items-center justify-end mt-2 gap-1">
               <span className="text-[10px] text-base-content/90">Hasta el colapso</span>
               <input
@@ -158,7 +163,23 @@ export function SidebarFilters({
 
       <div className="p-3 bg-base-200 border-b border-base-300 space-y-3">
         <h3 className="text-sm font-semibold text-base-content">Filtros de Visualización</h3>
-
+        <div>
+          <label className="block uppercase tracking-wide text-[10px] text-base-content/70 mb-2">
+            Búsqueda Rápida
+          </label>
+          <div className="relative">
+            <input
+              type="text"
+              placeholder={getPlaceholder()}
+              className="input input-sm w-full pr-8 bg-base-100"
+              value={filtroTexto}
+              onChange={(e) => setFiltroTexto(e.target.value)}
+            />
+            <div className="absolute right-2 top-1.5 text-base-content/50 pointer-events-none">
+               <Search size={16} />
+            </div>
+          </div>
+        </div>
         <div>
           <label className="block uppercase tracking-wide text-[10px] text-base-content/70 mb-2">
             Hub de Origen

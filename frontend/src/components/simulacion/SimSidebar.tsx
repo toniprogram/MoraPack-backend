@@ -31,6 +31,8 @@ interface SimSidebarProps {
   onPausar: () => void;
   vistaPanel: VistaPanel;
   setVistaPanel: Dispatch<SetStateAction<VistaPanel>>;
+  filtroTexto: string;
+  setFiltroTexto: Dispatch<SetStateAction<string>>;
   enviosFiltrados: EnvioInfo[];
   vuelosFiltrados: FlightGroup[];
   vuelosTotal: number;
@@ -67,6 +69,8 @@ export function SimSidebar({
   onPausar,
   vistaPanel,
   setVistaPanel,
+  filtroTexto,
+  setFiltroTexto,
   enviosFiltrados,
   vuelosFiltrados,
   vuelosTotal,
@@ -125,6 +129,9 @@ export function SimSidebar({
         setFiltroHub={setFiltroHub}
         selectedOrderIds={selectedOrderIds}
         clearSelectedOrders={clearSelectedOrders}
+        filtroTexto={filtroTexto}
+        setFiltroTexto={setFiltroTexto}
+        vistaPanel={vistaPanel}
       />
       )}
 
