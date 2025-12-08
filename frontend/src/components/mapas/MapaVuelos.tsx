@@ -11,32 +11,83 @@ import { OrdersList, type OrderLoadView } from '../simulacion/OrdersList';
 import type { SegmentoVuelo, VueloEnMovimiento } from '../../hooks/useSimulacion';
 import { Plane, Box, Building } from 'lucide-react';
 
-// Iconos Default Leaflet
+const getStatusColor = (pct: number) => {
+  if (pct === 0) return '#22c55e';
+  if (pct < 70) return '#22c55e'; // Verde (Ok)
+  if (pct < 90) return '#eab308'; // Amarillo (Advertencia)
+  if (pct <= 100) return '#ef4444'; // Rojo (Crítico/Lleno)
+  return '#22c55e';
+};
+const getAirportIcon = (pct: number) => {
+  const color = getStatusColor(pct);
+
+  return L.divIcon({
+    className: 'bg-transparent border-none',
+    html: `
+      <div style="
+        background-color: ${color};
+        width: 24px;
+        height: 24px;
+        border-radius: 6px;
+        border: 2px solid white;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.4);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background-color 0.3s ease;
+      ">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 8.35V20a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8.35A2 2 0 0 1 3.26 6.5l8-3.2a2 2 0 0 1 1.48 0l8 3.2A2 2 0 0 1 22 8.35Z"/>
+          <path d="M6 18h12"/>
+          <path d="M6 14h12"/>
+        </svg>
+      </div>
+    `,
+    iconSize: [10, 10],
+    iconAnchor: [12, 12],
+    popupAnchor: [0, -12],
+  });
+};
+const getHubIcon = (pct: number) => {
+  const color = getStatusColor(pct);
+
+  return L.divIcon({
+    className: 'bg-transparent border-none',
+    html: `
+      <div style="
+        background-color: ${color};
+        width: 32px;
+        height: 32px;
+        border-radius: 8px; /* Un poco más cuadrado para el Hub */
+        border: 3px solid white;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+        transition: background-color 0.3s ease;
+      ">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 22v-8"/>
+          <path d="M5 22h14"/>
+          <path d="M7 10h10l-1-6H8l-1 6Z"/>
+          <path d="M12 2v2"/>
+        </svg>
+      </div>
+    `,
+    iconSize: [18, 18],
+    iconAnchor: [16, 16],
+    popupAnchor: [0, -16],
+  });
+};
+
+// Fix básico de Leaflet
 const iconProto = L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown };
 delete iconProto._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
   iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-});
-
-// Iconos personalizados
-const defaultAirportIcon = new L.Icon({
-  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-  iconSize: [12, 16],
-  iconAnchor: [6, 15],
-  popupAnchor: [1, -18],
-  shadowSize: [20, 20]
-});
-
-const hubIcon = new L.Icon({
-  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-violet.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-  iconSize: [12, 16],
-  iconAnchor: [6, 15],
-  popupAnchor: [1, -18],
-  shadowSize: [20, 20]
 });
 
 function MapResizer({ isLoading }: { isLoading: boolean }) {
@@ -75,6 +126,12 @@ const getHubColor = (originCode: string) => {
   if (code === 'UBBB' || code === 'GYD') return { hex: '#3b82f6', twClass: 'text-info' };
   if (code === 'EBCI' || code === 'BRU' || code === 'CRL') return { hex: '#ef4444', twClass: 'text-error' };
   return { hex: '#a6adbb', twClass: 'text-base-content' };
+};
+
+const getLoadColor = (pct: number) => {
+  if (pct < 70) return { hex: '#22c55e', twClass: 'text-success' }; // Verde (Ok)
+  if (pct < 90) return { hex: '#eab308', twClass: 'text-warning' }; // Amarillo (Llenándose)
+  return { hex: '#ef4444', twClass: 'text-error' };                 // Rojo (Crítico/Lleno)
 };
 
 const PLANE_SIZE = 20; // tamaño visual del avión (reducido)
@@ -209,8 +266,8 @@ const getRemainingPath = (path: [number, number][], progress: number): [number, 
   return [];
 };
 
-const getPlaneIcon = (originCode: string, rotation: number) => {
-  const { twClass } = getHubColor(originCode);
+const getPlaneIcon = (originCode: string, rotation: number, capacityPct: number) => {
+  const { hex, twClass } = getLoadColor(capacityPct);
   const html = `
     <div style="
       width: ${PLANE_HITBOX}px;
@@ -397,12 +454,20 @@ export function MapaVuelos({
         const stockActual = live?.currentLoad ?? 0;
         const capacidadMax = live?.maxThroughputPerHour ?? aeropuerto.storageCapacity ?? 0;
         const stockPct = Math.min(100, Math.round((stockActual / capacidadMax) * 100));
-
+        let statusColorClass = 'text-success';
+        let progressClass = 'progress-success';
+        if (stockPct >= 90) {
+            statusColorClass = 'text-error';
+            progressClass = 'progress-error';
+        } else if (stockPct >= 70) {
+            statusColorClass = 'text-warning';
+            progressClass = 'progress-warning';
+        }
         return (
           <Marker
             key={aeropuerto.id}
             position={[aeropuerto.latitude, aeropuerto.longitude]}
-            icon={esSede ? hubIcon : defaultAirportIcon}
+            icon={esSede ? getHubIcon(stockPct) : getAirportIcon(stockPct)}
             opacity={
               (!filtroHubActivo || filtroHubActivo === aeropuerto.id)
                 ? (airportHighlights.size > 0 && !airportHighlights.has(aeropuerto.id || aeropuerto.code || '') ? 0.2 : 1.0)
@@ -445,7 +510,7 @@ export function MapaVuelos({
                         <span>{stockActual} / {capacidadMax}</span>
                     </div>
                     <progress
-                        className={`progress w-full h-2 ${stockPct > 80 ? 'progress-warning' : 'progress-info'}`}
+                        className={`progress w-full h-2 ${progressClass}`}
                         value={stockActual}
                         max={capacidadMax}
                     ></progress>

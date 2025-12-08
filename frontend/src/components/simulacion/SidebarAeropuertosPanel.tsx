@@ -90,6 +90,15 @@ export function SidebarAeropuertosPanel({
             const isSelected = !!selectedAirportIds?.includes((aeropuerto.id || aeropuerto.code || ''));
             const dimmed = !!(selectedAirportIds && selectedAirportIds.length > 0 && !isSelected);
 
+            let progressColorClass = 'progress-success'; // Verde (< 70%)
+            let textColorClass = 'text-success';
+            if (pct > 90) {
+              progressColorClass = 'progress-error'; // Rojo (> 90%)
+              textColorClass = 'text-error';
+            } else if (pct > 70) {
+              progressColorClass = 'progress-warning'; // Amarillo (70% - 90%)
+              textColorClass = 'text-warning';
+            }
             return (
         <div
           key={(aeropuerto.id || aeropuerto.code || idx.toString())}
@@ -105,7 +114,11 @@ export function SidebarAeropuertosPanel({
                 <span>Almacén</span>
                 <span className="font-mono">{current} / {max}</span>
               </div>
-              <progress className="progress progress-info w-full h-2" value={current} max={max || 1}></progress>
+                <progress
+                  className={`progress ${progressColorClass} w-full h-2`}
+                  value={current}
+                  max={max || 1}
+                ></progress>
               <div className="font-mono text-right opacity-60">{pct}%</div>
             </div>
             <div className="border-t border-base-300 pt-2 mt-2">
