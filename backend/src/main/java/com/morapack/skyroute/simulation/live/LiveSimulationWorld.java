@@ -35,6 +35,9 @@ public class LiveSimulationWorld {
     private final Map<String, Integer> airportLoads = new HashMap<>();
     private final Map<String, Integer> maxObservedLoad = new HashMap<>();
     private Instant lastHourMark;
+    // Para emitir estado final de entregados una sola vez
+    private final Set<String> deliveredEmitted = new HashSet<>();
+    private final Map<String, OrderStatusTick> deliveredOnce = new HashMap<>();
 
     public LiveSimulationWorld(String simulationId,
                                Instant startTime,
@@ -313,7 +316,19 @@ public class LiveSimulationWorld {
         // base en órdenes
         orders.values().forEach(order -> {
             if (order.getDeliveredQuantity() >= order.getTotalQuantity()) {
-                return; // ya entregado
+                // Enviamos estado final una sola vez como referencia de entrega
+                if (!deliveredEmitted.contains(order.getOrderId())) {
+                    OrderStatusTick delivered = new OrderStatusTick(
+                            order.getOrderId(),
+                            "DELIVERED",
+                            order.getDestinationCode(),
+                            order.getDeliveredQuantity()
+                    );
+                    list.add(delivered);
+                    deliveredEmitted.add(order.getOrderId());
+                    deliveredOnce.put(order.getOrderId(), delivered);
+                }
+                return;
             }
             String status = orderStatus.get(order.getOrderId());
             int qty = orderQty.getOrDefault(order.getOrderId(), 0);
@@ -328,6 +343,10 @@ public class LiveSimulationWorld {
             list.add(new OrderStatusTick(order.getOrderId(), status, loc, qty));
         });
         return list;
+    }
+
+    public List<OrderStatusTick> buildDeliveredStatuses() {
+        return new ArrayList<>(deliveredOnce.values());
     }
 
     private void recomputeAirportLoad(String airportCode) {
