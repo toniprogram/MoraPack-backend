@@ -62,6 +62,9 @@ export default function SimulacionPage() {
   const [downloadingReport, setDownloadingReport] = useState(false);
   const lastSimulationIdRef = useRef<string | null>(null);
 
+  const [filtroTexto, setFiltroTexto] = useState<string>('');
+  const [mostrarTodos, setMostrarTodos] = useState(false);
+
   useEffect(() => {
     statusRef.current = status;
   }, [status]);
@@ -142,7 +145,7 @@ export default function SimulacionPage() {
 
   // --- LÓGICA DE FILTRADO Y ORDEN PARA LOS PANELES ---
   const enviosCalc = useMemo(() => {
-    const term = (orderIdFilter || '').toLowerCase();
+    const term = (filtroTexto || '').toLowerCase();
     const prev = enviosHistoricos.current;
     const next = new Map(prev);
     const vistos = new Set<string>();
@@ -150,15 +153,24 @@ export default function SimulacionPage() {
     (orderPlans ?? []).forEach(p => planMap.set(p.orderId, p));
 
     (orderStatuses ?? []).forEach((os: OrderStatusTick) => {
-      if (!os || os.status === 'PLANNED') return; // ignoramos planificados para no poblar el panel
-      const matchSearch = term === '' || os.orderId.toLowerCase().includes(term);
-      if (!matchSearch) return;
-      if (selectedOrderIds && !selectedOrderIds.includes(os.orderId)) return;
+      //if (!os || os.status === 'PLANNED') return; // ignoramos planificados para no poblar el panel
+      //const matchSearch = term === '' || os.orderId.toLowerCase().includes(term);
+      //if (!matchSearch) return;
+      //if (selectedOrderIds && !selectedOrderIds.includes(os.orderId)) return;
+      if (!os) return;
+      let estado: EnvioInfo['estado'] = 'Planificado';
+      //const estado: EnvioInfo['estado'] =
+      //  os.status === 'READY_PICKUP' ? 'En tránsito'
+      //  : os.status === 'IN_TRANSIT' ? 'En tránsito'
+      //  : 'Planificado';
 
-      const estado: EnvioInfo['estado'] =
-        os.status === 'READY_PICKUP' ? 'En tránsito'
-        : os.status === 'IN_TRANSIT' ? 'En tránsito'
-        : 'Planificado';
+      if (os.status === 'READY_PICKUP' || os.status === 'IN_TRANSIT') {
+          estado = 'En tránsito';
+      } else if (os.status === 'DELIVERED') {
+          estado = 'Entregado';
+      } else if (os.status === 'PLANNED') {
+          estado = 'Planificado';
+      }
 
       const plan = planMap.get(os.orderId);
       next.set(os.orderId, {
@@ -179,13 +191,22 @@ export default function SimulacionPage() {
 
     enviosHistoricos.current = next;
 
-    const lista: EnvioInfo[] = Array.from(next.values());
+    let lista: EnvioInfo[] = Array.from(next.values());
+    if (term) {
+       lista = lista.filter(item => item.plan.orderId.toLowerCase().includes(term));
+    }
+    else if (!mostrarTodos) {
+       lista = lista.filter(item => item.estado === 'En tránsito');
+    }
+    if (selectedOrderIds && selectedOrderIds.length > 0) {
+      lista = lista.filter(item => selectedOrderIds.includes(item.plan.orderId));
+    }
     const stats = { entregas: 0, retrasados: 0 };
     lista.forEach(info => {
       if (info.estado === 'En tránsito') stats.retrasados += 1;
     });
     return { lista, stats };
-  }, [orderStatuses, selectedOrderIds, orderPlans, orderIdFilter]);
+  }, [orderStatuses, selectedOrderIds, orderPlans, orderIdFilter, filtroTexto]);
 
   // KPIs basados en lo que se muestra actualmente
   const enviosFiltrados = enviosCalc.lista;
@@ -269,8 +290,30 @@ export default function SimulacionPage() {
   }, [activeSegments, filtroHub]);
 
   const vuelosFiltrados = useMemo<FlightGroup[]>(() => {
-    return vuelosLive;
-  }, [vuelosLive]);
+        const term = filtroTexto.toLowerCase();
+        return vuelosLive.filter(v => {
+          if (!term) return true;
+          return (
+            v.flightId.toLowerCase().includes(term) ||
+            v.origen.toLowerCase().includes(term) ||
+            v.destino.toLowerCase().includes(term) ||
+            v.pedidos.some(p => p.toLowerCase().includes(term))
+          );
+        });
+    }, [vuelosLive, filtroTexto]);
+
+  const aeropuertosFiltrados = useMemo(() => {
+        const term = filtroTexto.toLowerCase();
+        return aeropuertos.filter(a => {
+          if (!term) return true;
+
+          const nameMatch = a.name?.toLowerCase().includes(term);
+          const cityMatch = (a as any).city?.toLowerCase().includes(term);
+          const codeMatch = (a.code || a.id)?.toLowerCase().includes(term);
+
+          return nameMatch || cityMatch || codeMatch;
+        });
+    }, [aeropuertos, filtroTexto]);
 
   const handleIniciarSimulacion = () => {
     const startUtc = ensureSeconds(startDate);
@@ -279,6 +322,7 @@ export default function SimulacionPage() {
     setSelectedOrderIds(null);
     setSelectedFlightId(null);
     setSelectedAirportIds(null);
+    setFiltroTexto('');
     const payload = {
       startDate: startUtc,
       endDate: endUtc,
@@ -299,6 +343,7 @@ export default function SimulacionPage() {
     setSelectedFlightId(null);
     setSelectedAirportIds(null);
     resetVisual();
+    setFiltroTexto('');
     setDialogInfo({
       titulo: 'Simulación terminada',
       mensaje: 'Se detuvo la simulación actual. Puedes descargar el reporte o iniciar una nueva corrida.',
@@ -419,10 +464,15 @@ export default function SimulacionPage() {
           onPausar={pausar}
           vistaPanel={vistaPanel}
           setVistaPanel={setVistaPanel}
+          filtroTexto={filtroTexto}
+          setFiltroTexto={setFiltroTexto}
           enviosFiltrados={enviosFiltrados}
           vuelosFiltrados={vuelosFiltrados}
+          aeropuertos={aeropuertosFiltrados}
+          mostrarTodos={mostrarTodos}
+          setMostrarTodos={setMostrarTodos}
           vuelosTotal={vuelosLive.length}
-          aeropuertos={aeropuertos}
+         //aeropuertos={aeropuertos}
           activeAirports={activeAirports}
           filtroHub={filtroHub}
           setFiltroHub={setFiltroHub}
