@@ -5,10 +5,11 @@ import type { LatLngExpression } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import planeIconUrl from '/images/plane-line.svg?url';
 import type { Airport } from '../../types/airport';
+
 import type { ActiveAirportTick } from '../../types/simulation';
-import type { SegmentoVuelo, VueloEnMovimiento } from '../../hooks/useSimulacion';
-import { Plane, Building } from 'lucide-react';
 import { OrdersList, type OrderLoadView } from '../simulacion/OrdersList';
+import type { SegmentoVuelo, VueloEnMovimiento } from '../../hooks/useOperacion';
+import { Plane, Box, Building } from 'lucide-react';
 
 // Iconos Default Leaflet
 const iconProto = L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown };
