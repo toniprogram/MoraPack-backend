@@ -36,7 +36,7 @@ export function SimTopBar({
     if (!tiempoSimulado) return null;
     return (
       <>
-        <div className="badge badge-neutral text-base-content text-[11px] leading-tight">
+        <div className="badge badge-neutral text-base-content text-[11px] leading-tight whitespace-nowrap">
           📅 Fecha Simulación: {tiempoSimulado.toLocaleDateString('es-PE', {
             day: '2-digit',
             month: 'short',
@@ -44,7 +44,7 @@ export function SimTopBar({
             timeZone: 'UTC'
           })}
         </div>
-        <div className="badge badge-neutral text-base-content text-[11px] leading-tight">
+        <div className="badge badge-neutral text-base-content text-[11px] leading-tight whitespace-nowrap">
            🕒Hora Simulación {tiempoSimulado.toLocaleTimeString('es-PE', {
               hour: '2-digit',
               minute: '2-digit',
@@ -81,8 +81,8 @@ export function SimTopBar({
   }, [tiempoSimulado, startDateString]);
 
   return (
-    <div className="bg-transparent shadow-none border-none px-3 py-2 flex justify-between items-start z-20">
-      <div className="flex gap-4 text-xs flex-col">
+    <div className="bg-transparent shadow-none border-none px-3 py-2 flex justify-between items-start z-20 w-full max-w-full overflow-hidden">
+      <div className="flex gap-4 text-xs flex-col flex-shrink-0">
         <div className="flex gap-4">
           <div className="flex items-center gap-1.5 tooltip tooltip-bottom" data-tip="Entregados">
             <Check size={16} className="text-success" />
@@ -102,7 +102,7 @@ export function SimTopBar({
           <div className="font-mono font-bold text-success text-sm">{capacidadFlotaPct}%</div>
         </div>
       </div>
-      <div className="flex items-start gap-3">
+      <div className="flex items-center gap-2 flex-wrap flex-shrink min-w-0">
         <div className="text-xs tooltip tooltip-bottom" data-tip="Pedidos procesados por el backend">
           <span className="font-mono font-semibold">{reloj}</span>
         </div>
@@ -112,23 +112,21 @@ export function SimTopBar({
           <span className="badge badge-outline font-mono">{engineSpeed}x</span>
         </div>
 
-        <div className="flex gap-2 items-center">
-          {badgesTiempo}
-          {tiempoEjecucionSim && (
-            <div className="tooltip tooltip-bottom" data-tip="Tiempo de ejecución simulado">
-              <div className="badge badge-neutral text-base-content text-[11px] leading-tight">
-                ⏳ {tiempoEjecucionSim}
-              </div>
+        {badgesTiempo}
+        {tiempoEjecucionSim && (
+          <div className="tooltip tooltip-bottom" data-tip="Tiempo de ejecución simulado">
+            <div className="badge badge-neutral text-base-content text-[11px] leading-tight whitespace-nowrap">
+              ⏳ {tiempoEjecucionSim}
             </div>
-          )}
-          {estaActivo && startRealMs !== null && (
-            <div className="tooltip tooltip-bottom" data-tip="Tiempo real desde inicio">
-              <div className="badge badge-warning badge-outline text-[11px]">
-                ⏱️ {formatElapsed(elapsedRealMs)}
-              </div>
+          </div>
+        )}
+        {estaActivo && startRealMs !== null && (
+          <div className="tooltip tooltip-bottom" data-tip="Tiempo real desde inicio">
+            <div className="badge badge-warning badge-outline text-[11px] whitespace-nowrap">
+              ⏱️ {formatElapsed(elapsedRealMs)}
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );
