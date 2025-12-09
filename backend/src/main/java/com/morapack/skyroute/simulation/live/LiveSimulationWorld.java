@@ -38,6 +38,8 @@ public class LiveSimulationWorld {
     // Para emitir estado final de entregados una sola vez
     private final Set<String> deliveredEmitted = new HashSet<>();
     private final Map<String, OrderStatusTick> deliveredOnce = new HashMap<>();
+    // Para emitir planificados una sola vez cuando se agrega plan
+    private final Map<String, OrderStatusTick> plannedOnce = new HashMap<>();
 
     public LiveSimulationWorld(String simulationId,
                                Instant startTime,
@@ -347,6 +349,19 @@ public class LiveSimulationWorld {
 
     public List<OrderStatusTick> buildDeliveredStatuses() {
         return new ArrayList<>(deliveredOnce.values());
+    }
+
+    public List<OrderStatusTick> buildPlannedStatuses() {
+        List<OrderStatusTick> planned = new ArrayList<>(plannedOnce.values());
+        plannedOnce.clear(); // emit once
+        return planned;
+    }
+
+    public void registerPlanned(OrderStatusTick planned) {
+        if (planned == null || planned.orderId() == null) {
+            return;
+        }
+        plannedOnce.put(planned.orderId(), planned);
     }
 
     private void recomputeAirportLoad(String airportCode) {

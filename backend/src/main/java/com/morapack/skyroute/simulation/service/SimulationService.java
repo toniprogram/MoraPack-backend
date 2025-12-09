@@ -14,6 +14,7 @@ import com.morapack.skyroute.plan.service.WorldBuilder;
 import com.morapack.skyroute.orders.repository.OrderRepository;
 import com.morapack.skyroute.simulation.dto.*;
 import com.morapack.skyroute.simulation.live.*;
+import com.morapack.skyroute.simulation.dto.SimulationRoute;
 import com.morapack.skyroute.simulation.dto.OrderStatusTick;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -536,6 +537,10 @@ public class SimulationService {
         Map<String, Map<String, Integer>> inventory = session.liveWorld.getAirportInventory();
         List<OrderStatusTick> orderStatuses = session.liveWorld.buildOrderStatuses();
         List<OrderStatusTick> deliveredStatuses = session.liveWorld.buildDeliveredStatuses();
+        List<OrderStatusTick> plannedStatuses = session.liveWorld.buildPlannedStatuses();
+        if (plannedStatuses != null && !plannedStatuses.isEmpty()) {
+            log.debug("[SIM:{}] Enviando planificados en tick: {}", session.id, plannedStatuses.stream().map(OrderStatusTick::orderId).toList());
+        }
 
         // filtrar planes: solo pedidos activos (no planificados)
         Set<String> activeOrderIds = new HashSet<>();
@@ -590,8 +595,23 @@ public class SimulationService {
             SimulationOrderPlan prev = session.lastPlans.get(id);
             if (prev == null) {
                 added.add(plan);
+                // marcar planificados una sola vez
+                if (session.liveWorld != null) {
+                    var planned = new OrderStatusTick(id, "PLANNED", "", plan.routes() != null && !plan.routes().isEmpty()
+                            ? plan.routes().stream().mapToInt(SimulationRoute::quantity).sum()
+                            : 0);
+                    session.liveWorld.registerPlanned(planned);
+                    log.debug("[SIM:{}] Pedido planificado emitido una vez: {}", session.id, id);
+                }
             } else if (!prev.equals(plan)) {
                 updated.add(plan);
+                if (session.liveWorld != null) {
+                    var planned = new OrderStatusTick(id, "PLANNED", "", plan.routes() != null && !plan.routes().isEmpty()
+                            ? plan.routes().stream().mapToInt(SimulationRoute::quantity).sum()
+                            : 0);
+                    session.liveWorld.registerPlanned(planned);
+                    log.debug("[SIM:{}] Pedido planificado reemitido por actualización: {}", session.id, id);
+                }
             }
         });
         session.lastPlans = currentMap;
@@ -599,7 +619,7 @@ public class SimulationService {
 
         // orderPlans se envía vacío para reducir payload; diffs llevan los cambios
         List<SimulationOrderPlan> orderPlans = List.of();
-        return new SimulationTick(session.id.toString(), simTime, realElapsedMs, speed, status, session.collapseMessage, orderPlans, diff, actives, airportTicks, deliveredOrders, inTransitOrders, orderStatuses, deliveredStatuses);
+        return new SimulationTick(session.id.toString(), simTime, realElapsedMs, speed, status, session.collapseMessage, orderPlans, diff, actives, airportTicks, deliveredOrders, inTransitOrders, orderStatuses, deliveredStatuses, plannedStatuses);
     }
 
     private SimulationSegment toSegmentDto(RouteSegment segment) {

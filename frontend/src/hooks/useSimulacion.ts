@@ -97,6 +97,7 @@ export const useSimulacion = () => {
   const [inTransitOrders, setInTransitOrders] = useState(0);
   const [orderStatuses, setOrderStatuses] = useState<OrderStatusTick[]>([]);
   const [deliveredLog, setDeliveredLog] = useState<{ orderId: string; quantity: number; location: string; simTime: string }[]>([]);
+  const [plannedLog, setPlannedLog] = useState<{ orderId: string; simTime: string }[]>([]);
   const [orderPlansLive, setOrderPlansLive] = useState<SimulationOrderPlan[]>([]);
   const [animPaused, setAnimPaused] = useState(false);
   const firstSimTickMsRef = useRef<number | null>(null);
@@ -112,6 +113,7 @@ export const useSimulacion = () => {
   const prewarmStorageKey = 'sim_prewarm_token';
   const firstSnapshotLoggedRef = useRef(false);
   const deliveredRef = useRef<Map<string, { orderId: string; quantity: number; location: string; simTime: string }>>(new Map());
+  const plannedRef = useRef<Set<string>>(new Set());
   const [prewarmToken, setPrewarmToken] = useState<string | null>(() => {
     try {
       return localStorage.getItem(prewarmStorageKey);
@@ -422,6 +424,19 @@ export const useSimulacion = () => {
           }
         });
       }
+      if (renderTick.plannedStatuses?.length) {
+        const newPlanned: { orderId: string; simTime: string }[] = [];
+        renderTick.plannedStatuses.forEach(ps => {
+          if (!ps || !ps.orderId) return;
+          if (plannedRef.current.has(ps.orderId)) return;
+          plannedRef.current.add(ps.orderId);
+          newPlanned.push({ orderId: ps.orderId, simTime: renderTick.simTime });
+          console.log('[SIM] Pedido planificado en tick:', ps.orderId);
+        });
+        if (newPlanned.length > 0) {
+          setPlannedLog(prev => [...newPlanned, ...prev]);
+        }
+      }
     }
     // orderPlans completos (fallback) o diffs
     const simTimeKey = renderTick.simTime ?? '';
@@ -573,6 +588,8 @@ export const useSimulacion = () => {
     preprocNotifiedRef.current = false;
     deliveredRef.current.clear();
     setDeliveredLog([]);
+    plannedRef.current.clear();
+    setPlannedLog([]);
     const enriched: SimulationStartRequest = {
       ...payload,
       prewarmToken: prewarmToken || undefined,
@@ -641,6 +658,8 @@ export const useSimulacion = () => {
     setOrderStatuses([]);
     deliveredRef.current.clear();
     setDeliveredLog([]);
+    plannedRef.current.clear();
+    setPlannedLog([]);
     setPrewarmToken(null);
     prewarmRequested.current = false;
     setOrderPlansLive([]);
@@ -687,6 +706,8 @@ export const useSimulacion = () => {
     prewarmRequested.current = false;
     deliveredRef.current.clear();
     setDeliveredLog([]);
+    plannedRef.current.clear();
+    setPlannedLog([]);
   };
 
   return {
@@ -725,5 +746,6 @@ export const useSimulacion = () => {
     notificacion,
     setNotificacion,
     deliveredLog,
+    plannedLog,
   };
 };

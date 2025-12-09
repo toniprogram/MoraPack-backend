@@ -25,10 +25,10 @@
       status: string;
       filtroTexto: string;
       setFiltroTexto: Dispatch<SetStateAction<string>>;
-      mostrarTodos: boolean;
-      setMostrarTodos: Dispatch<SetStateAction<boolean>>;
-      vistaPanel: 'envios' | 'vuelos' | 'aeropuertos';
-    }
+  filtroEstado: 'enproceso' | 'planificados' | 'entregados' | 'todos';
+  setFiltroEstado: Dispatch<SetStateAction<'enproceso' | 'planificados' | 'entregados' | 'todos'>>;
+  vistaPanel: 'envios' | 'vuelos' | 'aeropuertos';
+}
 
     export function SidebarFilters({
       ordenesParaSimular,
@@ -50,13 +50,13 @@
       setFiltroHub,
       selectedOrderIds,
       clearSelectedOrders,
-      status,
-      filtroTexto,
-      setFiltroTexto,
-      mostrarTodos,
-      setMostrarTodos,
-      vistaPanel,
-    }: SidebarFiltersProps) {
+  status,
+  filtroTexto,
+  setFiltroTexto,
+  filtroEstado,
+  setFiltroEstado,
+  vistaPanel,
+}: SidebarFiltersProps) {
       const inputsBloqueados = status !== 'idle' && status !== 'completed';
       const formatLocalNoSeconds = (d: Date) => {
         const pad = (n: number) => String(n).padStart(2, '0');
@@ -186,17 +186,35 @@
             </div>
             {vistaPanel === 'envios' && (
               <div className="form-control">
-                <label className="label cursor-pointer justify-start gap-2 py-0">
-                  <input
-                    type="checkbox"
-                    className="toggle toggle-xs toggle-primary"
-                    checked={mostrarTodos}
-                    onChange={(e) => setMostrarTodos(e.target.checked)}
-                  />
-                  <span className="label-text text-xs text-base-content/80">
-                    Mostrar entregados y planificados
-                  </span>
-                </label>
+                <span className="block uppercase tracking-wide text-[10px] text-base-content/70 mb-1">
+                  Estado
+                </span>
+                <div className="btn-group w-full">
+                  <button
+                    className={`btn btn-xs flex-1 rounded-none first:rounded-l-md ${filtroEstado === 'enproceso' ? 'btn-active' : ''}`}
+                    onClick={() => setFiltroEstado('enproceso')}
+                  >
+                    En proceso
+                  </button>
+                  <button
+                    className={`btn btn-xs flex-1 rounded-none ${filtroEstado === 'planificados' ? 'btn-active' : ''}`}
+                    onClick={() => setFiltroEstado('planificados')}
+                  >
+                    Planificados
+                  </button>
+                  <button
+                    className={`btn btn-xs flex-1 rounded-none ${filtroEstado === 'entregados' ? 'btn-active' : ''}`}
+                    onClick={() => setFiltroEstado('entregados')}
+                  >
+                    Entregados
+                  </button>
+                  <button
+                    className={`btn btn-xs flex-1 rounded-none last:rounded-r-md ${filtroEstado === 'todos' ? 'btn-active' : ''}`}
+                    onClick={() => setFiltroEstado('todos')}
+                  >
+                    Todos
+                  </button>
+                </div>
               </div>
             )}
             <div>

@@ -87,6 +87,7 @@ export interface SimulationTick {
   inTransitOrders?: number;
   orderStatuses?: OrderStatusTick[];
   deliveredStatuses?: OrderStatusTick[];
+  plannedStatuses?: OrderStatusTick[];
 }
 
 export interface OrderStatusTick {

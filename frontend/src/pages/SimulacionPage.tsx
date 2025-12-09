@@ -39,6 +39,8 @@ export default function SimulacionPage() {
       conectarSimulacion,
       notificacion,
       setNotificacion,
+      deliveredLog,
+      plannedLog: plannedLogState = [],
   } = useSimulacion();
   const location = useLocation();
 
@@ -61,9 +63,9 @@ export default function SimulacionPage() {
   const statusRef = useRef(status);
   const [downloadingReport, setDownloadingReport] = useState(false);
   const lastSimulationIdRef = useRef<string | null>(null);
+  const [filtroEstado, setFiltroEstado] = useState<'enproceso' | 'planificados' | 'entregados' | 'todos'>('enproceso');
 
   const [filtroTexto, setFiltroTexto] = useState<string>('');
-  const [mostrarTodos, setMostrarTodos] = useState(false);
 
   useEffect(() => {
     statusRef.current = status;
@@ -146,57 +148,59 @@ export default function SimulacionPage() {
   // --- LÓGICA DE FILTRADO Y ORDEN PARA LOS PANELES ---
   const enviosCalc = useMemo(() => {
     const term = (filtroTexto || '').toLowerCase();
-    const prev = enviosHistoricos.current;
-    const next = new Map(prev);
-    const vistos = new Set<string>();
+    const next = new Map<string, EnvioInfo>();
     const planMap = new Map<string, SimulationOrderPlan>();
     (orderPlans ?? []).forEach(p => planMap.set(p.orderId, p));
 
-    (orderStatuses ?? []).forEach((os: OrderStatusTick) => {
-      //if (!os || os.status === 'PLANNED') return; // ignoramos planificados para no poblar el panel
-      //const matchSearch = term === '' || os.orderId.toLowerCase().includes(term);
-      //if (!matchSearch) return;
-      //if (selectedOrderIds && !selectedOrderIds.includes(os.orderId)) return;
+    const merged = new Map<string, { status: string; simTime?: string; quantity?: number }>();
+    (orderStatuses ?? []).forEach(os => {
       if (!os) return;
-      let estado: EnvioInfo['estado'] = 'Planificado';
-      //const estado: EnvioInfo['estado'] =
-      //  os.status === 'READY_PICKUP' ? 'En tránsito'
-      //  : os.status === 'IN_TRANSIT' ? 'En tránsito'
-      //  : 'Planificado';
+      merged.set(os.orderId, { status: os.status || '', simTime: undefined, quantity: os.quantity });
+    });
+    deliveredLog.forEach(entry => {
+      merged.set(entry.orderId, { status: 'DELIVERED', simTime: entry.simTime, quantity: entry.quantity });
+    });
+    plannedLogState.forEach(entry => {
+      if (!merged.has(entry.orderId)) {
+        merged.set(entry.orderId, { status: 'PLANNED', simTime: entry.simTime, quantity: 0 });
+      }
+    });
 
-      if (os.status === 'READY_PICKUP' || os.status === 'IN_TRANSIT') {
+    merged.forEach((info, orderId) => {
+      const statusUpper = (info.status || '').toUpperCase();
+      const includeEstado =
+        filtroEstado === 'todos'
+          ? true
+          : filtroEstado === 'planificados'
+            ? statusUpper === 'PLANNED'
+            : filtroEstado === 'entregados'
+              ? statusUpper === 'DELIVERED'
+              : statusUpper !== 'PLANNED' && statusUpper !== 'DELIVERED';
+      if (!includeEstado) return;
+
+      const matchSearch = term === '' || orderId.toLowerCase().includes(term);
+      if (!matchSearch) return;
+      if (selectedOrderIds && !selectedOrderIds.includes(orderId)) return;
+
+      let estado: EnvioInfo['estado'] = 'Planificado';
+      if (statusUpper === 'READY_PICKUP' || statusUpper === 'IN_TRANSIT') {
           estado = 'En tránsito';
-      } else if (os.status === 'DELIVERED') {
+      } else if (statusUpper === 'DELIVERED') {
           estado = 'Entregado';
-      } else if (os.status === 'PLANNED') {
-          estado = 'Planificado';
       }
 
-      const plan = planMap.get(os.orderId);
-      next.set(os.orderId, {
-        plan: plan ?? { orderId: os.orderId, slackMinutes: 0, routes: [] } as SimulationOrderPlan,
+      const plan = planMap.get(orderId);
+      next.set(orderId, {
+        plan: plan ?? { orderId, slackMinutes: 0, routes: [] } as SimulationOrderPlan,
         estado,
-        creationMs: 0,
+        creationMs: info.simTime ? Date.parse(info.simTime) : 0,
         arrivalMs: 0
       });
-      vistos.add(os.orderId);
     });
-
-    // limpiar antiguos entregados
-    Array.from(next.keys()).forEach(id => {
-      if (!vistos.has(id)) {
-        next.delete(id);
-      }
-    });
-
-    enviosHistoricos.current = next;
 
     let lista: EnvioInfo[] = Array.from(next.values());
     if (term) {
        lista = lista.filter(item => item.plan.orderId.toLowerCase().includes(term));
-    }
-    else if (!mostrarTodos) {
-       lista = lista.filter(item => item.estado === 'En tránsito');
     }
     if (selectedOrderIds && selectedOrderIds.length > 0) {
       lista = lista.filter(item => selectedOrderIds.includes(item.plan.orderId));
@@ -206,7 +210,7 @@ export default function SimulacionPage() {
       if (info.estado === 'En tránsito') stats.retrasados += 1;
     });
     return { lista, stats };
-  }, [orderStatuses, selectedOrderIds, orderPlans, orderIdFilter, filtroTexto]);
+  }, [orderStatuses, selectedOrderIds, orderPlans, orderIdFilter, filtroTexto, filtroEstado, deliveredLog, plannedLogState]);
 
   // KPIs basados en lo que se muestra actualmente
   const enviosFiltrados = enviosCalc.lista;
@@ -464,13 +468,13 @@ export default function SimulacionPage() {
           onPausar={pausar}
           vistaPanel={vistaPanel}
           setVistaPanel={setVistaPanel}
+          filtroEstado={filtroEstado}
+          setFiltroEstado={setFiltroEstado}
           filtroTexto={filtroTexto}
           setFiltroTexto={setFiltroTexto}
           enviosFiltrados={enviosFiltrados}
           vuelosFiltrados={vuelosFiltrados}
           aeropuertos={aeropuertosFiltrados}
-          mostrarTodos={mostrarTodos}
-          setMostrarTodos={setMostrarTodos}
           vuelosTotal={vuelosLive.length}
          //aeropuertos={aeropuertos}
           activeAirports={activeAirports}
