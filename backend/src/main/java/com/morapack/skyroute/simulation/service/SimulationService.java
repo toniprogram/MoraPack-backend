@@ -16,6 +16,7 @@ import com.morapack.skyroute.simulation.dto.*;
 import com.morapack.skyroute.simulation.live.*;
 import com.morapack.skyroute.simulation.dto.SimulationRoute;
 import com.morapack.skyroute.simulation.dto.OrderStatusTick;
+import com.morapack.skyroute.simulation.dto.SimulationPlanSummary;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -447,6 +448,18 @@ public class SimulationService {
         session.update(snapshot);
         persistDiff(session, snapshot);
         persistSnapshot(session, snapshot);
+        // Build detailed updates for frontend cache (nuevos/actualizados)
+        List<SimulationOrderPlan> detailedUpdates = new ArrayList<>();
+        Map<String, SimulationOrderPlan> detailsMap = new HashMap<>(session.lastDetails);
+        best.getPlans().forEach(p -> {
+            SimulationOrderPlan dto = toOrderPlanDto(p);
+            SimulationOrderPlan prev = detailsMap.get(dto.orderId());
+            if (prev == null || !prev.equals(dto)) {
+                detailedUpdates.add(dto);
+                detailsMap.put(dto.orderId(), dto);
+            }
+        });
+        session.lastDetails = detailsMap;
         if (session.liveWorld != null && best.getPlans() != null) {
             best.getPlans().forEach(p -> {
                 var plannedTick = new OrderStatusTick(
@@ -465,7 +478,7 @@ public class SimulationService {
         // Enviamos snapshot de avance (sin tick) para liberar overlay en frontend sin duplicar ticks
         messagingTemplate.convertAndSend(
                 topic(session.id),
-                SimulationMessage.progress(session.id.toString(), snapshot, null)
+                SimulationMessage.progress(session.id.toString(), snapshot, null, detailedUpdates.isEmpty() ? null : detailedUpdates)
         );
         // Arrancamos ticker y cronómetro real solo después del primer GA
         if (session.realStartMillis == 0) {
@@ -660,6 +673,15 @@ public class SimulationService {
                     return new SimulationOrderPlan(p.orderId(), slack, routes);
                 })
                 .toList();
+        List<SimulationPlanSummary> planSummaries = currentPlans.stream()
+                .map(p -> new SimulationPlanSummary(
+                        p.orderId(),
+                        p.slackMinutes(),
+                        p.routes() != null && !p.routes().isEmpty()
+                                ? p.routes().get(0).segments()
+                                : List.of()
+                ))
+                .toList();
         List<ActiveAirportTick> airportTicks = session.liveWorld.getAirports().values().stream()
                 .map(a -> {
                     var inv = inventory.getOrDefault(a.getAirportCode(), Map.of());
@@ -688,28 +710,10 @@ public class SimulationService {
         // calcular diff de planes
         Map<String, SimulationOrderPlan> currentMap = new HashMap<>();
         currentPlans.forEach(p -> currentMap.put(p.orderId(), p));
-        List<SimulationOrderPlan> added = new ArrayList<>();
-        List<SimulationOrderPlan> updated = new ArrayList<>();
-        List<String> removed = new ArrayList<>();
-
-        session.lastPlans.forEach((id, plan) -> {
-            if (!currentMap.containsKey(id)) {
-                removed.add(id);
-            }
-        });
-        // Si es la primera vez (lastPlans vacío) evitamos un diff masivo de removals
-        if (session.lastPlans.isEmpty()) {
-            removed.clear();
-        }
-        currentMap.forEach((id, plan) -> {
-            SimulationOrderPlan prev = session.lastPlans.get(id);
-            if (prev == null) {
-                added.add(plan);
-            } else if (!prev.equals(plan)) {
-                updated.add(plan);
-            }
-        });
-        log.debug("[SIM:{}] Diff planes -> added:{} updated:{} removed:{}", session.id, added.size(), updated.size(), removed.size());
+        // No enviamos diffs pesados en cada tick; snapshots/GA commits llevan el detalle completo
+        List<SimulationOrderPlan> added = List.of();
+        List<SimulationOrderPlan> updated = List.of();
+        List<String> removed = List.of();
         session.lastPlans = currentMap;
         List<String> nowInTransit = new ArrayList<>();
         statusMap.forEach((id, st) -> {
@@ -725,7 +729,7 @@ public class SimulationService {
 
         // orderPlans se envía vacío para reducir payload; diffs llevan los cambios
         List<SimulationOrderPlan> orderPlans = List.of();
-        return new SimulationTick(session.id.toString(), simTime, realElapsedMs, speed, status, session.collapseMessage, orderPlans, diff, actives, airportTicks, deliveredOrders, inTransitOrders, orderStatuses, deliveredStatuses, plannedStatuses, nowInTransit);
+        return new SimulationTick(session.id.toString(), simTime, realElapsedMs, speed, status, session.collapseMessage, orderPlans, diff, actives, airportTicks, deliveredOrders, inTransitOrders, orderStatuses, deliveredStatuses, plannedStatuses, nowInTransit, planSummaries);
     }
 
     private SimulationSegment toSegmentDto(RouteSegment segment) {
@@ -933,6 +937,7 @@ public class SimulationService {
         private volatile LiveSimulationWorld liveWorld;
         private volatile Map<String, SimulationOrderPlan> lastPlans = new HashMap<>();
         private volatile Map<String, String> lastStatuses = new HashMap<>();
+        private volatile Map<String, SimulationOrderPlan> lastDetails = new HashMap<>();
         private volatile long lastClientPingMillis = System.currentTimeMillis();
         private volatile String collapseMessage;
 

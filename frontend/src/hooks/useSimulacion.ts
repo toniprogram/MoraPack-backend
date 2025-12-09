@@ -115,6 +115,7 @@ export const useSimulacion = () => {
   const firstSnapshotLoggedRef = useRef(false);
   const deliveredRef = useRef<Map<string, { orderId: string; quantity: number; location: string; simTime: string }>>(new Map());
   const plannedRef = useRef<Set<string>>(new Set());
+  const orderDetailsCacheRef = useRef<Map<string, SimulationOrderPlan>>(new Map());
   const [prewarmToken, setPrewarmToken] = useState<string | null>(() => {
     try {
       return localStorage.getItem(prewarmStorageKey);
@@ -238,6 +239,14 @@ export const useSimulacion = () => {
         client.subscribe(TOPIC_PREFIX + simulationId, (message) => {
           const simMessage: SimulationMessage = JSON.parse(message.body);
           const tick: SimulationTick | null | undefined = simMessage.tick;
+          if (simMessage.orderDetailsUpdate && simMessage.orderDetailsUpdate.length > 0) {
+            const cache = orderDetailsCacheRef.current;
+            simMessage.orderDetailsUpdate.forEach(plan => {
+              if (plan?.orderId) {
+                cache.set(plan.orderId, plan);
+              }
+            });
+          }
           if (tick?.deliveredStatuses && tick.deliveredStatuses.length > 0) {
             console.log('[SIM] Entregados en tick:', tick.deliveredStatuses);
           }

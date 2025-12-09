@@ -16,6 +16,12 @@ export interface SimulationRoute {
   segments: SimulationSegment[];
 }
 
+export interface SimulationPlanSummary {
+  orderId: string;
+  slackMinutes: number;
+  segments?: SimulationSegment[];
+}
+
 // Corresponde a SimulationOrderPlan.java
 export interface SimulationOrderPlan {
   orderId: string;
@@ -50,6 +56,7 @@ export interface SimulationMessage {
   snapshot: SimulationSnapshot | null;
   tick?: SimulationTick | null;
   error: string | null;
+  orderDetailsUpdate?: SimulationOrderPlan[] | null;
 }
 
 export interface ActiveSegmentTick {
@@ -89,6 +96,7 @@ export interface SimulationTick {
   deliveredStatuses?: OrderStatusTick[];
   plannedStatuses?: OrderStatusTick[];
   nowInTransitIds?: string[];
+  planSummaries?: SimulationPlanSummary[];
 }
 
 export interface OrderStatusTick {
