@@ -31,4 +31,6 @@ public interface OrderRepository extends JpaRepository<Order, String> {
     Page<Order> findAllByScope(OrderScope scope, Pageable pageable);
 
     long countByScope(OrderScope scope);
+
+    long countByScopeAndCreationUtcBetween(OrderScope scope, Instant start, Instant end);
 }

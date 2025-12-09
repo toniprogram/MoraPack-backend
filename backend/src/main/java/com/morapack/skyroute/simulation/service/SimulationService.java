@@ -46,6 +46,7 @@ import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -53,7 +54,7 @@ import java.util.stream.Collectors;
 public class SimulationService {
 
     private static final String TOPIC_PREFIX = "/topic/simulations/";
-    private static final double DEFAULT_SIM_SPEED = 500.0;
+    private static final double DEFAULT_SIM_SPEED = 112.0;
     private final Random random = new Random();
     private final WorldBuilder worldBuilder;
     private final OrderRepository orderRepository;
@@ -77,29 +78,35 @@ public class SimulationService {
 
     public SimulationStartResponse startSimulation(SimulationStartRequest request) {
         TimeRange range = resolveRange(request);
+        int windowMinutesResolved = 112;
         long fetchStart = System.nanoTime();
-        List<Order> projectedOrders = orderRepository
-                .findAllByScopeAndCreationUtcBetweenOrderByCreationUtcAsc(
-                        OrderScope.PROJECTED,
-                        range.start(),
-                        range.end()
-                );
-        log.info("[SIM] Loaded {} projected orders in {} ms (range {} - {})",
-                projectedOrders.size(),
-                nanosToMillis(System.nanoTime() - fetchStart),
-                range.start(),
-                range.end());
-        if (projectedOrders.isEmpty()) {
+        long totalCount = orderRepository.countByScopeAndCreationUtcBetween(OrderScope.PROJECTED, range.start(), range.end());
+        if (totalCount == 0) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
                     "No projected orders found for the selected range"
             );
         }
+        Instant firstWindowEnd = windowMinutesResolved > 0
+                ? range.start().plus(Duration.ofMinutes(windowMinutesResolved))
+                : range.end();
+        long firstLoadStartMs = System.currentTimeMillis();
+        List<Order> projectedOrders = orderRepository
+                .findAllByScopeAndCreationUtcBetweenOrderByCreationUtcAsc(
+                        OrderScope.PROJECTED,
+                        range.start(),
+                        firstWindowEnd
+                );
+        long firstLoadElapsedMs = System.currentTimeMillis() - firstLoadStartMs;
+        log.info("[SIM] Loaded {} projected orders (first window) in {} ms (range {} - {})",
+                projectedOrders.size(),
+                nanosToMillis(System.nanoTime() - fetchStart),
+                range.start(),
+                firstWindowEnd);
 
         UUID simulationId = UUID.randomUUID();
-        SimulationSession session = new SimulationSession(simulationId, projectedOrders.size());
+        SimulationSession session = new SimulationSession(simulationId, (int) totalCount);
         session.simStartInstant = range.start();
-        session.realStartMillis = System.currentTimeMillis();
         session.touch();
         session.simSpeed = DEFAULT_SIM_SPEED;
         sessions.put(simulationId, session);
@@ -146,14 +153,8 @@ public class SimulationService {
             log.warn("[SIM:{}] Unable to prepare snapshot file: {}", simulationId, ex.getMessage());
         }
 
-        int windowMinutes = request != null && request.windowMinutes() != null
-                ? request.windowMinutes()
-                : Config.SIMULATION_WINDOW_MINUTES;
-        if (windowMinutes < 0) {
-            windowMinutes = 0;
-        }
         log.info("[SIM] windowMinutes resolved to {} (request={}, default={})",
-                windowMinutes,
+                windowMinutesResolved,
                 request != null ? request.windowMinutes() : null,
                 Config.SIMULATION_WINDOW_MINUTES);
         boolean useHeuristicSeed = request != null && Boolean.TRUE.equals(request.useHeuristicSeed());
@@ -161,14 +162,13 @@ public class SimulationService {
             session.endInstant = toUtc(request.endDate());
         }
 
-        final int finalWindowMinutes = windowMinutes;
+        final int finalWindowMinutes = windowMinutesResolved;
         final boolean heuristicSeedEnabled = useHeuristicSeed;
         if (finalWindowMinutes > 0) {
-            executorService.submit(() -> runSimulationBatched(session, projectedOrders, simulationWorldFinal, finalWindowMinutes, rangeStart, heuristicSeedEnabled));
+            executorService.submit(() -> runSimulationBatched(session, simulationWorldFinal, finalWindowMinutes, rangeStart, range.end(), heuristicSeedEnabled, projectedOrders));
         } else {
             executorService.submit(() -> runSimulationLegacy(session, projectedOrders, simulationWorldFinal, heuristicSeedEnabled));
         }
-        startTicker(session);
 
         return new SimulationStartResponse(simulationId.toString());
     }
@@ -276,45 +276,97 @@ public class SimulationService {
     }
 
     private void runSimulationBatched(SimulationSession session,
-                                      List<Order> orders,
                                       World world,
                                       int windowMinutes,
                                       Instant windowStart,
-                                      boolean useHeuristicSeed) {
-        List<OrderWindow> batches = groupOrdersByWindow(orders, windowMinutes, windowStart);
+                                      Instant rangeEnd,
+                                      boolean useHeuristicSeed,
+                                      List<Order> initialOrders) {
         List<Order> demand = new ArrayList<>();
         Individual previousBest = null;
         Duration windowDuration = Duration.ofMinutes(windowMinutes);
         int batchesProcessed = 0;
+        Instant cursorStart = windowStart;
+        long scheduleStartMillis = 0L;
         try {
-            log.info("[SIM:{}] Starting batched simulation: {} orders grouped in {} windows of {} minutes",
-                    session.id, orders.size(), batches.size(), windowMinutes);
-            for (int batchIndex = 0; batchIndex < batches.size(); batchIndex++) {
+            log.info("[SIM:{}] Starting batched simulation (window={} minutes)", session.id, windowMinutes);
+            int batchIndex = 0;
+            List<Order> batch = initialOrders;
+            while (true) {
+                long now = System.currentTimeMillis();
+                if (scheduleStartMillis == 0L) {
+                    scheduleStartMillis = now;
+                }
+                long targetStart = scheduleStartMillis + batchIndex * 60_000L;
+                long targetEnd = targetStart + 60_000L;
+                if (targetEnd <= now) {
+                    log.warn("[SIM:{}] GA schedule drifted (now={} ms past target end); resetting slot to now", session.id, now - targetEnd);
+                    targetStart = now;
+                    targetEnd = now + 60_000L;
+                    scheduleStartMillis = now; // resync cadence
+                }
+                long waitMs = targetStart - now;
+                while (waitMs > 0 && !session.cancelled.get()) {
+                    waitIfPaused(session);
+                    long step = Math.min(200L, waitMs);
+                    try {
+                        Thread.sleep(step);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                    waitMs -= step;
+                }
                 waitIfPaused(session);
                 if (session.cancelled.get()) {
                     log.warn("[SIM:{}] Simulation cancelled before batch {}", session.id, batchIndex + 1);
                     break;
                 }
-                OrderWindow window = batches.get(batchIndex);
-                List<Order> batch = window.orders();
-                log.debug("[SIM:{}] Processing batch {} of {} ({} orders)", session.id, batchIndex + 1, batches.size(), batch.size());
-                Instant snapshotInstant = window.windowStart().plus(windowDuration);
+                Instant windowEnd = cursorStart.plus(windowDuration);
+                if (rangeEnd != null && windowEnd.isAfter(rangeEnd)) {
+                    windowEnd = rangeEnd;
+                }
+                if (batch == null) {
+                    List<Order> fetched = orderRepository.findAllByScopeAndCreationUtcBetweenOrderByCreationUtcAsc(
+                            OrderScope.PROJECTED,
+                            cursorStart,
+                            windowEnd
+                    );
+                    batch = fetched;
+                }
+                if (batch == null || batch.isEmpty()) {
+                    log.info("[SIM:{}] No more orders to process at window start {}", session.id, cursorStart);
+                    break;
+                }
+                batch.forEach(o -> session.liveWorld.registerOrder(o));
+                log.debug("[SIM:{}] Processing batch {} ({} orders)", session.id, batchIndex + 1, batch.size());
+                Instant snapshotInstant = windowEnd;
                 log.info("[SIM:{}] Invoking processBatch for batch {} (orders so far={})", session.id, batchIndex + 1, demand.size());
-                previousBest = processBatch(session, world, previousBest, demand, batch, orders.size(), snapshotInstant, useHeuristicSeed);
-            batchesProcessed++;
-            log.info("[SIM:{}] Finished batch {} of {} (demand size={}, processed total={})",
-                    session.id, batchIndex + 1, batches.size(), demand.size(), session.processed.get());
-            if (session.collapsed.get()) {
-                log.warn("[SIM:{}] Stopping batch processing due to logistic collapse", session.id);
-                break;
+                previousBest = processBatch(session, world, previousBest, demand, batch, session.totalOrders, snapshotInstant, useHeuristicSeed, targetEnd);
+                batchesProcessed++;
+                log.info("[SIM:{}] Finished batch {} (demand size={}, processed total={})",
+                        session.id, batchIndex + 1, demand.size(), session.processed.get());
+                if (session.collapsed.get()) {
+                    log.warn("[SIM:{}] Stopping batch processing due to logistic collapse", session.id);
+                    break;
+                }
+                if (session.endInstant != null && cursorStart.isAfter(session.endInstant)) {
+                    log.warn("[SIM:{}] Reached end window {}; stopping GA batches", session.id, session.endInstant);
+                    break;
+                }
+                cursorStart = windowEnd;
+                if (rangeEnd != null && !cursorStart.isBefore(rangeEnd)) {
+                    break;
+                }
+                batchIndex++;
+                batch = orderRepository.findAllByScopeAndCreationUtcBetweenOrderByCreationUtcAsc(
+                        OrderScope.PROJECTED,
+                        cursorStart,
+                        cursorStart.plus(windowDuration)
+                );
             }
-            if (session.endInstant != null && window.windowStart().isAfter(session.endInstant)) {
-                log.warn("[SIM:{}] Reached end window {}; stopping GA batches", session.id, session.endInstant);
-                break;
-            }
-        }
 
-            log.info("[SIM:{}] Batch loop completed: processed {} of {} batches", session.id, batchesProcessed, batches.size());
+            log.info("[SIM:{}] Batch loop completed: processed {} batches", session.id, batchesProcessed);
             finishWhenDelivered(session);
         } catch (Exception ex) {
             session.error(ex.getMessage());
@@ -330,7 +382,8 @@ public class SimulationService {
                                     List<Order> batch,
                                     int totalOrders,
                                     Instant snapshotInstant,
-                                    boolean useHeuristicSeed) {
+                                    boolean useHeuristicSeed,
+                                    long targetEndMillis) {
         long iterationStart = System.nanoTime();
         // Procesamos órdenes del batch en orden cronológico para que la semilla heurística respete el timeline
         List<Order> orderedBatch = batch.stream()
@@ -363,9 +416,11 @@ public class SimulationService {
         Instant simInstant = world.getCurrentInstant();
         log.info("[SIM:{}] Starting GA for batch (simTime={})", session.id, simInstant);
         long start = System.nanoTime();
-        Individual best = ga.run(
+        long gaBudgetMs = Math.max(1_000L, targetEndMillis - System.currentTimeMillis());
+        Individual best = ga.runTimed(
                 Config.POP_SIZE,
                 Config.MAX_GEN,
+                gaBudgetMs,
                 heuristicSeed,
                 session.lastPopulation,
                 batch
@@ -412,6 +467,11 @@ public class SimulationService {
                 topic(session.id),
                 SimulationMessage.progress(session.id.toString(), snapshot, null)
         );
+        // Arrancamos ticker y cronómetro real solo después del primer GA
+        if (session.realStartMillis == 0) {
+            session.realStartMillis = System.currentTimeMillis();
+            startTicker(session);
+        }
 
         // Detecta colapso si faltan planes para órdenes demandadas
         Set<String> plannedIds = best.getPlans().stream().map(OrderPlan::getOrderId).collect(Collectors.toSet());
@@ -556,18 +616,35 @@ public class SimulationService {
         if (plannedStatuses != null && !plannedStatuses.isEmpty()) {
             log.debug("[SIM:{}] Enviando planificados en tick: {}", session.id, plannedStatuses.stream().map(OrderStatusTick::orderId).toList());
         }
+        Map<String, String> statusMap = new HashMap<>();
+        orderStatuses.forEach(os -> statusMap.put(os.orderId(), os.status()));
 
         // filtrar planes: solo pedidos activos (no planificados)
         Set<String> activeOrderIds = new HashSet<>();
-        orderStatuses.forEach(os -> {
-            String st = os.status() == null ? "" : os.status();
-            if (!st.equalsIgnoreCase("PLANNED")) {
-                activeOrderIds.add(os.orderId());
-            }
-        });
+        orderStatuses.forEach(os -> activeOrderIds.add(os.orderId()));
+        plannedStatuses.forEach(ps -> activeOrderIds.add(ps.orderId()));
+
+        Map<String, SimulationOrderPlan> snapshotPlans = session.lastSnapshot == null
+                ? Map.of()
+                : session.lastSnapshot.orderPlans().stream()
+                .collect(Collectors.toMap(SimulationOrderPlan::orderId, Function.identity(), (a, b) -> a));
 
         List<SimulationOrderPlan> currentPlans = session.liveWorld.buildOrderPlansForTick().stream()
                 .filter(p -> activeOrderIds.contains(p.orderId()))
+                .map(p -> {
+                    SimulationOrderPlan base = session.lastPlans.get(p.orderId());
+                    if (base == null) {
+                        base = snapshotPlans.get(p.orderId());
+                    }
+                    if (base == null) {
+                        return p;
+                    }
+                    long slack = base.slackMinutes();
+                    List<SimulationRoute> routes = (base.routes() != null && !base.routes().isEmpty())
+                            ? base.routes()
+                            : p.routes();
+                    return new SimulationOrderPlan(p.orderId(), slack, routes);
+                })
                 .toList();
         List<ActiveAirportTick> airportTicks = session.liveWorld.getAirports().values().stream()
                 .map(a -> {
@@ -606,36 +683,35 @@ public class SimulationService {
                 removed.add(id);
             }
         });
+        // Si es la primera vez (lastPlans vacío) evitamos un diff masivo de removals
+        if (session.lastPlans.isEmpty()) {
+            removed.clear();
+        }
         currentMap.forEach((id, plan) -> {
             SimulationOrderPlan prev = session.lastPlans.get(id);
             if (prev == null) {
                 added.add(plan);
-                // marcar planificados una sola vez
-                if (session.liveWorld != null) {
-                    var planned = new OrderStatusTick(id, "PLANNED", "", plan.routes() != null && !plan.routes().isEmpty()
-                            ? plan.routes().stream().mapToInt(SimulationRoute::quantity).sum()
-                            : 0);
-                    session.liveWorld.registerPlanned(planned);
-                    log.debug("[SIM:{}] Pedido planificado emitido una vez: {}", session.id, id);
-                }
             } else if (!prev.equals(plan)) {
                 updated.add(plan);
-                if (session.liveWorld != null) {
-                    var planned = new OrderStatusTick(id, "PLANNED", "", plan.routes() != null && !plan.routes().isEmpty()
-                            ? plan.routes().stream().mapToInt(SimulationRoute::quantity).sum()
-                            : 0);
-                    session.liveWorld.registerPlanned(planned);
-                    log.debug("[SIM:{}] Pedido planificado reemitido por actualización: {}", session.id, id);
-                }
             }
         });
         log.debug("[SIM:{}] Diff planes -> added:{} updated:{} removed:{}", session.id, added.size(), updated.size(), removed.size());
         session.lastPlans = currentMap;
+        List<String> nowInTransit = new ArrayList<>();
+        statusMap.forEach((id, st) -> {
+            String prev = session.lastStatuses.get(id);
+            if (prev == null || !"IN_TRANSIT".equalsIgnoreCase(prev)) {
+                if ("IN_TRANSIT".equalsIgnoreCase(st)) {
+                    nowInTransit.add(id);
+                }
+            }
+        });
+        session.lastStatuses = statusMap;
         OrderPlansDiff diff = new OrderPlansDiff(simTime, added, updated, removed);
 
         // orderPlans se envía vacío para reducir payload; diffs llevan los cambios
         List<SimulationOrderPlan> orderPlans = List.of();
-        return new SimulationTick(session.id.toString(), simTime, realElapsedMs, speed, status, session.collapseMessage, orderPlans, diff, actives, airportTicks, deliveredOrders, inTransitOrders, orderStatuses, deliveredStatuses, plannedStatuses);
+        return new SimulationTick(session.id.toString(), simTime, realElapsedMs, speed, status, session.collapseMessage, orderPlans, diff, actives, airportTicks, deliveredOrders, inTransitOrders, orderStatuses, deliveredStatuses, plannedStatuses, nowInTransit);
     }
 
     private SimulationSegment toSegmentDto(RouteSegment segment) {
@@ -842,6 +918,7 @@ public class SimulationService {
         private volatile double simSpeed = 1.0;
         private volatile LiveSimulationWorld liveWorld;
         private volatile Map<String, SimulationOrderPlan> lastPlans = new HashMap<>();
+        private volatile Map<String, String> lastStatuses = new HashMap<>();
         private volatile long lastClientPingMillis = System.currentTimeMillis();
         private volatile String collapseMessage;
 

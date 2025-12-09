@@ -17,52 +17,23 @@ export function SidebarEnviosPanel({
   onSelectOrders,
   scrollParent,
 }: SidebarEnviosPanelProps) {
-  const ordered = useMemo(() => {
-    if (!selectedOrders || selectedOrders.length === 0) return enviosFiltrados;
-    const set = new Set(selectedOrders);
-    const selected = enviosFiltrados.filter(e => set.has(e.plan.orderId));
-    const rest = enviosFiltrados.filter(e => !set.has(e.plan.orderId));
-    return [...selected, ...rest];
-  }, [enviosFiltrados, selectedOrders]);
-
-  const ITEM_HEIGHT = 200;
-  const BUFFER = 8;
-  const [windowStart, setWindowStart] = useState(0);
-  const [windowEnd, setWindowEnd] = useState(Math.min(ordered.length, 20));
+  const PAGE_SIZE = 10;
+  const sorted = useMemo(() => {
+    return [...enviosFiltrados].sort((a, b) => (a.creationMs ?? 0) - (b.creationMs ?? 0));
+  }, [enviosFiltrados]);
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
 
   useEffect(() => {
-    setWindowStart(0);
-    setWindowEnd(Math.min(ordered.length, 20));
-  }, [ordered.length, selectedOrders]);
-
-  useEffect(() => {
-    if (!scrollParent) return;
-    let ticking = false;
-    const handler = () => {
-      if (ticking) return;
-      ticking = true;
-      window.requestAnimationFrame(() => {
-        const top = scrollParent.scrollTop;
-        const h = scrollParent.clientHeight || 600;
-        const startIdx = Math.max(0, Math.floor(top / ITEM_HEIGHT) - BUFFER);
-        const visible = Math.ceil(h / ITEM_HEIGHT) + BUFFER * 2;
-        setWindowStart(startIdx);
-        setWindowEnd(Math.min(ordered.length, startIdx + visible));
-        ticking = false;
-      });
-    };
-    handler();
-    scrollParent.addEventListener('scroll', handler);
-    return () => scrollParent.removeEventListener('scroll', handler);
-  }, [scrollParent, ordered.length]);
-
-  useEffect(() => {
-    if (selectedOrders && selectedOrders.length > 0 && scrollParent) {
-      scrollParent.scrollTo({ top: 0, behavior: 'smooth' });
+    if (page > totalPages) {
+      setPage(totalPages);
     }
-  }, [selectedOrders, scrollParent]);
+  }, [page, totalPages]);
 
-  const visible = ordered.slice(windowStart, windowEnd);
+  const visible = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE;
+    return sorted.slice(start, start + PAGE_SIZE);
+  }, [sorted, page]);
 
   return (
     <>
@@ -70,7 +41,7 @@ export function SidebarEnviosPanel({
         <div className="text-center text-base-content/60 py-8">
           {ordenesParaSimular.length > 0
             ? 'Sincroniza y presiona "Iniciar" para comenzar la simulación'
-            : 'Carga pedidos proyectados o usa los ya guardados para iniciar.'}
+            : 'Aun sin datos de pedidos'}
         </div>
       )}
 
@@ -108,8 +79,7 @@ export function SidebarEnviosPanel({
 
         return (
           <div
-            key={`${plan.orderId}-${windowStart + idx}`}
-            style={{ minHeight: ITEM_HEIGHT }}
+            key={`${plan.orderId}-${page}-${idx}`}
             className={`card bg-base-200 border-l-4 shadow-sm hover:shadow-md transition-shadow ${dimmed ? 'opacity-40' : ''} ${isSelected ? 'ring-2 ring-primary' : ''} ${
               estado === 'En tránsito'
                 ? 'border-info'
@@ -217,6 +187,28 @@ export function SidebarEnviosPanel({
           </div>
         );
       })}
+
+      {enviosFiltrados.length > PAGE_SIZE && (
+        <div className="mt-3 flex items-center justify-between">
+          <button
+            className="btn btn-xs"
+            onClick={() => setPage(p => Math.max(1, p - 1))}
+            disabled={page === 1}
+          >
+            « Anterior
+          </button>
+          <span className="text-xs text-base-content/70">
+            Página {page} de {totalPages}
+          </span>
+          <button
+            className="btn btn-xs"
+            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+            disabled={page === totalPages}
+          >
+            Siguiente »
+          </button>
+        </div>
+      )}
     </>
   );
 }

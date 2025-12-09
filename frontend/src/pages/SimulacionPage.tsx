@@ -60,16 +60,27 @@ export default function SimulacionPage() {
   const [selectedFlightId, setSelectedFlightId] = useState<string | null>(null);
   const [selectedAirportIds, setSelectedAirportIds] = useState<string[] | null>(null);
   const [dialogInfo, setDialogInfo] = useState<{ titulo: string; mensaje: string } | null>(null);
+  const [overlayCountdown, setOverlayCountdown] = useState(60);
   const statusRef = useRef(status);
   const [downloadingReport, setDownloadingReport] = useState(false);
   const lastSimulationIdRef = useRef<string | null>(null);
   const [filtroEstado, setFiltroEstado] = useState<'enproceso' | 'planificados' | 'entregados' | 'todos'>('enproceso');
 
   const [filtroTexto, setFiltroTexto] = useState<string>('');
+  const mostrandoOverlay = estaActivo && !hasSnapshots;
 
   useEffect(() => {
     statusRef.current = status;
   }, [status]);
+
+  useEffect(() => {
+    if (!mostrandoOverlay) return undefined;
+    setOverlayCountdown(60);
+    const id = setInterval(() => {
+      setOverlayCountdown(prev => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [mostrandoOverlay]);
 
   const ensureSeconds = (value?: string) => {
     if (!value) return undefined;
@@ -442,7 +453,6 @@ export default function SimulacionPage() {
   if (isError) {
     return <div className="p-6 text-center text-red-500">Error al cargar datos.</div>;
   }
-  const mostrandoOverlay = estaActivo && !hasSnapshots;
   const clearSelectedOrders = () => {
     setSelectedOrderIds(null);
     setSelectedFlightId(null);
@@ -523,25 +533,17 @@ export default function SimulacionPage() {
             </div>
           </div>
 
-          {/* Mostramos overlay de carga si el GA está corriendo */}
+          {/* Mostramos overlay de carga mientras el GA prepara el primer plan */}
           {mostrandoOverlay && (
             <div className="absolute top-0 left-0 w-full h-full bg-base-300/80 z-[1000] flex items-center justify-center text-base-content p-8">
               <div className="text-center space-y-4">
                 <div
                   className="animate-spin rounded-full h-24 w-24 border-8 border-primary border-t-transparent mx-auto"
                 ></div>
-                <h2 className="text-2xl font-semibold">Planificando Rutas...</h2>
+                <h2 className="text-2xl font-semibold">Iniciando simulación</h2>
                 <p className="text-lg text-base-content/90">
-                  El Sistema está procesando los pedidos.
+                  Arrancando en {overlayCountdown}s
                 </p>
-                <div className="stats bg-base-200 shadow-xl">
-                  <div className="stat">
-                    <div className="stat-title">Pedidos Procesados</div>
-                    <div className="stat-value text-primary">
-                      {reloj}
-                    </div>
-                  </div>
-                </div>
               </div>
             </div>
           )}

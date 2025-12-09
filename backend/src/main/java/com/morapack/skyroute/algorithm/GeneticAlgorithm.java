@@ -9,15 +9,18 @@ import java.util.Random;
 import com.morapack.skyroute.config.*;
 import com.morapack.skyroute.models.*;
 import com.morapack.skyroute.io.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class GeneticAlgorithm {
+    private static final Logger log = LoggerFactory.getLogger(GeneticAlgorithm.class);
     private final World world;
     private final List<Order> demand;
     private final Random rnd = new Random();
     private final List<Individual> population = new ArrayList<>();
-    private static final int TOURNAMENT_K = 3;
-    private static final double MIN_IMPROVEMENT = 1e-6;
-    private static final int EARLY_STOP_PATIENCE = 3;
+    private static final int TOURNAMENT_K = 2; // menor presión, más diversidad
+    // private static final double MIN_IMPROVEMENT = 1e-6;
+    // private static final int EARLY_STOP_PATIENCE = 3;
 
     public GeneticAlgorithm(World world, List<Order> demand) {
         this.world = world;
@@ -100,6 +103,14 @@ public class GeneticAlgorithm {
     }
 
     public Individual run(int populationSize, int generations, Individual seed, List<Individual> carryOver, List<Order> newOrders) {
+        return runTimed(populationSize, generations, 0L, seed, carryOver, newOrders);
+    }
+
+    /**
+     * Ejecuta el GA con tope de generaciones y, opcionalmente, un presupuesto de tiempo (ms).
+     * Si durationMillis <= 0, solo usa el límite de generaciones.
+     */
+    public Individual runTimed(int populationSize, int generations, long durationMillis, Individual seed, List<Individual> carryOver, List<Order> newOrders) {
         if (demand.isEmpty()) {
             throw new IllegalStateException("No orders available for GA");
         }
@@ -116,13 +127,25 @@ public class GeneticAlgorithm {
         Individual best = bestIndividual(population);
         double previousBestFitness = best.getFitness();
 
-        int stagnant = 0;
+        // int stagnant = 0;
+        long deadlineNanos = durationMillis > 0 ? System.nanoTime() + durationMillis * 1_000_000L : Long.MAX_VALUE;
+        log.info("[GA] runTimed start: budgetMs={} popSize={} demand={}", durationMillis, populationSize, demand.size());
         for (int gen = 0; gen < generations; gen++) {
+            if (System.nanoTime() >= deadlineNanos) {
+                log.info("[GA] Deadline reached before starting generation {}", gen + 1);
+                applyToWorld(best);
+                return best;
+            }
             List<Individual> nextGen = new ArrayList<>();
             // Elitismo: conservar el mejor de la generación previa
             nextGen.add(best);
 
             while (nextGen.size() < populationSize) {
+                if (System.nanoTime() >= deadlineNanos) {
+                    log.info("[GA] Deadline reached mid-generation {} after {} individuals", gen + 1, nextGen.size());
+                    applyToWorld(best);
+                    return best;
+                }
                 Individual parentA = tournamentSelect();
                 Individual child;
                 if (rnd.nextDouble() < Config.P_CROSS) {
@@ -142,21 +165,15 @@ public class GeneticAlgorithm {
             population.clear();
             population.addAll(nextGen);
             best = bestIndividual(population);
-            System.out.println("Generación " + (gen + 1) + " mejor fitness=" + best.getFitness());
+            log.info("[GA] Generación {} mejor fitness={} población={}", gen + 1, best.getFitness(), population.size());
 
-            double improvement = best.getFitness() - previousBestFitness;
-            previousBestFitness = best.getFitness();
-            if (improvement > MIN_IMPROVEMENT) {
-                stagnant = 0;
-            } else {
-                stagnant++;
-            }
-            if (stagnant >= EARLY_STOP_PATIENCE) {
-                System.out.println("Early stop en generación " + (gen + 1) + " (sin mejora significativa por " + EARLY_STOP_PATIENCE + " generaciones)");
-                break;
+            // Early stop desactivado temporalmente
+            if (System.nanoTime() >= deadlineNanos) {
+                log.info("[GA] detenido por presupuesto de tiempo en generación {} (deadline alcanzado)", gen + 1);
+                applyToWorld(best);
+                return best;
             }
         }
-
         applyToWorld(best);
         return best;
     }

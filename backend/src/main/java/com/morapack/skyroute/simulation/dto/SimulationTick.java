@@ -18,5 +18,6 @@ public record SimulationTick(
         int inTransitOrders,
         java.util.List<OrderStatusTick> orderStatuses,
         java.util.List<OrderStatusTick> deliveredStatuses,
-        java.util.List<OrderStatusTick> plannedStatuses
+        java.util.List<OrderStatusTick> plannedStatuses,
+        java.util.List<String> nowInTransitIds
 ) {}

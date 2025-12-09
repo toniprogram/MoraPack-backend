@@ -439,6 +439,18 @@ export const useSimulacion = () => {
           setPlannedLog(prev => [...newPlanned, ...prev]);
         }
       }
+      if (renderTick.nowInTransitIds?.length) {
+        const toRemove = new Set(renderTick.nowInTransitIds);
+        let changed = false;
+        renderTick.nowInTransitIds.forEach(id => {
+          if (plannedRef.current.delete(id)) {
+            changed = true;
+          }
+        });
+        if (changed) {
+          setPlannedLog(prev => prev.filter(entry => !toRemove.has(entry.orderId)));
+        }
+      }
     }
     // orderPlans completos (fallback) o diffs
     const simTimeKey = renderTick.simTime ?? '';

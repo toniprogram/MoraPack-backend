@@ -54,15 +54,25 @@ public class LiveSimulationWorld {
         }
         if (projectedOrders != null) {
             for (Order order : projectedOrders) {
-                orders.put(order.getId(), new LiveOrder(
-                        order.getId(),
-                        order.getQuantity(),
-                        order.getDestinationCode(),
-                        order.getCreationUtc(),
-                        order.getDueUtc()
-                ));
+                registerOrder(order);
             }
         }
+    }
+
+    public void registerOrder(Order order) {
+        if (order == null || order.getId() == null) {
+            return;
+        }
+        if (orders.containsKey(order.getId())) {
+            return;
+        }
+        orders.put(order.getId(), new LiveOrder(
+                order.getId(),
+                order.getQuantity(),
+                order.getDestinationCode(),
+                order.getCreationUtc(),
+                order.getDueUtc()
+        ));
     }
 
     public void scheduleFutureFlight(LiveFlight flight, String orderId, int quantity) {
