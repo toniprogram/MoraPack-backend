@@ -449,10 +449,12 @@ public class SimulationService {
         persistDiff(session, snapshot);
         persistSnapshot(session, snapshot);
         // Build detailed updates for frontend cache (nuevos/actualizados)
+        Map<String, Instant> creationMap = demand.stream()
+                .collect(Collectors.toMap(Order::getId, Order::getCreationUtc, (a, b) -> a));
         List<SimulationOrderPlan> detailedUpdates = new ArrayList<>();
         Map<String, SimulationOrderPlan> detailsMap = new HashMap<>(session.lastDetails);
         best.getPlans().forEach(p -> {
-            SimulationOrderPlan dto = toOrderPlanDto(p);
+            SimulationOrderPlan dto = toOrderPlanDto(p, creationMap.get(p.getOrderId()));
             SimulationOrderPlan prev = detailsMap.get(dto.orderId());
             if (prev == null || !prev.equals(dto)) {
                 detailedUpdates.add(dto);
@@ -564,8 +566,11 @@ public class SimulationService {
                                           List<Order> demand) {
 
         Instant currentSimTime = world.getCurrentInstant();
+        Map<String, Instant> creationMap = demand.stream()
+                .collect(Collectors.toMap(Order::getId, Order::getCreationUtc, (a, b) -> a));
+
         List<SimulationOrderPlan> orderPlans = best.getPlans().stream()
-                .map(this::toOrderPlanDto)
+                .map(p -> toOrderPlanDto(p, creationMap.get(p.getOrderId())))
                 .collect(Collectors.toList());
 
         return new SimulationSnapshot(
@@ -579,11 +584,15 @@ public class SimulationService {
     }
 
     private SimulationOrderPlan toOrderPlanDto(com.morapack.skyroute.models.OrderPlan plan) {
+        return toOrderPlanDto(plan, null);
+    }
+
+    private SimulationOrderPlan toOrderPlanDto(com.morapack.skyroute.models.OrderPlan plan, Instant creationUtc) {
         long slackMinutes = optionalDurationMinutes(plan.getSlack());
         List<SimulationRoute> routes = plan.getRoutes() == null
                 ? List.of()
                 : plan.getRoutes().stream().map(this::toRouteDto).toList();
-        return new SimulationOrderPlan(plan.getOrderId(), slackMinutes, routes);
+        return new SimulationOrderPlan(plan.getOrderId(), creationUtc, slackMinutes, routes);
     }
 
     private SimulationRoute toRouteDto(Route route) {
@@ -670,7 +679,8 @@ public class SimulationService {
                     List<SimulationRoute> routes = (base.routes() != null && !base.routes().isEmpty())
                             ? base.routes()
                             : p.routes();
-                    return new SimulationOrderPlan(p.orderId(), slack, routes);
+                    Instant creation = base.creationUtc() != null ? base.creationUtc() : p.creationUtc();
+                    return new SimulationOrderPlan(p.orderId(), creation, slack, routes);
                 })
                 .toList();
         List<SimulationPlanSummary> planSummaries = currentPlans.stream()

@@ -534,7 +534,8 @@ public class LiveSimulationWorld {
             segs.sort(Comparator.comparing(SimulationSegment::departureUtc));
             int qtyTotal = segs.stream().mapToInt(SimulationSegment::quantity).sum();
             SimulationRoute route = new SimulationRoute(qtyTotal, 0L, List.copyOf(segs));
-            plans.add(new SimulationOrderPlan(orderId, 0L, List.of(route)));
+            LiveOrder lo = orders.get(orderId);
+            plans.add(new SimulationOrderPlan(orderId, lo != null ? lo.getCreationUtc() : null, 0L, List.of(route)));
         });
 
         // Incluir pedidos sin tramos aún (planificados) para que el frontend tenga cantidad/meta
@@ -543,7 +544,7 @@ public class LiveSimulationWorld {
             if (!already) {
                 int qtyTotal = liveOrder.getTotalQuantity();
                 SimulationRoute route = new SimulationRoute(qtyTotal, 0L, List.of());
-                plans.add(new SimulationOrderPlan(orderId, 0L, List.of(route)));
+                plans.add(new SimulationOrderPlan(orderId, liveOrder.getCreationUtc(), 0L, List.of(route)));
             }
         });
 

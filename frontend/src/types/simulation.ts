@@ -25,6 +25,7 @@ export interface SimulationPlanSummary {
 // Corresponde a SimulationOrderPlan.java
 export interface SimulationOrderPlan {
   orderId: string;
+  creationUtc?: string | null;
   slackMinutes: number;
   routes: SimulationRoute[];
 }

@@ -204,7 +204,9 @@ export default function SimulacionPage() {
       next.set(orderId, {
         plan: plan ?? { orderId, slackMinutes: 0, routes: [] } as SimulationOrderPlan,
         estado,
-        creationMs: info.simTime ? Date.parse(info.simTime) : 0,
+        creationMs: plan?.creationUtc
+          ? Date.parse(plan.creationUtc)
+          : (info.simTime ? Date.parse(info.simTime) : 0),
         arrivalMs: 0
       });
     });
