@@ -5,38 +5,200 @@ import type { LatLngExpression } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import planeIconUrl from '/images/plane-line.svg?url';
 import type { Airport } from '../../types/airport';
-
+import { FlightsList } from '../simulacion/FlightsList';
 import type { ActiveAirportTick } from '../../types/simulation';
 import { OrdersList, type OrderLoadView } from '../simulacion/OrdersList';
 import type { SegmentoVuelo, VueloEnMovimiento } from '../../hooks/useSimulacion';
-import { Plane, Box, Building } from 'lucide-react';
+import { Plane, Building } from 'lucide-react';
 
-// Iconos Default Leaflet
+const getStatusColor = (pct: number) => {
+  if (pct === 0) return '#22c55e';
+  if (pct < 70) return '#22c55e'; // Verde (Ok)
+  if (pct < 90) return '#eab308'; // Amarillo (Advertencia)
+  if (pct <= 100) return '#ef4444'; // Rojo (Crítico/Lleno)
+  return '#22c55e';
+};
+const getAirportIcon = (pct: number, forPopup = false) => {
+  const color = getStatusColor(pct);
+  const animId = `airport-${Math.random().toString(36).substr(2, 9)}`;
+  const size = forPopup ? 20 : 20;
+  const iconSize = forPopup ? 12 : 12;
+
+
+  return L.divIcon({
+    className: 'bg-transparent border-none',
+    html: `
+      <style>
+        @keyframes ${animId}-subtle {
+          0%, 100% { transform: translateY(0px); }
+          50% { transform: translateY(-2px); }
+        }
+      </style>
+
+      <div style="
+        background: linear-gradient(135deg, ${color} 0%, ${color} 100%);
+        width: ${size}px;
+        height: ${size}px;
+        border-radius: 5px;
+        border: 2px solid white;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.4),
+                    0 1px 2px rgba(0,0,0,0.2),
+                    inset 0 1px 0 rgba(255,255,255,0.3);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.3s ease;
+        position: relative;
+      " onmouseover="this.style.transform='scale(1.15)'; this.style.boxShadow='0 4px 12px rgba(0,0,0,0.5)'"
+         onmouseout="this.style.transform='scale(1)'; this.style.boxShadow='0 2px 6px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.3)'">
+
+        <svg xmlns="http://www.w3.org/2000/svg" width="${iconSize}" height="${iconSize}" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0px 1px 2px rgba(0,0,0,0.5));">
+          <path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/>
+        </svg>
+
+        <div style="
+          position: absolute;
+          top: -2px;
+          right: -2px;
+          width: 6px;
+          height: 6px;
+          background-color: white;
+          border-radius: 50%;
+          border: 1px solid ${color};
+          box-shadow: 0 1px 2px rgba(0,0,0,0.4);
+        "></div>
+      </div>
+    `,
+    iconSize: [size, size],
+    iconAnchor: [size/2, size/2],
+    popupAnchor: [0, -14],
+  });
+};
+
+const getHubIcon = (pct: number, forPopup = false) => {
+  const color = getStatusColor(pct);
+  const animId = `pulse-${Math.random().toString(36).substr(2, 9)}`;
+  const outerSize = forPopup ? 32 : 32;
+  const innerSize = forPopup ? 18 : 34;
+  const iconSize = forPopup ? 18 : 22;
+  const borderWidth = forPopup ? 2 : 3;
+
+  if (forPopup) {
+    return `
+      <div style="position: relative; width: ${outerSize}px; height: ${outerSize}px; display: inline-block;">
+        <div style="
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: ${outerSize}px;
+          height: ${outerSize}px;
+          border-radius: 50%;
+          border: 2px dashed #FCD34D;
+          opacity: 0.5;
+        "></div>
+        <div style="
+          position: absolute;
+          top: ${(outerSize - innerSize) / 2}px;
+          left: ${(outerSize - innerSize) / 2}px;
+          background: ${color};
+          width: ${innerSize}px;
+          height: ${innerSize}px;
+          border-radius: 50%;
+          border: ${borderWidth}px solid #FCD34D;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          box-shadow: 0 0 12px rgba(252, 211, 77, 0.6);
+        ">
+          <svg xmlns="http://www.w3.org/2000/svg" width="${iconSize}" height="${iconSize}" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0px 1px 3px rgba(0,0,0,0.7));">
+            <path d="M4 16h16"/>
+            <path d="M4 20h16"/>
+            <path d="M8 12h8l-2-8H10l-2 8Z"/>
+            <circle cx="12" cy="2" r="1.5" fill="#FCD34D"/>
+            <path d="M17.8 19.2 16 11l3.5-3.5" opacity="0.8"/>
+            <path d="M6.2 19.2 8 11 4.5 7.5" opacity="0.8"/>
+          </svg>
+        </div>
+      </div>
+    `;
+  }
+
+  return L.divIcon({
+    className: 'bg-transparent border-none',
+    html: `
+      <style>
+        @keyframes ${animId} {
+          0%, 100% {
+            transform: scale(1);
+            box-shadow: 0 0 16px rgba(252, 211, 77, 0.8),
+                        0 0 32px rgba(252, 211, 77, 0.4),
+                        inset 0 0 12px rgba(0,0,0,0.2);
+          }
+          50% {
+            transform: scale(1.08);
+            box-shadow: 0 0 24px rgba(252, 211, 77, 1),
+                        0 0 48px rgba(252, 211, 77, 0.6),
+                        inset 0 0 12px rgba(0,0,0,0.2);
+          }
+        }
+
+        @keyframes ${animId}-rotate {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      </style>
+
+      <div style="position: relative; width: ${outerSize}px; height: ${outerSize}px;">
+        <div style="
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: ${outerSize}px;
+          height: ${outerSize}px;
+          border-radius: 50%;
+          border: 2.5px dashed #FCD34D;
+          opacity: 0.6;
+          animation: ${animId}-rotate 8s linear infinite;
+        "></div>
+
+        <div style="
+          position: absolute;
+          top: ${(outerSize - innerSize) / 2}px;
+          left: ${(outerSize - innerSize) / 2}px;
+          background: ${color};
+          width: ${innerSize}px;
+          height: ${innerSize}px;
+          border-radius: 50%;
+          border: ${borderWidth}px solid #FCD34D;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 1000;
+          animation: ${animId} 2.5s ease-in-out infinite;
+        ">
+          <svg xmlns="http://www.w3.org/2000/svg" width="${iconSize}" height="${iconSize}" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0px 2px 4px rgba(0,0,0,0.7));">
+            <path d="M4 16h16"/>
+            <path d="M4 20h16"/>
+            <path d="M8 12h8l-2-8H10l-2 8Z"/>
+            <circle cx="12" cy="2" r="1.5" fill="#FCD34D"/>
+            <path d="M17.8 19.2 16 11l3.5-3.5" opacity="0.8"/>
+            <path d="M6.2 19.2 8 11 4.5 7.5" opacity="0.8"/>
+          </svg>
+        </div>
+      </div>
+    `,
+    iconSize: [outerSize, outerSize],
+    iconAnchor: [outerSize/2, outerSize/2],
+    popupAnchor: [0, -24],
+  });
+};
+// Fix básico de Leaflet
 const iconProto = L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown };
 delete iconProto._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
   iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-});
-
-// Iconos personalizados
-const defaultAirportIcon = new L.Icon({
-  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-  iconSize: [12, 16],
-  iconAnchor: [6, 15],
-  popupAnchor: [1, -18],
-  shadowSize: [20, 20]
-});
-
-const hubIcon = new L.Icon({
-  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-violet.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-  iconSize: [12, 16],
-  iconAnchor: [6, 15],
-  popupAnchor: [1, -18],
-  shadowSize: [20, 20]
 });
 
 function MapResizer({ isLoading }: { isLoading: boolean }) {
@@ -66,7 +228,7 @@ function MapClickReset({ onClear }: { onClear?: () => void }) {
 
 const isMainHub = (code: string) => {
   const c = code ? code.toUpperCase() : '';
-  return ['SPIM', 'LIM', 'UBBB', 'GYD', 'EBCI', 'BRU', 'CRL'].includes(c);
+  return ['SPIM','UBBB','EBCI'].includes(c);
 };
 
 const getHubColor = (originCode: string) => {
@@ -75,6 +237,12 @@ const getHubColor = (originCode: string) => {
   if (code === 'UBBB' || code === 'GYD') return { hex: '#3b82f6', twClass: 'text-info' };
   if (code === 'EBCI' || code === 'BRU' || code === 'CRL') return { hex: '#ef4444', twClass: 'text-error' };
   return { hex: '#a6adbb', twClass: 'text-base-content' };
+};
+
+const getLoadColor = (pct: number) => {
+  if (pct < 70) return { hex: '#22c55e', twClass: 'text-success' }; // Verde (Ok)
+  if (pct < 90) return { hex: '#eab308', twClass: 'text-warning' }; // Amarillo (Llenándose)
+  return { hex: '#ef4444', twClass: 'text-error' };                 // Rojo (Crítico/Lleno)
 };
 
 const PLANE_SIZE = 20; // tamaño visual del avión (reducido)
@@ -209,8 +377,8 @@ const getRemainingPath = (path: [number, number][], progress: number): [number, 
   return [];
 };
 
-const getPlaneIcon = (originCode: string, rotation: number) => {
-  const { twClass } = getHubColor(originCode);
+const getPlaneIcon = (_originCode: string, rotation: number, capacityPct: number) => {
+  const { twClass } = getLoadColor(capacityPct);
   const html = `
     <div style="
       width: ${PLANE_HITBOX}px;
@@ -396,13 +564,30 @@ export function MapaVuelos({
         const live = activeAirports.find(a => a.airportCode === (aeropuerto.id || aeropuerto.code));
         const stockActual = live?.currentLoad ?? 0;
         const capacidadMax = live?.maxThroughputPerHour ?? aeropuerto.storageCapacity ?? 0;
-        const stockPct = Math.min(100, Math.round((stockActual / capacidadMax) * 100));
-
+        const targetInfinite = ['SPIM', 'LIM', 'EBCI', 'BRU', 'UBBB', 'GYD'];
+        const isInfinite = targetInfinite.includes(aeropuerto.id) || targetInfinite.includes(aeropuerto.code);
+        const stockPct = (isInfinite || capacidadMax === 0)
+            ? 0
+            : Math.min(100, Math.round((stockActual / capacidadMax) * 100));
+        let statusColorClass = 'text-success';
+        let progressClass = 'progress-success';
+        if (!isInfinite) {
+            if (stockPct >= 90) {
+                statusColorClass = 'text-error';
+                progressClass = 'progress-error';
+            } else if (stockPct >= 70) {
+                statusColorClass = 'text-warning';
+                progressClass = 'progress-warning';
+            }
+        } else {
+            statusColorClass = 'text-success';
+            progressClass = 'progress-success';
+        }
         return (
           <Marker
             key={aeropuerto.id}
             position={[aeropuerto.latitude, aeropuerto.longitude]}
-            icon={esSede ? hubIcon : defaultAirportIcon}
+            icon={esSede ? getHubIcon(stockPct) : getAirportIcon(stockPct)}
             opacity={
               (!filtroHubActivo || filtroHubActivo === aeropuerto.id)
                 ? (airportHighlights.size > 0 && !airportHighlights.has(aeropuerto.id || aeropuerto.code || '') ? 0.2 : 1.0)
@@ -440,25 +625,46 @@ export function MapaVuelos({
                     </div>
                 </div>
                 <div className="p-3 space-y-2">
-                    <div className="flex justify-between mb-1 text-[10px] font-semibold uppercase opacity-70">
-                        <span>Almacén</span>
-                        <span>{stockActual} / {capacidadMax}</span>
-                    </div>
-                    <progress
-                        className={`progress w-full h-2 ${stockPct > 80 ? 'progress-warning' : 'progress-info'}`}
-                        value={stockActual}
-                        max={capacidadMax}
-                    ></progress>
-                    <div className="text-right mt-1 text-[10px] font-mono opacity-50">{stockPct}% Ocupado</div>
+                    {!isInfinite && (
+                        <>
+                            <div className="flex justify-between mb-1 text-[10px] font-semibold uppercase opacity-70">
+                                <span>Almacén</span>
+                                <span className={`font-mono ${statusColorClass}`}>
+                                    {stockActual} / {capacidadMax}
+                                </span>
+                            </div>
+                            <progress
+                                className={`progress w-full h-2 ${progressClass}`}
+                                value={stockActual}
+                                max={capacidadMax || 1}
+                            ></progress>
+
+                            <div className={`font-mono text-right mt-1 text-[10px] ${statusColorClass}`}>
+                                {stockPct}% Ocupado
+                            </div>
+                        </>
+                    )}
+                    {!isInfinite && (
+                        <div className="border-t border-base-300 pt-2 mt-2">
+                          <div className="text-[10px] font-semibold uppercase opacity-70 mb-1">Pedidos en almacén</div>
+                          <OrdersList
+                            items={(live?.orderLoads ?? []).map(ol => ({ orderId: ol.orderId, cantidad: ol.quantity }))}
+                            selectedOrders={selectedOrders}
+                            onSelectOrder={(oid) => {
+                              onSelectOrders?.([oid]);
+                              onSelectAirport?.(aeropuerto.id || aeropuerto.code || null);
+                            }}
+                          />
+                        </div>
+                    )}
                     <div className="border-t border-base-300 pt-2">
-                      <div className="text-[10px] font-semibold uppercase opacity-70 mb-1">Pedidos en almacén</div>
-                      <OrdersList
-                        items={(live?.orderLoads ?? []).map(ol => ({ orderId: ol.orderId, cantidad: ol.quantity }))}
-                        selectedOrders={selectedOrders}
-                        onSelectOrder={(oid) => {
-                          onSelectOrders?.([oid]);
-                          onSelectAirport?.(aeropuerto.id || aeropuerto.code || null);
-                        }}
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="text-[10px] font-semibold uppercase opacity-70">Vuelos Salientes</span>
+                      </div>
+                      <FlightsList
+                        vuelos={activeSegments.filter(s => s.origin === (aeropuerto.id || aeropuerto.code))}
+                        onSelectFlight={onSelectFlight}
+                        onSelectOrders={onSelectOrders}
                       />
                     </div>
                 </div>
@@ -549,7 +755,7 @@ export function MapaVuelos({
           <Marker
             key={vuelo.id}
             position={[coord[0], coord[1]]}
-            icon={getPlaneIcon(vuelo.origenCode, bearing)}
+            icon={getPlaneIcon(vuelo.origenCode, bearing, capacityPct)}
             zIndexOffset={2000}
             opacity={dimmed ? 0.35 : 1}
             eventHandlers={{

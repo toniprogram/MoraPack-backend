@@ -57,6 +57,7 @@ export interface SegmentoVuelo {
   orderIds: string[];
   retrasado: boolean;
   routeQuantity?: number;
+  capacityUsed?: number;
   capacityTotal?: number;
   orderLoads?: { orderId: string; quantity: number }[];
 }
@@ -101,7 +102,7 @@ export const useSimulacion = () => {
   const [orderPlansLive, setOrderPlansLive] = useState<SimulationOrderPlan[]>([]);
   const [animPaused, setAnimPaused] = useState(false);
   const firstSimTickMsRef = useRef<number | null>(null);
-  const heartbeatRef = useRef<NodeJS.Timeout | null>(null);
+  const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [startRealMs, setStartRealMs] = useState<number | null>(null);
   const [elapsedRealMs, setElapsedRealMs] = useState(0);
   const engineSpeedRef = useRef(DEFAULT_SPEED);
@@ -390,6 +391,7 @@ export const useSimulacion = () => {
         orderIds: seg.orderIds ?? [],
         retrasado: false,
         routeQuantity: seg.capacityUsed,
+        capacityUsed: seg.capacityUsed,
         capacityTotal: seg.capacityTotal,
         orderLoads: seg.orderLoads ?? seg.orderIds?.map(id => ({ orderId: id, quantity: seg.capacityUsed })) ?? [],
       }));

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { EnvioInfo } from '../../types/simulacionUI';
+import { Plane } from 'lucide-react';
 
 interface SidebarEnviosPanelProps {
   enviosFiltrados: EnvioInfo[];
@@ -146,19 +147,36 @@ export function SidebarEnviosPanel({
                   </div>
                 </div>
               </div>
+              <div className="flex justify-between items-start">
+                <span className="text-base-content/70">Vuelo asignado:</span>
+                <div className="text-right">
+                  {segmentos.length > 0 ? (
+                    <div className="flex flex-col gap-0.5">
+                      {segmentos.map((seg, i) => (
+                        <span key={i} className="font-bold text-secondary flex items-center justify-end gap-1">
+                          {seg.flightId}
+                          <Plane size={12} className="rotate-45" />
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="opacity-50 italic">--</span>
+                  )}
+                </div>
+              </div>
 
               <div className="text-xs mt-2 space-y-1">
-                <div className="flex justify-between">
+                <div className="flex justify-between items-start">
                   <span className="text-base-content/70">Origen:</span>
                   <span className="font-semibold">{primerSegmento?.origin || 'N/A'}</span>
                 </div>
-                <div className="flex justify-between">
+                <div className="flex justify-between items-start">
                   <span className="text-base-content/70">Destino:</span>
                   <span className="font-semibold">
                     {ultimoSegmento?.destination || 'N/A'}
                   </span>
                 </div>
-                <div className="flex justify-between">
+                <div className="flex justify-between items-start">
                   <span className="text-base-content/70">Holgura:</span>
                   <span className={`font-semibold ${
                     estado === 'Entregado'

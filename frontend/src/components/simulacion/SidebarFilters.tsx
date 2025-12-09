@@ -33,7 +33,6 @@
     export function SidebarFilters({
       ordenesParaSimular,
       startDate,
-      endDate,
       setStartDate,
       setEndDate,
       hastaColapso,
