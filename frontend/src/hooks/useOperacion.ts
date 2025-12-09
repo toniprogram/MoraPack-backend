@@ -326,9 +326,6 @@ export const useOperacion = () => {
                                         fechaCreacion: plan.creationUtc || "---",
                                         cantidad: seg.routeQuantity ?? 0
                                     }]
-                                        cantidad: seg.routeQuantity
-                                    }],
-                                    orderId: ''
                                 });
                             } else {
                                 const v = mapVuelos.get(uniqueId);

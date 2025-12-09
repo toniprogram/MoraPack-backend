@@ -9,7 +9,7 @@ import { FlightsList } from '../simulacion/FlightsList';
 import type { ActiveAirportTick } from '../../types/simulation';
 import { OrdersList, type OrderLoadView } from '../simulacion/OrdersList';
 import type { SegmentoVuelo, VueloEnMovimiento } from '../../hooks/useSimulacion';
-import { Plane, Box, Building } from 'lucide-react';
+import { Plane, Building } from 'lucide-react';
 
 const getStatusColor = (pct: number) => {
   if (pct === 0) return '#22c55e';
@@ -24,39 +24,6 @@ const getAirportIcon = (pct: number, forPopup = false) => {
   const size = forPopup ? 20 : 20;
   const iconSize = forPopup ? 12 : 12;
 
-  if (forPopup) {
-    return `
-      <div style="
-        background: linear-gradient(135deg, ${color} 0%, ${color} 100%);
-        width: ${size}px;
-        height: ${size}px;
-        border-radius: 5px;
-        border: 2px solid white;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.4),
-                    0 1px 2px rgba(0,0,0,0.2),
-                    inset 0 1px 0 rgba(255,255,255,0.3);
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        position: relative;
-      ">
-        <svg xmlns="http://www.w3.org/2000/svg" width="${iconSize}" height="${iconSize}" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0px 1px 2px rgba(0,0,0,0.5));">
-          <path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/>
-        </svg>
-        <div style="
-          position: absolute;
-          top: -2px;
-          right: -2px;
-          width: 6px;
-          height: 6px;
-          background-color: white;
-          border-radius: 50%;
-          border: 1px solid ${color};
-          box-shadow: 0 1px 2px rgba(0,0,0,0.4);
-        "></div>
-      </div>
-    `;
-  }
 
   return L.divIcon({
     className: 'bg-transparent border-none',
@@ -410,8 +377,8 @@ const getRemainingPath = (path: [number, number][], progress: number): [number, 
   return [];
 };
 
-const getPlaneIcon = (originCode: string, rotation: number, capacityPct: number) => {
-  const { hex, twClass } = getLoadColor(capacityPct);
+const getPlaneIcon = (_originCode: string, rotation: number, capacityPct: number) => {
+  const { twClass } = getLoadColor(capacityPct);
   const html = `
     <div style="
       width: ${PLANE_HITBOX}px;
@@ -788,7 +755,7 @@ export function MapaVuelos({
           <Marker
             key={vuelo.id}
             position={[coord[0], coord[1]]}
-            icon={getPlaneIcon(vuelo.origenCode, bearing)}
+            icon={getPlaneIcon(vuelo.origenCode, bearing, capacityPct)}
             zIndexOffset={2000}
             opacity={dimmed ? 0.35 : 1}
             eventHandlers={{

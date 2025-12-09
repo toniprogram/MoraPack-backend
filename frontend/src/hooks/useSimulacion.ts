@@ -101,7 +101,7 @@ export const useSimulacion = () => {
   const [orderPlansLive, setOrderPlansLive] = useState<SimulationOrderPlan[]>([]);
   const [animPaused, setAnimPaused] = useState(false);
   const firstSimTickMsRef = useRef<number | null>(null);
-  const heartbeatRef = useRef<NodeJS.Timeout | null>(null);
+  const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [startRealMs, setStartRealMs] = useState<number | null>(null);
   const [elapsedRealMs, setElapsedRealMs] = useState(0);
   const engineSpeedRef = useRef(DEFAULT_SPEED);

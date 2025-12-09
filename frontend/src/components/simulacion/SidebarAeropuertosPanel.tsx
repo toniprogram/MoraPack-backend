@@ -1,6 +1,5 @@
 import type { Airport } from '../../types/airport';
 import type { ActiveAirportTick } from '../../types/simulation';
-import type { SegmentoVuelo } from '../../hooks/useSimulacion';
 import { useEffect, useMemo, useState } from 'react';
 import { OrdersList } from './OrdersList';
 import { FlightsList } from './FlightsList';
@@ -8,6 +7,7 @@ import { FlightsList } from './FlightsList';
 interface SidebarAeropuertosPanelProps {
   aeropuertos: Airport[];
   activeAirports: ActiveAirportTick[];
+  activeSegments?: any[];
   selectedAirportIds: string[] | null;
   onSelectAirport: (airportId: string | null) => void;
   selectedOrders?: string[] | null;
@@ -21,8 +21,8 @@ const BUFFER_ITEMS = 8;
 const INFINITE_CODES = new Set(['SPIM', 'LIM', 'EBCI', 'BRU', 'UBBB', 'GYD']);
 
 const isInfiniteHub = (a: Airport) => {
-  const id = (a.id || '').toUpperCase().trim();
-  const code = (a.code || '').toUpperCase().trim();
+  //const id = (a.id || '').toUpperCase().trim();
+  //const code = (a.code || '').toUpperCase().trim();
   return INFINITE_CODES.has(a.id) || INFINITE_CODES.has(a.code);
 };
 
