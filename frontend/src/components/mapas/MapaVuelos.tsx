@@ -18,69 +18,213 @@ const getStatusColor = (pct: number) => {
   if (pct <= 100) return '#ef4444'; // Rojo (Crítico/Lleno)
   return '#22c55e';
 };
-const getAirportIcon = (pct: number) => {
+const getAirportIcon = (pct: number, forPopup = false) => {
   const color = getStatusColor(pct);
+  const animId = `airport-${Math.random().toString(36).substr(2, 9)}`;
+  const size = forPopup ? 20 : 20;
+  const iconSize = forPopup ? 12 : 12;
 
-  return L.divIcon({
-    className: 'bg-transparent border-none',
-    html: `
+  if (forPopup) {
+    return `
       <div style="
-        background-color: ${color};
-        width: 24px;
-        height: 24px;
-        border-radius: 6px;
+        background: linear-gradient(135deg, ${color} 0%, ${color} 100%);
+        width: ${size}px;
+        height: ${size}px;
+        border-radius: 5px;
         border: 2px solid white;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.4);
-        display: flex;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.4),
+                    0 1px 2px rgba(0,0,0,0.2),
+                    inset 0 1px 0 rgba(255,255,255,0.3);
+        display: inline-flex;
         align-items: center;
         justify-content: center;
-        transition: background-color 0.3s ease;
+        position: relative;
       ">
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M22 8.35V20a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8.35A2 2 0 0 1 3.26 6.5l8-3.2a2 2 0 0 1 1.48 0l8 3.2A2 2 0 0 1 22 8.35Z"/>
-          <path d="M6 18h12"/>
-          <path d="M6 14h12"/>
+        <svg xmlns="http://www.w3.org/2000/svg" width="${iconSize}" height="${iconSize}" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0px 1px 2px rgba(0,0,0,0.5));">
+          <path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/>
         </svg>
+        <div style="
+          position: absolute;
+          top: -2px;
+          right: -2px;
+          width: 6px;
+          height: 6px;
+          background-color: white;
+          border-radius: 50%;
+          border: 1px solid ${color};
+          box-shadow: 0 1px 2px rgba(0,0,0,0.4);
+        "></div>
       </div>
-    `,
-    iconSize: [10, 10],
-    iconAnchor: [12, 12],
-    popupAnchor: [0, -12],
-  });
-};
-const getHubIcon = (pct: number) => {
-  const color = getStatusColor(pct);
+    `;
+  }
 
   return L.divIcon({
     className: 'bg-transparent border-none',
     html: `
+      <style>
+        @keyframes ${animId}-subtle {
+          0%, 100% { transform: translateY(0px); }
+          50% { transform: translateY(-2px); }
+        }
+      </style>
+
       <div style="
-        background-color: ${color};
-        width: 32px;
-        height: 32px;
-        border-radius: 8px; /* Un poco más cuadrado para el Hub */
-        border: 3px solid white;
-        box-shadow: 0 4px 8px rgba(0,0,0,0.5);
+        background: linear-gradient(135deg, ${color} 0%, ${color} 100%);
+        width: ${size}px;
+        height: ${size}px;
+        border-radius: 5px;
+        border: 2px solid white;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.4),
+                    0 1px 2px rgba(0,0,0,0.2),
+                    inset 0 1px 0 rgba(255,255,255,0.3);
         display: flex;
         align-items: center;
         justify-content: center;
-        z-index: 1000;
-        transition: background-color 0.3s ease;
-      ">
-        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 22v-8"/>
-          <path d="M5 22h14"/>
-          <path d="M7 10h10l-1-6H8l-1 6Z"/>
-          <path d="M12 2v2"/>
+        transition: all 0.3s ease;
+        position: relative;
+      " onmouseover="this.style.transform='scale(1.15)'; this.style.boxShadow='0 4px 12px rgba(0,0,0,0.5)'"
+         onmouseout="this.style.transform='scale(1)'; this.style.boxShadow='0 2px 6px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.3)'">
+
+        <svg xmlns="http://www.w3.org/2000/svg" width="${iconSize}" height="${iconSize}" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0px 1px 2px rgba(0,0,0,0.5));">
+          <path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/>
         </svg>
+
+        <div style="
+          position: absolute;
+          top: -2px;
+          right: -2px;
+          width: 6px;
+          height: 6px;
+          background-color: white;
+          border-radius: 50%;
+          border: 1px solid ${color};
+          box-shadow: 0 1px 2px rgba(0,0,0,0.4);
+        "></div>
       </div>
     `,
-    iconSize: [18, 18],
-    iconAnchor: [16, 16],
-    popupAnchor: [0, -16],
+    iconSize: [size, size],
+    iconAnchor: [size/2, size/2],
+    popupAnchor: [0, -14],
   });
 };
 
+const getHubIcon = (pct: number, forPopup = false) => {
+  const color = getStatusColor(pct);
+  const animId = `pulse-${Math.random().toString(36).substr(2, 9)}`;
+  const outerSize = forPopup ? 32 : 32;
+  const innerSize = forPopup ? 18 : 34;
+  const iconSize = forPopup ? 18 : 22;
+  const borderWidth = forPopup ? 2 : 3;
+
+  if (forPopup) {
+    return `
+      <div style="position: relative; width: ${outerSize}px; height: ${outerSize}px; display: inline-block;">
+        <div style="
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: ${outerSize}px;
+          height: ${outerSize}px;
+          border-radius: 50%;
+          border: 2px dashed #FCD34D;
+          opacity: 0.5;
+        "></div>
+        <div style="
+          position: absolute;
+          top: ${(outerSize - innerSize) / 2}px;
+          left: ${(outerSize - innerSize) / 2}px;
+          background: ${color};
+          width: ${innerSize}px;
+          height: ${innerSize}px;
+          border-radius: 50%;
+          border: ${borderWidth}px solid #FCD34D;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          box-shadow: 0 0 12px rgba(252, 211, 77, 0.6);
+        ">
+          <svg xmlns="http://www.w3.org/2000/svg" width="${iconSize}" height="${iconSize}" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0px 1px 3px rgba(0,0,0,0.7));">
+            <path d="M4 16h16"/>
+            <path d="M4 20h16"/>
+            <path d="M8 12h8l-2-8H10l-2 8Z"/>
+            <circle cx="12" cy="2" r="1.5" fill="#FCD34D"/>
+            <path d="M17.8 19.2 16 11l3.5-3.5" opacity="0.8"/>
+            <path d="M6.2 19.2 8 11 4.5 7.5" opacity="0.8"/>
+          </svg>
+        </div>
+      </div>
+    `;
+  }
+
+  return L.divIcon({
+    className: 'bg-transparent border-none',
+    html: `
+      <style>
+        @keyframes ${animId} {
+          0%, 100% {
+            transform: scale(1);
+            box-shadow: 0 0 16px rgba(252, 211, 77, 0.8),
+                        0 0 32px rgba(252, 211, 77, 0.4),
+                        inset 0 0 12px rgba(0,0,0,0.2);
+          }
+          50% {
+            transform: scale(1.08);
+            box-shadow: 0 0 24px rgba(252, 211, 77, 1),
+                        0 0 48px rgba(252, 211, 77, 0.6),
+                        inset 0 0 12px rgba(0,0,0,0.2);
+          }
+        }
+
+        @keyframes ${animId}-rotate {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      </style>
+
+      <div style="position: relative; width: ${outerSize}px; height: ${outerSize}px;">
+        <div style="
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: ${outerSize}px;
+          height: ${outerSize}px;
+          border-radius: 50%;
+          border: 2.5px dashed #FCD34D;
+          opacity: 0.6;
+          animation: ${animId}-rotate 8s linear infinite;
+        "></div>
+
+        <div style="
+          position: absolute;
+          top: ${(outerSize - innerSize) / 2}px;
+          left: ${(outerSize - innerSize) / 2}px;
+          background: ${color};
+          width: ${innerSize}px;
+          height: ${innerSize}px;
+          border-radius: 50%;
+          border: ${borderWidth}px solid #FCD34D;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 1000;
+          animation: ${animId} 2.5s ease-in-out infinite;
+        ">
+          <svg xmlns="http://www.w3.org/2000/svg" width="${iconSize}" height="${iconSize}" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0px 2px 4px rgba(0,0,0,0.7));">
+            <path d="M4 16h16"/>
+            <path d="M4 20h16"/>
+            <path d="M8 12h8l-2-8H10l-2 8Z"/>
+            <circle cx="12" cy="2" r="1.5" fill="#FCD34D"/>
+            <path d="M17.8 19.2 16 11l3.5-3.5" opacity="0.8"/>
+            <path d="M6.2 19.2 8 11 4.5 7.5" opacity="0.8"/>
+          </svg>
+        </div>
+      </div>
+    `,
+    iconSize: [outerSize, outerSize],
+    iconAnchor: [outerSize/2, outerSize/2],
+    popupAnchor: [0, -24],
+  });
+};
 // Fix básico de Leaflet
 const iconProto = L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown };
 delete iconProto._getIconUrl;
