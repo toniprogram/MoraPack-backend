@@ -36,7 +36,7 @@ export function SimTopBar({
     if (!tiempoSimulado) return null;
     return (
       <>
-        <div className="badge badge-neutral text-base-content">
+        <div className="badge badge-neutral text-base-content text-[11px] leading-tight">
           📅 Fecha Simulación: {tiempoSimulado.toLocaleDateString('es-PE', {
             day: '2-digit',
             month: 'short',
@@ -44,7 +44,7 @@ export function SimTopBar({
             timeZone: 'UTC'
           })}
         </div>
-        <div className="badge badge-neutral text-base-content">
+        <div className="badge badge-neutral text-base-content text-[11px] leading-tight">
            🕒Hora Simulación {tiempoSimulado.toLocaleTimeString('es-PE', {
               hour: '2-digit',
               minute: '2-digit',
@@ -116,7 +116,7 @@ export function SimTopBar({
           {badgesTiempo}
           {tiempoEjecucionSim && (
             <div className="tooltip tooltip-bottom" data-tip="Tiempo de ejecución simulado">
-              <div className="badge badge-neutral text-base-content">
+              <div className="badge badge-neutral text-base-content text-[11px] leading-tight">
                 ⏳ {tiempoEjecucionSim}
               </div>
             </div>
