@@ -514,6 +514,7 @@ export default function SimulacionPage() {
                 formatElapsed={formatElapsed}
                 capacidadUsadaFlota={capacidadUsadaFlota}
                 capacidadTotalFlota={capacidadTotalFlota}
+                startDateString={startDate}
               />
             </div>
           </div>

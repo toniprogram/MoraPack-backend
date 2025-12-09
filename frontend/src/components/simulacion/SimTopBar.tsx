@@ -14,6 +14,7 @@ interface SimTopBarProps {
   formatElapsed: (ms: number) => string;
   capacidadUsadaFlota?: number;
   capacidadTotalFlota?: number;
+  startDateString?: string;
 }
 
 export function SimTopBar({
@@ -29,13 +30,14 @@ export function SimTopBar({
   formatElapsed,
   capacidadUsadaFlota = 0,
   capacidadTotalFlota = 0,
+  startDateString = '',
 }: SimTopBarProps) {
   const badgesTiempo = useMemo(() => {
     if (!tiempoSimulado) return null;
     return (
       <>
         <div className="badge badge-neutral text-base-content">
-          📅 {tiempoSimulado.toLocaleDateString('es-PE', {
+          📅 Fecha Simulación: {tiempoSimulado.toLocaleDateString('es-PE', {
             day: '2-digit',
             month: 'short',
             year: 'numeric',
@@ -43,7 +45,7 @@ export function SimTopBar({
           })}
         </div>
         <div className="badge badge-neutral text-base-content">
-          🕒 {tiempoSimulado.toLocaleTimeString('es-PE', {
+           🕒Hora Simulación {tiempoSimulado.toLocaleTimeString('es-PE', {
               hour: '2-digit',
               minute: '2-digit',
               timeZone: 'UTC'
@@ -57,6 +59,26 @@ export function SimTopBar({
     if (capacidadTotalFlota === 0) return 0;
     return Math.round((capacidadUsadaFlota / capacidadTotalFlota) * 100);
   }, [capacidadUsadaFlota, capacidadTotalFlota]);
+
+  const tiempoEjecucionSim = useMemo(() => {
+    if (!tiempoSimulado || !startDateString) return null;
+    try {
+      // Asegurar que startDate tenga segundos
+      const startStr = startDateString.length === 16 ? `${startDateString}:00` : startDateString;
+      // Interpretar ambas como UTC (sin conversión de zona)
+      const startDate = new Date(startStr + 'Z');
+      const simDate = new Date(tiempoSimulado.toISOString());
+      const diffMs = simDate.getTime() - startDate.getTime();
+      if (diffMs < 0) return null;
+      const days = Math.floor(diffMs / 86_400_000);
+      const hours = Math.floor((diffMs % 86_400_000) / 3_600_000);
+      const minutes = Math.floor((diffMs % 3_600_000) / 60_000);
+      const pad = (n: number) => n.toString().padStart(2, '0');
+      return `Tiempo simulado: ${pad(days)} - ${pad(hours)}:${pad(minutes)}`;
+    } catch {
+      return null;
+    }
+  }, [tiempoSimulado, startDateString]);
 
   return (
     <div className="bg-transparent shadow-none border-none px-3 py-2 flex justify-between items-start z-20">
@@ -92,6 +114,13 @@ export function SimTopBar({
 
         <div className="flex gap-2 items-center">
           {badgesTiempo}
+          {tiempoEjecucionSim && (
+            <div className="tooltip tooltip-bottom" data-tip="Tiempo de ejecución simulado">
+              <div className="badge badge-neutral text-base-content">
+                ⏳ {tiempoEjecucionSim}
+              </div>
+            </div>
+          )}
           {estaActivo && startRealMs !== null && (
             <div className="tooltip tooltip-bottom" data-tip="Tiempo real desde inicio">
               <div className="badge badge-warning badge-outline text-[11px]">
