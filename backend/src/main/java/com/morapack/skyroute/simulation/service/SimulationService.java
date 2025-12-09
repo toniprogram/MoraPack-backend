@@ -375,6 +375,8 @@ public class SimulationService {
         session.gaRuns.incrementAndGet();
 
         log.info("[SIM:{}] GA done for batch of {} orders (took {} ms)", session.id, orderedBatch.size(), gaDuration / 1_000_000);
+        var planIds = best.getPlans().stream().map(OrderPlan::getOrderId).toList();
+        log.info("[SIM:{}] Best individual plans count={} ids={}", session.id, planIds.size(), planIds);
         log.info("[SIM:{}] Metrics for batch: gaRun={} ms, iterationTotal={} ms",
                 session.id,
                 nanosToMillis(gaDuration),
@@ -390,7 +392,20 @@ public class SimulationService {
         session.update(snapshot);
         persistDiff(session, snapshot);
         persistSnapshot(session, snapshot);
+        if (session.liveWorld != null && best.getPlans() != null) {
+            best.getPlans().forEach(p -> {
+                var plannedTick = new OrderStatusTick(
+                        p.getOrderId(),
+                        "PLANNED",
+                        "",
+                        p.getRoutes() != null ? p.getRoutes().stream().mapToInt(r -> r.getQuantity()).sum() : 0
+                );
+                session.liveWorld.registerPlanned(plannedTick);
+            });
+            log.debug("[SIM:{}] Registrados {} pedidos planificados para emitir en tick", session.id, best.getPlans().size());
+        }
         scheduleLiveFlightsFromIndividual(session, best, orderedBatch);
+        log.debug("[SIM:{}] Persisted snapshot with {} plans", session.id, snapshot.orderPlans().size());
         log.trace("[SIM:{}] Snapshot created: processed={}/{}", session.id, demand.size(), totalOrders);
         // Enviamos snapshot de avance (sin tick) para liberar overlay en frontend sin duplicar ticks
         messagingTemplate.convertAndSend(
@@ -614,6 +629,7 @@ public class SimulationService {
                 }
             }
         });
+        log.debug("[SIM:{}] Diff planes -> added:{} updated:{} removed:{}", session.id, added.size(), updated.size(), removed.size());
         session.lastPlans = currentMap;
         OrderPlansDiff diff = new OrderPlansDiff(simTime, added, updated, removed);
 

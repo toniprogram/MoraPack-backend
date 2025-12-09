@@ -75,7 +75,6 @@ public class LiveSimulationWorld {
 
         LiveOrder order = orders.get(orderId);
         if (order != null) {
-            order.markWaiting(flight.getDepartureTime());
             order.addLeg(new OrderFlightLeg(
                     target.getFlightId(),
                     target.getOrigin(),
@@ -159,6 +158,7 @@ public class LiveSimulationWorld {
                                         .getOrDefault(flight.getDestination(), Map.of())
                                         .getOrDefault(orderId, 0);
                                 if (qtyTotal > 0) {
+                                    order.markWaiting(flight.getArrivalTime());
                                     releaseQueue.add(new ReleaseEvent(
                                             flight.getArrivalTime().plus(Config.WAREHOUSE_DWELL),
                                             flight.getDestination(),
@@ -352,7 +352,13 @@ public class LiveSimulationWorld {
     }
 
     public List<OrderStatusTick> buildPlannedStatuses() {
-        List<OrderStatusTick> planned = new ArrayList<>(plannedOnce.values());
+        List<OrderStatusTick> planned = new ArrayList<>();
+        plannedOnce.forEach((id, tick) -> {
+            LiveOrder lo = orders.get(id);
+            if (lo != null && lo.getStatus() == LiveOrder.Status.PLANNED) {
+                planned.add(tick);
+            }
+        });
         plannedOnce.clear(); // emit once
         return planned;
     }
@@ -362,6 +368,7 @@ public class LiveSimulationWorld {
             return;
         }
         plannedOnce.put(planned.orderId(), planned);
+        System.out.println("[SIM] Planned registered for order " + planned.orderId());
     }
 
     private void recomputeAirportLoad(String airportCode) {

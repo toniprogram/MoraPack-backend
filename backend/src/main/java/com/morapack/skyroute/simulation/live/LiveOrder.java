@@ -37,9 +37,7 @@ public class LiveOrder {
     }
 
     public void markWaiting(Instant time) {
-        if (status == Status.PLANNED) {
-            status = Status.WAITING_PICKUP;
-        }
+        status = Status.WAITING_PICKUP;
         history.add(new OrderEvent(time, "WAIT", null, null, 0));
     }
 
