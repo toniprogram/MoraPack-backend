@@ -514,32 +514,38 @@ export function MapaVuelos({
                     </div>
                 </div>
                 <div className="p-3 space-y-2">
-                    <div className="flex justify-between mb-1 text-[10px] font-semibold uppercase opacity-70">
-                        <span>Almacén</span>
-                        <span className={`font-mono ${statusColorClass}`}>
-                            {stockActual} / {isInfinite ? '∞' : capacidadMax}
-                        </span>
-                    </div>
-                    <progress
-                        className={`progress w-full h-2 ${progressClass}`}
-                        value={isInfinite ? 0 : stockActual}
-                        max={isInfinite ? 100 : (capacidadMax || 1)}
-                    ></progress>
+                    {!isInfinite && (
+                        <>
+                            <div className="flex justify-between mb-1 text-[10px] font-semibold uppercase opacity-70">
+                                <span>Almacén</span>
+                                <span className={`font-mono ${statusColorClass}`}>
+                                    {stockActual} / {capacidadMax}
+                                </span>
+                            </div>
+                            <progress
+                                className={`progress w-full h-2 ${progressClass}`}
+                                value={stockActual}
+                                max={capacidadMax || 1}
+                            ></progress>
 
-                    <div className={`font-mono text-right mt-1 text-[10px] ${statusColorClass}`}>
-                        {isInfinite ? 'Capacidad Ilimitada' : `${stockPct}% Ocupado`}
-                    </div>
-                    <div className="border-t border-base-300 pt-2">
-                      <div className="text-[10px] font-semibold uppercase opacity-70 mb-1">Pedidos en almacén</div>
-                      <OrdersList
-                        items={(live?.orderLoads ?? []).map(ol => ({ orderId: ol.orderId, cantidad: ol.quantity }))}
-                        selectedOrders={selectedOrders}
-                        onSelectOrder={(oid) => {
-                          onSelectOrders?.([oid]);
-                          onSelectAirport?.(aeropuerto.id || aeropuerto.code || null);
-                        }}
-                      />
-                    </div>
+                            <div className={`font-mono text-right mt-1 text-[10px] ${statusColorClass}`}>
+                                {stockPct}% Ocupado
+                            </div>
+                        </>
+                    )}
+                    {!isInfinite && (
+                        <div className="border-t border-base-300 pt-2 mt-2">
+                          <div className="text-[10px] font-semibold uppercase opacity-70 mb-1">Pedidos en almacén</div>
+                          <OrdersList
+                            items={(live?.orderLoads ?? []).map(ol => ({ orderId: ol.orderId, cantidad: ol.quantity }))}
+                            selectedOrders={selectedOrders}
+                            onSelectOrder={(oid) => {
+                              onSelectOrders?.([oid]);
+                              onSelectAirport?.(aeropuerto.id || aeropuerto.code || null);
+                            }}
+                          />
+                        </div>
+                    )}
                     <div className="border-t border-base-300 pt-2">
                       <div className="flex justify-between items-center mb-1">
                         <span className="text-[10px] font-semibold uppercase opacity-70">Vuelos Salientes</span>

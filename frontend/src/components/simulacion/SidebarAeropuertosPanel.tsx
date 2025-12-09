@@ -124,33 +124,37 @@ export function SidebarAeropuertosPanel({
           <div className="card-body p-3">
             <h3 className="font-bold text-sm text-primary">{aeropuerto.id}</h3>
             <p className="text-xs text-base-content/80">{aeropuerto.name}</p>
-            <div className="text-xs text-base-content/70 mt-1 space-y-1">
-              <div className="flex justify-between">
-                <span>Almacén</span>
-                <span className={`font-mono ${textColorClass}`}>
-                    {current} / {isInfinite ? '∞' : max}
-                </span>
-              </div>
-                <progress
-                    className={`progress ${progressColorClass} w-full h-2`}
-                    value={isInfinite ? 0 : current}
-                    max={isInfinite ? 100 : (max || 1)}
-                  ></progress>
-
-                  <div className={`font-mono text-right text-[10px] ${textColorClass}`}>
-                    {isInfinite ? 'Capacidad Ilimitada' : `${pct}% Ocupado`}
+            {!isInfinite && (
+                <div className="text-xs text-base-content/70 mt-1 space-y-1">
+                  <div className="flex justify-between">
+                    <span>Almacén</span>
+                    <span className={`font-mono ${textColorClass}`}>
+                        {current} / {max}
+                    </span>
                   </div>
-            </div>
-            <div className="border-t border-base-300 pt-2 mt-2">
-              <div className="text-[10px] font-semibold uppercase opacity-70 mb-1">Pedidos en almacén</div>
-              <OrdersList
-                items={flightOrders.map(ol => ({ orderId: ol.orderId, cantidad: ol.quantity }))}
-                selectedOrders={selectedOrders}
-                onSelectOrder={(orderId) => {
-                  onSelectOrders?.([orderId]);
-                }}
-              />
-            </div>
+                    <progress
+                        className={`progress ${progressColorClass} w-full h-2`}
+                        value={current}
+                        max={max || 1}
+                      ></progress>
+
+                      <div className={`font-mono text-right text-[10px] ${textColorClass}`}>
+                        {pct}% Ocupado
+                      </div>
+                </div>
+            )}
+            {!isInfinite && (
+                <div className="border-t border-base-300 pt-2 mt-2">
+                  <div className="text-[10px] font-semibold uppercase opacity-70 mb-1">Pedidos en almacén</div>
+                  <OrdersList
+                    items={flightOrders.map(ol => ({ orderId: ol.orderId, cantidad: ol.quantity }))}
+                    selectedOrders={selectedOrders}
+                    onSelectOrder={(orderId) => {
+                      onSelectOrders?.([orderId]);
+                    }}
+                  />
+                </div>
+            )}
             <div className="border-t border-base-300 pt-2 mt-2">
                 <div className="text-[10px] font-semibold uppercase opacity-70 mb-1">Vuelos Salientes</div>
                 <FlightsList
