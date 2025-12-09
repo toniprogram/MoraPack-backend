@@ -12,6 +12,8 @@ interface SimTopBarProps {
   startRealMs: number | null;
   elapsedRealMs: number;
   formatElapsed: (ms: number) => string;
+  capacidadUsadaFlota?: number;
+  capacidadTotalFlota?: number;
 }
 
 export function SimTopBar({
@@ -25,6 +27,8 @@ export function SimTopBar({
   startRealMs,
   elapsedRealMs,
   formatElapsed,
+  capacidadUsadaFlota = 0,
+  capacidadTotalFlota = 0,
 }: SimTopBarProps) {
   const badgesTiempo = useMemo(() => {
     if (!tiempoSimulado) return null;
@@ -49,23 +53,34 @@ export function SimTopBar({
     );
   }, [tiempoSimulado]);
 
+  const capacidadFlotaPct = useMemo(() => {
+    if (capacidadTotalFlota === 0) return 0;
+    return Math.round((capacidadUsadaFlota / capacidadTotalFlota) * 100);
+  }, [capacidadUsadaFlota, capacidadTotalFlota]);
+
   return (
-    <div className="bg-transparent shadow-none border-none px-3 py-2 flex justify-between items-center z-20">
-      <div className="flex gap-4 text-xs">
-        <div className="flex items-center gap-1.5 tooltip tooltip-bottom" data-tip="Entregados">
-          <Check size={16} className="text-success" />
-          <span className="font-mono font-semibold">{entregados}</span>
+    <div className="bg-transparent shadow-none border-none px-3 py-2 flex justify-between items-start z-20">
+      <div className="flex gap-4 text-xs flex-col">
+        <div className="flex gap-4">
+          <div className="flex items-center gap-1.5 tooltip tooltip-bottom" data-tip="Entregados">
+            <Check size={16} className="text-success" />
+            <span className="font-mono font-semibold">{entregados}</span>
+          </div>
+          <div className="flex items-center gap-1.5 tooltip tooltip-bottom" data-tip="En tránsito">
+            <Box size={16} className="text-info" />
+            <span className="font-mono font-semibold">{enTransito}</span>
+          </div>
+          <div className="flex items-center gap-1.5 tooltip tooltip-bottom" data-tip="Vuelos en uso">
+            <Plane size={16} className="text-warning" />
+            <span className="font-mono font-semibold">{vuelosActivos}</span>
+          </div>
         </div>
-        <div className="flex items-center gap-1.5 tooltip tooltip-bottom" data-tip="En tránsito">
-          <Box size={16} className="text-info" />
-          <span className="font-mono font-semibold">{enTransito}</span>
-        </div>
-        <div className="flex items-center gap-1.5 tooltip tooltip-bottom" data-tip="Vuelos en uso">
-          <Plane size={16} className="text-warning" />
-          <span className="font-mono font-semibold">{vuelosActivos}</span>
+        <div className="bg-base-300/80 px-2 py-1 rounded text-[10px] w-fit">
+          <div className="text-base-content/70 font-semibold uppercase tracking-wide">Capacidad Total Flota</div>
+          <div className="font-mono font-bold text-success text-sm">{capacidadFlotaPct}%</div>
         </div>
       </div>
-      <div className="flex items-center gap-3">
+      <div className="flex items-start gap-3">
         <div className="text-xs tooltip tooltip-bottom" data-tip="Pedidos procesados por el backend">
           <span className="font-mono font-semibold">{reloj}</span>
         </div>

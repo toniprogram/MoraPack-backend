@@ -302,6 +302,16 @@ export default function SimulacionPage() {
         });
     }, [vuelosLive, filtroTexto]);
 
+  const { capacidadUsadaFlota, capacidadTotalFlota } = useMemo(() => {
+    let totalUsed = 0;
+    let totalCapacity = 0;
+    activeSegments.forEach(seg => {
+      totalUsed += seg.capacityUsed ?? 0;
+      totalCapacity += seg.capacityTotal ?? 0;
+    });
+    return { capacidadUsadaFlota: totalUsed, capacidadTotalFlota: totalCapacity };
+  }, [activeSegments]);
+
   const aeropuertosFiltrados = useMemo(() => {
         const term = filtroTexto.toLowerCase();
         return aeropuertos.filter(a => {
@@ -502,6 +512,8 @@ export default function SimulacionPage() {
                 startRealMs={startRealMs}
                 elapsedRealMs={elapsedRealMs}
                 formatElapsed={formatElapsed}
+                capacidadUsadaFlota={capacidadUsadaFlota}
+                capacidadTotalFlota={capacidadTotalFlota}
               />
             </div>
           </div>

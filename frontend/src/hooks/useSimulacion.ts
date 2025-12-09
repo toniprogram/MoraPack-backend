@@ -57,6 +57,7 @@ export interface SegmentoVuelo {
   orderIds: string[];
   retrasado: boolean;
   routeQuantity?: number;
+  capacityUsed?: number;
   capacityTotal?: number;
   orderLoads?: { orderId: string; quantity: number }[];
 }
@@ -388,6 +389,7 @@ export const useSimulacion = () => {
         orderIds: seg.orderIds ?? [],
         retrasado: false,
         routeQuantity: seg.capacityUsed,
+        capacityUsed: seg.capacityUsed,
         capacityTotal: seg.capacityTotal,
         orderLoads: seg.orderLoads ?? seg.orderIds?.map(id => ({ orderId: id, quantity: seg.capacityUsed })) ?? [],
       }));
