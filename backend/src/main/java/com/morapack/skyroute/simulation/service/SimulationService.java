@@ -486,6 +486,19 @@ public class SimulationService {
         return best;
     }
 
+    // Sobrecarga para compatibilidad: usa una ventana fija de 60s desde ahora
+    private Individual processBatch(SimulationSession session,
+                                    World world,
+                                    Individual previousBest,
+                                    List<Order> demand,
+                                    List<Order> batch,
+                                    int totalOrders,
+                                    Instant snapshotInstant,
+                                    boolean useHeuristicSeed) {
+        long targetEndMillis = System.currentTimeMillis() + 60_000L;
+        return processBatch(session, world, previousBest, demand, batch, totalOrders, snapshotInstant, useHeuristicSeed, targetEndMillis);
+    }
+
     private void finishWhenDelivered(SimulationSession session) {
         executorService.submit(() -> {
             try {
@@ -526,7 +539,8 @@ public class SimulationService {
                                     Instant snapshotInstant,
                                     boolean useHeuristicSeed) {
         Instant instant = emitSnapshot ? snapshotInstant : null;
-        return processBatch(session, world, previousBest, demand, List.of(order), totalOrders, instant, useHeuristicSeed);
+        long targetEnd = System.currentTimeMillis() + 60_000L;
+        return processBatch(session, world, previousBest, demand, List.of(order), totalOrders, instant, useHeuristicSeed, targetEnd);
     }
 
     private SimulationSnapshot toSnapshot(UUID simulationId,
