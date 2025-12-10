@@ -421,11 +421,56 @@ export default function SimulacionPage() {
     try {
       setDownloadingReport(true);
       const report = await simulacionService.getReport(targetId);
-      const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+      
+      // Generar contenido del reporte en TXT
+      let txtContent = '';
+      txtContent += `SIMULATION REPORT\n`;
+      txtContent += `================================================================================\n\n`;
+      txtContent += `Simulation ID: ${report.simulationId}\n`;
+      txtContent += `Start Date: ${report.startTime}\n`;
+      txtContent += `End Date: ${report.endTime}\n`;
+      txtContent += `\n`;
+      txtContent += `Total Orders: ${report.totalOrders}\n`;
+      txtContent += `Delivered Orders: ${report.deliveredOrders}\n`;
+      txtContent += `Total Quantity: ${report.totalQuantity}\n`;
+      txtContent += `Delivered Quantity: ${report.deliveredQuantity}\n`;
+      txtContent += `\n`;
+      txtContent += `================================================================================\n`;
+      txtContent += `ORDERS\n`;
+      txtContent += `================================================================================\n\n`;
+      
+      report.orders.forEach((order, idx) => {
+        txtContent += `Order #${idx + 1}\n`;
+        txtContent += `  Order ID: ${order.orderId}\n`;
+        txtContent += `  Total Quantity: ${order.totalQuantity}\n`;
+        txtContent += `  Delivered Quantity: ${order.deliveredQuantity}\n`;
+        txtContent += `  Destination: ${order.destination}\n`;
+        txtContent += `  Final Status: ${order.finalStatus}\n`;
+        txtContent += `  Creation UTC: ${order.creationUtc || 'N/A'}\n`;
+        txtContent += `  Delivery Time: ${order.deliveryTime || 'N/A'}\n`;
+        txtContent += `  Total Transit Minutes: ${order.totalTransitMinutes}\n`;
+        
+        if (order.routeTaken && order.routeTaken.length > 0) {
+          txtContent += `\n  Routes:\n`;
+          order.routeTaken.forEach((route, routeIdx) => {
+            txtContent += `    Route ${routeIdx + 1}:\n`;
+            txtContent += `      Flight ID: ${route.flightId}\n`;
+            txtContent += `      Origin: ${route.origin}\n`;
+            txtContent += `      Destination: ${route.destination}\n`;
+            txtContent += `      Departure Time: ${route.departureTime}\n`;
+            txtContent += `      Arrival Time: ${route.arrivalTime}\n`;
+            txtContent += `      Quantity: ${route.quantity}\n`;
+          });
+        }
+        
+        txtContent += `\n`;
+      });
+      
+      const blob = new Blob([txtContent], { type: 'text/plain' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `reporte-simulacion-${targetId}.json`;
+      a.download = `reporte-simulacion-${targetId}.txt`;
       a.click();
       URL.revokeObjectURL(url);
       setToastError(false);
