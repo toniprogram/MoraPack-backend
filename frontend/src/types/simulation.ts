@@ -30,6 +30,21 @@ export interface SimulationOrderPlan {
   routes: SimulationRoute[];
 }
 
+export interface DeliveredOrder {
+  orderId: string;
+  deliveredQty: number;
+  location?: string;
+  deliveredAt?: string;
+  simTime?: string;
+}
+
+export interface DeliveredPage {
+  total: number;
+  page: number;
+  size: number;
+  items: DeliveredOrder[];
+}
+
 export interface OrderPlansDiff {
   simTime: string;
   added: SimulationOrderPlan[];

@@ -13,9 +13,9 @@ import { Plane, Building } from 'lucide-react';
 
 const getStatusColor = (pct: number) => {
   if (pct === 0) return '#22c55e';
-  if (pct < 70) return '#22c55e'; // Verde (Ok)
-  if (pct < 90) return '#eab308'; // Amarillo (Advertencia)
-  if (pct <= 100) return '#ef4444'; // Rojo (Crítico/Lleno)
+  if (pct < 10) return '#22c55e'; // Verde (Ok)
+  if (pct < 20) return '#eab308'; // Amarillo (Advertencia)
+  if (pct <= 30) return '#ef4444'; // Rojo (Crítico/Lleno)
   return '#22c55e';
 };
 const getAirportIcon = (pct: number, forPopup = false) => {

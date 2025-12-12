@@ -39,8 +39,10 @@ export default function SimulacionPage() {
       conectarSimulacion,
       notificacion,
       setNotificacion,
-      deliveredLog,
       plannedLog: plannedLogState = [],
+      deliveredPage,
+      deliveredLoading,
+      fetchDeliveries,
   } = useSimulacion();
   const location = useLocation();
 
@@ -64,9 +66,10 @@ export default function SimulacionPage() {
   const statusRef = useRef(status);
   const [downloadingReport, setDownloadingReport] = useState(false);
   const lastSimulationIdRef = useRef<string | null>(null);
-  const [filtroEstado, setFiltroEstado] = useState<'enproceso' | 'planificados' | 'entregados' | 'todos'>('enproceso');
+  const [filtroEstado, setFiltroEstado] = useState<'enproceso' | 'planificados' | 'entregados'>('enproceso');
 
   const [filtroTexto, setFiltroTexto] = useState<string>('');
+  const [deliveredPageIndex, setDeliveredPageIndex] = useState(0);
   const mostrandoOverlay = estaActivo && !hasSnapshots;
 
   useEffect(() => {
@@ -164,29 +167,50 @@ export default function SimulacionPage() {
     (orderPlans ?? []).forEach(p => planMap.set(p.orderId, p));
 
     const merged = new Map<string, { status: string; simTime?: string; quantity?: number }>();
+    const deliveredSource = filtroEstado === 'entregados'
+      ? (deliveredPage?.items ?? []).map(item => ({
+          orderId: (item as any).orderId,
+          status: 'DELIVERED',
+          simTime: (item as any).simTime ?? (item as any).deliveredAt,
+          quantity: (item as any).deliveredQty ?? (item as any).quantity ?? 0,
+        }))
+      : [];
+
     (orderStatuses ?? []).forEach(os => {
       if (!os) return;
       merged.set(os.orderId, { status: os.status || '', simTime: undefined, quantity: os.quantity });
     });
-    deliveredLog.forEach(entry => {
+    deliveredSource.forEach(entry => {
       merged.set(entry.orderId, { status: 'DELIVERED', simTime: entry.simTime, quantity: entry.quantity });
     });
-    plannedLogState.forEach(entry => {
-      if (!merged.has(entry.orderId)) {
-        merged.set(entry.orderId, { status: 'PLANNED', simTime: entry.simTime, quantity: 0 });
-      }
-    });
+    if (filtroEstado === 'planificados' || filtroEstado === 'enproceso') {
+      plannedLogState.forEach(entry => {
+        if (!merged.has(entry.orderId)) {
+          merged.set(entry.orderId, { status: 'PLANNED', simTime: entry.simTime, quantity: 0 });
+        }
+      });
+    }
+    // Fallback: si no hay estado para un plan existente, marcarlo como PLANNED para que aparezca
+    if (filtroEstado !== 'entregados') {
+      planMap.forEach((plan, orderId) => {
+        if (!merged.has(orderId)) {
+          merged.set(orderId, {
+            status: 'PLANNED',
+            simTime: plan.creationUtc ?? undefined,
+            quantity: plan.routes?.reduce((acc, r) => acc + (r.quantity ?? 0), 0) ?? 0,
+          });
+        }
+      });
+    }
 
     merged.forEach((info, orderId) => {
       const statusUpper = (info.status || '').toUpperCase();
       const includeEstado =
-        filtroEstado === 'todos'
-          ? true
-          : filtroEstado === 'planificados'
-            ? statusUpper === 'PLANNED'
-            : filtroEstado === 'entregados'
-              ? statusUpper === 'DELIVERED'
-              : statusUpper !== 'PLANNED' && statusUpper !== 'DELIVERED';
+        filtroEstado === 'planificados'
+          ? statusUpper === 'PLANNED'
+          : filtroEstado === 'entregados'
+            ? statusUpper === 'DELIVERED'
+            : statusUpper !== 'PLANNED' && statusUpper !== 'DELIVERED';
       if (!includeEstado) return;
 
       const matchSearch = term === '' || orderId.toLowerCase().includes(term);
@@ -223,7 +247,7 @@ export default function SimulacionPage() {
       if (info.estado === 'En tránsito') stats.retrasados += 1;
     });
     return { lista, stats };
-  }, [orderStatuses, selectedOrderIds, orderPlans, orderIdFilter, filtroTexto, filtroEstado, deliveredLog, plannedLogState]);
+  }, [orderStatuses, selectedOrderIds, orderPlans, orderIdFilter, filtroTexto, filtroEstado, plannedLogState, deliveredPage]);
 
   // KPIs basados en lo que se muestra actualmente
   const enviosFiltrados = enviosCalc.lista;
@@ -416,6 +440,19 @@ export default function SimulacionPage() {
     setToastMsg(notificacion);
     setNotificacion(null);
   }, [notificacion, setNotificacion]);
+
+  useEffect(() => {
+    if (filtroEstado !== 'entregados') {
+      return;
+    }
+    if (!simulationId) return;
+    fetchDeliveries({ page: deliveredPageIndex, size: 20, search: filtroTexto || undefined });
+  }, [filtroEstado, simulationId, filtroTexto, deliveredPageIndex, fetchDeliveries]);
+
+  useEffect(() => {
+    // reset paginación al cambiar de filtro
+    setDeliveredPageIndex(0);
+  }, [filtroEstado]);
 
   const handleDescargarReporte = useCallback(async () => {
     const targetId = simulationId ?? lastSimulationIdRef.current;

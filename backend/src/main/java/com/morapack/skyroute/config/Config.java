@@ -18,7 +18,7 @@ public class Config {
     public static final Path DIR_EXPORTS = Paths.get("exports");
 
     // GA
-    public static final int POP_SIZE = 30; // más diversidad sin disparar costo
+    public static final int POP_SIZE = 15; // bajar costo por generación manteniendo diversidad moderada
     public static final int MAX_GEN = 1_000_000;
     public static final double P_CROSS = 0.5;
     public static final double P_MUT = 0.7; // ligera alza para romper estancamiento

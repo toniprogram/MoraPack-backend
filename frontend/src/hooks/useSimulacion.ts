@@ -15,7 +15,9 @@ import type {
   ActiveSegmentTick,
   ActiveAirportTick,
   SimulationOrderPlan,
-  OrderPlansDiff
+  OrderPlansDiff,
+  DeliveredPage,
+  DeliveredOrder
 } from '../types/simulation';
 import type { OrderStatusTick } from '../types/simulation';
 
@@ -97,8 +99,9 @@ export const useSimulacion = () => {
   const [deliveredOrders, setDeliveredOrders] = useState(0);
   const [inTransitOrders, setInTransitOrders] = useState(0);
   const [orderStatuses, setOrderStatuses] = useState<OrderStatusTick[]>([]);
-  const [deliveredLog, setDeliveredLog] = useState<{ orderId: string; quantity: number; location: string; simTime: string }[]>([]);
   const [plannedLog, setPlannedLog] = useState<{ orderId: string; simTime: string }[]>([]);
+  const [deliveredPage, setDeliveredPage] = useState<DeliveredPage | null>(null);
+  const [deliveredLoading, setDeliveredLoading] = useState(false);
   const [orderPlansLive, setOrderPlansLive] = useState<SimulationOrderPlan[]>([]);
   const [animPaused, setAnimPaused] = useState(false);
   const firstSimTickMsRef = useRef<number | null>(null);
@@ -430,7 +433,6 @@ export const useSimulacion = () => {
               simTime: renderTick.simTime,
             };
             deliveredRef.current.set(os.orderId, entry);
-            setDeliveredLog(prev => [entry, ...prev]);
             console.log('[SIM] Pedido entregado en tick:', entry);
           }
         });
@@ -610,9 +612,9 @@ export const useSimulacion = () => {
     tickReadyRef.current = false;
     preprocNotifiedRef.current = false;
     deliveredRef.current.clear();
-    setDeliveredLog([]);
     plannedRef.current.clear();
     setPlannedLog([]);
+    setDeliveredPage(null);
     const enriched: SimulationStartRequest = {
       ...payload,
       prewarmToken: prewarmToken || undefined,
@@ -680,9 +682,9 @@ export const useSimulacion = () => {
     setInTransitOrders(0);
     setOrderStatuses([]);
     deliveredRef.current.clear();
-    setDeliveredLog([]);
     plannedRef.current.clear();
     setPlannedLog([]);
+    setDeliveredPage(null);
     setPrewarmToken(null);
     prewarmRequested.current = false;
     setOrderPlansLive([]);
@@ -693,6 +695,20 @@ export const useSimulacion = () => {
     setSimulationId(simId);
     setStatus('running');
   }, []);
+
+  const fetchDeliveries = useCallback(async (opts: { page?: number; size?: number; search?: string }) => {
+    if (!simulationId) return;
+    const { page = 0, size = 20, search } = opts;
+    try {
+      setDeliveredLoading(true);
+      const res = await simulacionService.getDeliveries(simulationId, page, size, search);
+      setDeliveredPage(res);
+    } catch (err) {
+      console.error('[SIM] No se pudieron obtener entregados:', err);
+    } finally {
+      setDeliveredLoading(false);
+    }
+  }, [simulationId]);
 
   // ===== KPIs =====
   const kpis = useMemo(() => {
@@ -728,9 +744,9 @@ export const useSimulacion = () => {
     setPrewarmToken(null);
     prewarmRequested.current = false;
     deliveredRef.current.clear();
-    setDeliveredLog([]);
     plannedRef.current.clear();
     setPlannedLog([]);
+    setDeliveredPage(null);
   };
 
   return {
@@ -768,7 +784,9 @@ export const useSimulacion = () => {
     conectarSimulacion,
     notificacion,
     setNotificacion,
-    deliveredLog,
     plannedLog,
+    deliveredPage,
+    deliveredLoading,
+    fetchDeliveries,
   };
 };

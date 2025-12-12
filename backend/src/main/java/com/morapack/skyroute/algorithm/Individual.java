@@ -166,6 +166,35 @@ public class Individual {
         }
     }
 
+    /**
+     * Devuelve una copia del individuo manteniendo solo los planes cuyos IDs estén en keepOrderIds.
+     * Libera las reservas de los planes descartados sobre los schedules copiados.
+     */
+    public Individual pruneToOrders(World world, Set<String> keepOrderIds) {
+        if (keepOrderIds == null || keepOrderIds.isEmpty()) {
+            return null;
+        }
+        FlightSchedule scheduleCopy = flightSchedule.copy();
+        AirportSchedule airportCopy = airportSchedule.copy();
+        List<OrderPlan> keptPlans = new ArrayList<>();
+        for (OrderPlan plan : plans) {
+            if (!keepOrderIds.contains(plan.getOrderId())) {
+                releasePlan(world, plan, scheduleCopy, airportCopy);
+                continue;
+            }
+            OrderPlan copy = copyPlan(plan);
+            if (copy != null) {
+                keptPlans.add(copy);
+            }
+        }
+        if (keptPlans.isEmpty()) {
+            return null;
+        }
+        Individual pruned = new Individual(keptPlans, scheduleCopy, airportCopy);
+        pruned.evaluate();
+        return pruned;
+    }
+
     public void applyToWorld(World world) {
         world.getFlights().getSchedule().applyFrom(flightSchedule);
         world.getAirportSchedule().applyFrom(airportSchedule);

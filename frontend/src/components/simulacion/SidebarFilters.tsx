@@ -1,5 +1,6 @@
-    import { Play, Pause, XCircle, Search } from 'lucide-react';
-    import type { Dispatch, SetStateAction } from 'react';
+import { Play, Pause, XCircle, Search } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import type { Dispatch, SetStateAction } from 'react';
     import type { OrderRequest } from '../../types/orderRequest';
 
     interface SidebarFiltersProps {
@@ -25,8 +26,8 @@
       status: string;
       filtroTexto: string;
       setFiltroTexto: Dispatch<SetStateAction<string>>;
-  filtroEstado: 'enproceso' | 'planificados' | 'entregados' | 'todos';
-  setFiltroEstado: Dispatch<SetStateAction<'enproceso' | 'planificados' | 'entregados' | 'todos'>>;
+  filtroEstado: 'enproceso' | 'planificados' | 'entregados';
+  setFiltroEstado: Dispatch<SetStateAction<'enproceso' | 'planificados' | 'entregados'>>;
   vistaPanel: 'envios' | 'vuelos' | 'aeropuertos';
 }
 
@@ -56,11 +57,15 @@
   setFiltroEstado,
   vistaPanel,
 }: SidebarFiltersProps) {
-      const inputsBloqueados = status !== 'idle' && status !== 'completed';
-      const formatLocalNoSeconds = (d: Date) => {
-        const pad = (n: number) => String(n).padStart(2, '0');
-        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-      };
+  const [draftFiltroTexto, setDraftFiltroTexto] = useState(filtroTexto);
+  useEffect(() => {
+    setDraftFiltroTexto(filtroTexto);
+  }, [filtroTexto]);
+  const inputsBloqueados = status !== 'idle' && status !== 'completed';
+  const formatLocalNoSeconds = (d: Date) => {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
 
       const handleStartChange = (event: React.ChangeEvent<HTMLInputElement>) => {
         const v = event.target.value;
@@ -175,12 +180,22 @@
                   type="text"
                   placeholder={getPlaceholder()}
                   className="input input-sm w-full pr-8 bg-base-100"
-                  value={filtroTexto}
-                  onChange={(e) => setFiltroTexto(e.target.value)}
+                  value={draftFiltroTexto}
+                  onChange={(e) => setDraftFiltroTexto(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      setFiltroTexto(draftFiltroTexto);
+                    }
+                  }}
                 />
-                <div className="absolute right-2 top-1.5 text-base-content/50 pointer-events-none">
-                   <Search size={16} />
-                </div>
+                <button
+                  type="button"
+                  className="absolute right-1.5 top-1.5 btn btn-ghost btn-xs px-1"
+                  onClick={() => setFiltroTexto(draftFiltroTexto)}
+                  aria-label="Aplicar búsqueda"
+                >
+                  <Search size={16} />
+                </button>
               </div>
             </div>
             {vistaPanel === 'envios' && (
@@ -202,16 +217,10 @@
                     Planificados
                   </button>
                   <button
-                    className={`btn btn-xs flex-1 rounded-none ${filtroEstado === 'entregados' ? 'btn-active' : ''}`}
+                    className={`btn btn-xs flex-1 rounded-none last:rounded-r-md ${filtroEstado === 'entregados' ? 'btn-active' : ''}`}
                     onClick={() => setFiltroEstado('entregados')}
                   >
                     Entregados
-                  </button>
-                  <button
-                    className={`btn btn-xs flex-1 rounded-none last:rounded-r-md ${filtroEstado === 'todos' ? 'btn-active' : ''}`}
-                    onClick={() => setFiltroEstado('todos')}
-                  >
-                    Todos
                   </button>
                 </div>
               </div>

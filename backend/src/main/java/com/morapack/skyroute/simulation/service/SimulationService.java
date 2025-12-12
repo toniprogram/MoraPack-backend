@@ -17,6 +17,10 @@ import com.morapack.skyroute.simulation.live.*;
 import com.morapack.skyroute.simulation.dto.SimulationRoute;
 import com.morapack.skyroute.simulation.dto.OrderStatusTick;
 import com.morapack.skyroute.simulation.dto.SimulationPlanSummary;
+import com.morapack.skyroute.simulation.dto.DeliveredOrderDto;
+import com.morapack.skyroute.simulation.dto.DeliveredPage;
+import com.morapack.skyroute.simulation.model.SimulationDelivery;
+import com.morapack.skyroute.simulation.repository.SimulationDeliveryRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -43,12 +47,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 
 @Slf4j
 @Service
@@ -61,6 +68,7 @@ public class SimulationService {
     private final OrderRepository orderRepository;
     private final SimpMessagingTemplate messagingTemplate;
     private final ObjectMapper objectMapper;
+    private final SimulationDeliveryRepository deliveryRepository;
     private final Path snapshotsDir = Paths.get("snapshots");
     private final ExecutorService executorService = Executors.newCachedThreadPool();
     private final ScheduledExecutorService tickerExecutor = Executors.newSingleThreadScheduledExecutor();
@@ -70,11 +78,13 @@ public class SimulationService {
     public SimulationService(WorldBuilder worldBuilder,
                              OrderRepository orderRepository,
                              SimpMessagingTemplate messagingTemplate,
-                             ObjectMapper objectMapper) {
+                             ObjectMapper objectMapper,
+                             SimulationDeliveryRepository deliveryRepository) {
         this.worldBuilder = worldBuilder;
         this.orderRepository = orderRepository;
         this.messagingTemplate = messagingTemplate;
         this.objectMapper = objectMapper;
+        this.deliveryRepository = deliveryRepository;
     }
 
     public SimulationStartResponse startSimulation(SimulationStartRequest request) {
@@ -400,7 +410,6 @@ public class SimulationService {
             }
             log.debug("[SIM:{}] Adding order {} to batch demand (current demand size={})", session.id, order.getId(), demand.size());
             demand.add(order);
-            world.advanceTo(order.getCreationUtc());
 
             if (useHeuristicSeed && heuristicSeed != null) {
                 Individual patched = heuristicSeed.tryInsertOrder(world, order, random);
@@ -412,9 +421,43 @@ public class SimulationService {
             }
         }
 
+        // Avanzar el reloj al final de la ventana solo después del primer GA;
+        // el primer batch corre en el instante inicial configurado
+        if (snapshotInstant != null && session.gaRuns.get() > 0) {
+            world.advanceTo(snapshotInstant);
+        }
+
         // Ejecutar GA una vez por batch
-        GeneticAlgorithm ga = new GeneticAlgorithm(world, List.copyOf(demand));
         Instant simInstant = world.getCurrentInstant();
+        Individual completionSource = heuristicSeed != null ? heuristicSeed : previousBest;
+        if (!demand.isEmpty() && completionSource != null) {
+            Map<String, Instant> completion = completionSource.computeCompletionTimes(world, demand);
+            Set<String> activeIds = new HashSet<>();
+            for (Order order : demand) {
+                Instant done = completion.get(order.getId());
+                if (done == null || done.isAfter(simInstant)) {
+                    activeIds.add(order.getId());
+                }
+            }
+            if (activeIds.size() < demand.size()) {
+                int removed = demand.size() - activeIds.size();
+                log.info("[SIM:{}] Pruning {} delivered/expired orders before GA (simTime={})", session.id, removed, simInstant);
+                demand.removeIf(o -> !activeIds.contains(o.getId()));
+                heuristicSeed = heuristicSeed != null ? heuristicSeed.pruneToOrders(world, activeIds) : null;
+                previousBest = previousBest != null ? previousBest.pruneToOrders(world, activeIds) : null;
+                if (session.lastPopulation != null && !session.lastPopulation.isEmpty()) {
+                    session.lastPopulation = session.lastPopulation.stream()
+                            .map(ind -> ind.pruneToOrders(world, activeIds))
+                            .filter(Objects::nonNull)
+                            .toList();
+                }
+            }
+        }
+        if (demand.isEmpty()) {
+            log.warn("[SIM:{}] No active orders after pruning; skipping GA for this batch", session.id);
+            return heuristicSeed != null ? heuristicSeed : previousBest;
+        }
+        GeneticAlgorithm ga = new GeneticAlgorithm(world, List.copyOf(demand));
         log.info("[SIM:{}] Starting GA for batch (simTime={})", session.id, simInstant);
         long start = System.nanoTime();
         long gaBudgetMs = Math.max(1_000L, targetEndMillis - System.currentTimeMillis());
@@ -438,6 +481,7 @@ public class SimulationService {
                 nanosToMillis(gaDuration),
                 nanosToMillis(System.nanoTime() - iterationStart));
 
+        // Ya avanzamos antes de correr el GA; mantenemos el instante alineado por seguridad
         if (snapshotInstant != null) {
             Instant currentInstant = world.getCurrentInstant();
             if (currentInstant == null || snapshotInstant.isAfter(currentInstant)) {
@@ -651,6 +695,9 @@ public class SimulationService {
         List<OrderStatusTick> plannedStatuses = session.liveWorld.buildPlannedStatuses();
         if (plannedStatuses != null && !plannedStatuses.isEmpty()) {
             log.debug("[SIM:{}] Enviando planificados en tick: {}", session.id, plannedStatuses.stream().map(OrderStatusTick::orderId).toList());
+        }
+        if (deliveredStatuses != null && !deliveredStatuses.isEmpty()) {
+            persistDeliveredAsync(session.id, simTime, deliveredStatuses);
         }
         Map<String, String> statusMap = new HashMap<>();
         orderStatuses.forEach(os -> statusMap.put(os.orderId(), os.status()));
@@ -919,6 +966,65 @@ public class SimulationService {
         } catch (IOException ex) {
             log.warn("[SIM:{}] Unable to persist diff log: {}", session.id, ex.getMessage());
         }
+    }
+
+    private void persistDeliveredAsync(UUID simulationId, Instant simTime, List<OrderStatusTick> delivered) {
+        if (delivered == null || delivered.isEmpty()) {
+            return;
+        }
+        executorService.submit(() -> {
+            for (OrderStatusTick os : delivered) {
+                try {
+                    SimulationDelivery existing = deliveryRepository
+                            .findBySimulationIdAndOrderId(simulationId, os.orderId())
+                            .orElse(null);
+                    if (existing == null) {
+                        SimulationDelivery entity = new SimulationDelivery(
+                                simulationId,
+                                os.orderId(),
+                                os.quantity(),
+                                os.location(),
+                                simTime,
+                                simTime
+                        );
+                        deliveryRepository.save(entity);
+                    } else {
+                        int updatedQty = existing.getDeliveredQtyTotal() + os.quantity();
+                        existing.setDeliveredQtyTotal(updatedQty);
+                        if (os.location() != null && !os.location().isBlank()) {
+                            existing.setLastLocation(os.location());
+                        }
+                        existing.setLastDeliveredAt(simTime);
+                        existing.setLastSimTime(simTime);
+                        deliveryRepository.save(existing);
+                    }
+                } catch (Exception ex) {
+                    log.warn("[SIM:{}] Unable to persist delivery for order {}: {}", simulationId, os.orderId(), ex.getMessage());
+                }
+            }
+        });
+    }
+
+    public DeliveredPage getDelivered(UUID simulationId, int page, int size, String search) {
+        int sanitizedPage = Math.max(0, page);
+        int sanitizedSize = Math.min(Math.max(1, size), 200);
+        PageRequest pr = PageRequest.of(sanitizedPage, sanitizedSize);
+        Page<SimulationDelivery> deliveries;
+        if (search != null && !search.isBlank()) {
+            deliveries = deliveryRepository.findBySimulationIdAndOrderIdContainingIgnoreCase(simulationId, search, pr);
+        } else {
+            deliveries = deliveryRepository.findBySimulationId(simulationId, pr);
+        }
+        List<DeliveredOrderDto> items = deliveries.getContent().stream()
+                .map(d -> new DeliveredOrderDto(
+                        d.getOrderId(),
+                        d.getDeliveredQtyTotal(),
+                        d.getLastLocation(),
+                        d.getLastDeliveredAt(),
+                        d.getLastSimTime()
+                ))
+                .toList();
+        return new DeliveredPage(deliveries.getTotalElements(), deliveries.getNumber(), deliveries.getSize(), items);
     }
 
     private String topic(UUID simulationId) {
