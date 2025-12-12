@@ -22,8 +22,8 @@ const getAirportIcon = (pct: number, forPopup = false, lat?: number, northBound?
   const animId = `airport-${Math.random().toString(36).substr(2, 9)}`;
   const size = forPopup ? 20 : 20;
   const iconSize = forPopup ? 12 : 12;
-  const nearTop = lat !== undefined ? lat > -10 : false; // desplaza la línea de decisión 10° al sur del ecuador
-  const anchorY = nearTop ? 0 : size;
+  const nearTop = lat !== undefined ? lat > 10 : false; // 10° al sur del ecuador
+  const anchorY = size; // ancla siempre abajo, solo movemos el offset
   const popupY = nearTop ? 295 : -30;
 
 
@@ -85,9 +85,9 @@ const getHubIcon = (pct: number, hubHex?: string, forPopup = false, lat?: number
   const innerSize = forPopup ? 18 : 34;
   const iconSize = forPopup ? 18 : 22;
   const borderWidth = forPopup ? 2 : 3;
-  const nearTop = lat !== undefined ? lat > -10 : false; // desplaza la línea de decisión 10° al sur del ecuador
-  const anchorY = nearTop ? 0 : outerSize;
-  const popupY = nearTop ? 320 : -16;
+  const nearTop = lat !== undefined ? lat > -10 : false; // 10° al NORTE del ecuador
+  const anchorY = 10; // ancla fija abajo, solo cambia offset
+  const popupY = nearTop ? 170 : -25;
 
   if (forPopup) {
     return `
@@ -501,7 +501,7 @@ export function MapaVuelos({
   }, [aeropuertos]);
   const northBound = maxBounds ? maxBounds[1][0] : 90;
   const popupOffsetForLat = (lat: number): [number, number] => {
-    const nearTop = (northBound - lat) < 8; // si está cerca del límite norte, empuja más hacia abajo
+    const nearTop = lat > -10; // considerar todo lo que esté al norte del ecuador (margen de 10°)
     return nearTop ? [0, 260] : [0, 32];
   };
   const pathsPorSegmento = useRef(new Map<string, [number, number][]>());
@@ -654,11 +654,10 @@ export function MapaVuelos({
 
             {/* POPUP DETALLADO DE AEROPUERTO */}
             <Popup
-              className="p-0 overflow-hidden rounded-xl"
+              className="p-0 overflow-hidden rounded-xl thin-popup"
               minWidth={200}
               autoPan={false}
               autoPanOnFocus={false}
-              offset={popupOffsetForLat(aeropuerto.latitude)}
             >
               <div className="bg-base-100 text-base-content text-xs w-52 shadow-xl overflow-hidden">
                 <div className="bg-base-200 p-2 border-b border-base-content/10 flex items-center gap-2">
@@ -816,7 +815,7 @@ export function MapaVuelos({
             }}
           >
             <Popup
-              className="p-0 overflow-hidden rounded-xl"
+              className="p-0 overflow-hidden rounded-xl thin-popup"
               maxWidth={320}
               autoPan={false}
               autoPanOnFocus={false}

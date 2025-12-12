@@ -12,3 +12,16 @@
 .plane-marker-icon img {
     display: block;
 }
+
+/* Popups más delgados sin borde grueso */
+.thin-popup .leaflet-popup-content-wrapper {
+    padding: 0;
+    background: transparent;
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+}
+
+.thin-popup .leaflet-popup-tip {
+    display: none;
+}

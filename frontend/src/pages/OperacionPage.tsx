@@ -4,7 +4,8 @@ import { MapaVuelos } from '../components/mapas/MapaVuelos';
 import {
     Radio, Server, ArrowRight,
     Plane, Package, CheckCircle,
-    Activity, Calendar, RefreshCw, Box
+    Activity, Calendar, RefreshCw, Box,
+    ChevronLeft, ChevronRight
 } from 'lucide-react';
 import type { ActiveAirportTick } from '../types/simulation';
 
@@ -36,6 +37,7 @@ export default function OperacionPage() {
 
     // Estado local para el input de fecha
     const [manualDateStr, setManualDateStr] = useState('');
+    const [collapsed, setCollapsed] = useState(false);
 
     const handleTimeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const val = e.target.value;
@@ -83,10 +85,46 @@ export default function OperacionPage() {
         <div className="flex h-[calc(100vh-4rem)] w-full bg-base-200 text-base-content overflow-hidden font-sans">
 
             {/* SIDEBAR */}
-            <div className="w-[400px] max-w-full flex flex-col bg-base-200 z-20 h-full shrink-0 overflow-y-auto">
+            <div className={`max-w-full flex flex-col bg-base-100 z-20 h-full shrink-0 border-r border-base-300 shadow-lg transition-all ${collapsed ? 'w-9' : 'w-80'}`}>
+                <div className="flex items-center justify-between px-3 py-2 border-b border-base-300 bg-base-100">
+                    {!collapsed && (
+                        <div className="flex items-center gap-2">
+                            <Radio className={status === 'running' ? 'text-success animate-pulse' : 'text-base-content/70'} size={18} />
+                            <div>
+                                <div className="text-xs uppercase tracking-widest text-base-content/70">Operación diaria</div>
+                                <div className="text-sm font-semibold text-base-content/90">Estado {status.toUpperCase()}</div>
+                            </div>
+                        </div>
+                    )}
+                    <button
+                        className="btn btn-ghost btn-xs btn-square"
+                        onClick={() => setCollapsed(v => !v)}
+                        aria-label={collapsed ? 'Expandir panel' : 'Colapsar panel'}
+                    >
+                        {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+                    </button>
+                </div>
 
-                {/* 1. HEADER & RELOJ */}
-                <div className="p-5 bg-base-100 border-b border-base-300 shadow-lg shrink-0">
+                {/* Acciones cuando está colapsado */}
+                {collapsed && (
+                    <div className="flex flex-col items-center gap-2 py-3 bg-base-100">
+                        <div className="tooltip tooltip-right" data-tip="Ejecutar planificador">
+                            <button
+                                onClick={() => actions.planificar()}
+                                disabled={status === 'buffering' || isReplanning}
+                                className="btn btn-primary btn-xs btn-circle"
+                            >
+                                {isReplanning ? <span className="loading loading-spinner loading-2xs" /> : <Server size={14} />}
+                            </button>
+                        </div>
+                        <div className="text-[10px] font-mono text-base-content/70 text-center px-1">
+                            {lastUpdated ? formatShortTime(lastUpdated.toISOString()) : '--:--'}
+                        </div>
+                    </div>
+                )}
+
+                {!collapsed && (
+                <div className="p-5 bg-base-100 border-b border-base-300 shrink-0">
                     <div className="flex justify-between items-center mb-4">
                         <h1 className="text-lg font-bold tracking-tight flex items-center gap-2">
                             <Radio className={status === 'running' ? 'text-success animate-pulse' : 'text-base-content/70'} size={20} />
@@ -125,8 +163,10 @@ export default function OperacionPage() {
                         </div>
                     </div>
                 </div>
+                )}
 
                 {/* KPIs */}
+                {!collapsed && (
                 <div className="p-4 bg-base-200 border-b border-base-300 shrink-0 grid grid-cols-2 gap-3">
 
                     {/* Pedidos Totales */}
@@ -167,43 +207,48 @@ export default function OperacionPage() {
                         </div>
                     </div>
                 </div>
+                )}
 
-                {/* 3. REPORTE DE PEDIDOS */}
-                <div className="px-4 py-3 bg-base-200 text-[11px] font-bold text-base-content/70 uppercase border-b border-base-300 flex justify-between items-center shrink-0">
-                    <span className="flex items-center gap-2"><Box size={14}/> Reporte de Pedidos</span>
-                    <span className="badge badge-xs badge-neutral border-gray-600 font-mono">{orderStatusList.length}</span>
-                </div>
-
-                <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-base-200 scrollbar-thin scrollbar-thumb-base-300">
-                    {orderStatusList.length === 0 ? (
-                        <div className="text-center text-base-content/60 mt-12 text-sm px-6 flex flex-col items-center">
-                            <div className="w-16 h-16 bg-base-100 rounded-full flex items-center justify-center mb-3">
-                                <Package size={32} className="opacity-20" />
-                            </div>
-                            <p className="font-medium">Sin pedidos operativos</p>
-                            <p className="text-xs mt-2 opacity-60">Registra pedidos como "REAL" y ejecuta el planificador.</p>
-                        </div>
-                    ) : (
-                        orderStatusList.map((order) => (
-                            <OrderCardDetail key={order.orderId} order={order} formatDateTime={formatDateTime}/>
-                        ))
-                    )}
-                </div>
-
-                {/* Botón Planificar */}
-                <div className="p-4 bg-base-100 border-t border-base-300 shrink-0">
-                    <div className="flex justify-between text-[10px] text-base-content/60 mb-2 font-mono">
-                        <span>Last Sync: {lastUpdated ? formatShortTime(lastUpdated.toISOString()) : '--:--'}</span>
+                {!collapsed && (
+                <>
+                    {/* 3. REPORTE DE PEDIDOS */}
+                    <div className="px-4 py-3 bg-base-200 text-[11px] font-bold text-base-content/70 uppercase border-b border-base-300 flex justify-between items-center shrink-0">
+                        <span className="flex items-center gap-2"><Box size={14}/> Reporte de Pedidos</span>
+                        <span className="badge badge-xs badge-neutral border-gray-600 font-mono">{orderStatusList.length}</span>
                     </div>
-                    <button
-                        onClick={() => actions.planificar()}
-                        disabled={status === 'buffering' || isReplanning}
-                        className="btn btn-primary w-full gap-2 font-bold shadow-lg hover:shadow-primary/20 transition-all"
-                    >
-                        {isReplanning ? <span className="loading loading-spinner loading-xs"></span> : <Server size={16} />}
-                        {isReplanning ? 'OPTIMIZANDO...' : 'EJECUTAR PLANIFICADOR'}
-                    </button>
-                </div>
+
+                    <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-base-200 scrollbar-thin scrollbar-thumb-base-300">
+                        {orderStatusList.length === 0 ? (
+                            <div className="text-center text-base-content/60 mt-12 text-sm px-6 flex flex-col items-center">
+                                <div className="w-16 h-16 bg-base-100 rounded-full flex items-center justify-center mb-3">
+                                    <Package size={32} className="opacity-20" />
+                                </div>
+                                <p className="font-medium">Sin pedidos operativos</p>
+                                <p className="text-xs mt-2 opacity-60">Registra pedidos como "REAL" y ejecuta el planificador.</p>
+                            </div>
+                        ) : (
+                            orderStatusList.map((order) => (
+                                <OrderCardDetail key={order.orderId} order={order} formatDateTime={formatDateTime}/>
+                            ))
+                        )}
+                    </div>
+
+                    {/* Botón Planificar */}
+                    <div className="p-4 bg-base-100 border-t border-base-300 shrink-0">
+                        <div className="flex justify-between text-[10px] text-base-content/60 mb-2 font-mono">
+                            <span>Last Sync: {lastUpdated ? formatShortTime(lastUpdated.toISOString()) : '--:--'}</span>
+                        </div>
+                        <button
+                            onClick={() => actions.planificar()}
+                            disabled={status === 'buffering' || isReplanning}
+                            className="btn btn-primary w-full gap-2 font-bold shadow-lg hover:shadow-primary/20 transition-all"
+                        >
+                            {isReplanning ? <span className="loading loading-spinner loading-xs"></span> : <Server size={16} />}
+                            {isReplanning ? 'OPTIMIZANDO...' : 'EJECUTAR PLANIFICADOR'}
+                        </button>
+                    </div>
+                </>
+                )}
             </div>
 
             {/* MAPA */}

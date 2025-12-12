@@ -1,4 +1,4 @@
-import { Play, Pause, XCircle, Search } from 'lucide-react';
+import { Play, Pause, XCircle, Search, ChevronDown, ChevronRight } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
     import type { OrderRequest } from '../../types/orderRequest';
@@ -31,11 +31,11 @@ import type { Dispatch, SetStateAction } from 'react';
   vistaPanel: 'envios' | 'vuelos' | 'aeropuertos';
 }
 
-    export function SidebarFilters({
-      ordenesParaSimular,
-      startDate,
-      setStartDate,
-      setEndDate,
+export function SidebarFilters({
+  ordenesParaSimular,
+  startDate,
+  setStartDate,
+  setEndDate,
       hastaColapso,
       setHastaColapso,
       estaActivo,
@@ -58,6 +58,7 @@ import type { Dispatch, SetStateAction } from 'react';
   vistaPanel,
 }: SidebarFiltersProps) {
   const [draftFiltroTexto, setDraftFiltroTexto] = useState(filtroTexto);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   useEffect(() => {
     setDraftFiltroTexto(filtroTexto);
   }, [filtroTexto]);
@@ -101,35 +102,36 @@ import type { Dispatch, SetStateAction } from 'react';
                   {ordenesParaSimular.length} órdenes listas para sincronizar
                 </div>
               )}
-
-              <div className="space-y-2 text-xs text-base-content/90">
-                <div>
-                  <label className="block uppercase tracking-wide text-[10px] text-base-content/90 mb-1">
-                    Inicio (UTC)
-                  </label>
-                  <input
-                    type="datetime-local"
-                    className="input input-sm w-full text-base-content/90"
-                    value={startDate}
-                    onChange={handleStartChange}
-                    disabled={inputsBloqueados}
-                  />
+              {!inputsBloqueados && (
+                <div className="space-y-2 text-xs text-base-content/90">
+                  <div>
+                    <label className="block uppercase tracking-wide text-[10px] text-base-content/90 mb-1">
+                      Inicio (UTC)
+                    </label>
+                    <input
+                      type="datetime-local"
+                      className="input input-sm w-full text-base-content/90"
+                      value={startDate}
+                      onChange={handleStartChange}
+                      disabled={inputsBloqueados}
+                    />
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-end mt-2 gap-1">
+                      <span className="text-[10px] text-base-content/90">Hasta el colapso</span>
+                      <input
+                        type="checkbox"
+                        className="toggle toggle-xs toggle-primary"
+                        checked={hastaColapso}
+                        onChange={(e) => {
+                          setHastaColapso(e.target.checked);
+                        }}
+                        disabled={inputsBloqueados}
+                      />
+                    </div>
+                  </div>
                 </div>
-                <div>
-                <div className="flex items-center justify-end mt-2 gap-1">
-                  <span className="text-[10px] text-base-content/90">Hasta el colapso</span>
-                  <input
-                    type="checkbox"
-                    className="toggle toggle-xs toggle-primary"
-                    checked={hastaColapso}
-                    onChange={(e) => {
-                      setHastaColapso(e.target.checked);
-                    }}
-                    disabled={inputsBloqueados}
-                  />
-                </div>
-              </div>
-              </div>
+              )}
 
               <div className="flex gap-2">
                 <button
@@ -170,11 +172,7 @@ import type { Dispatch, SetStateAction } from 'react';
           </div>
 
           <div className="p-3 bg-base-200 border-b border-base-300 space-y-3">
-            <h3 className="text-sm font-semibold text-base-content">Filtros de Visualización</h3>
             <div>
-              <label className="block uppercase tracking-wide text-[10px] text-base-content/70 mb-2">
-                Búsqueda Rápida
-              </label>
               <div className="relative">
                 <input
                   type="text"
@@ -198,57 +196,74 @@ import type { Dispatch, SetStateAction } from 'react';
                 </button>
               </div>
             </div>
-            {vistaPanel === 'envios' && (
-              <div className="form-control">
-                <span className="block uppercase tracking-wide text-[10px] text-base-content/70 mb-1">
-                  Estado
-                </span>
-                <div className="btn-group w-full">
-                  <button
-                    className={`btn btn-xs flex-1 rounded-none first:rounded-l-md ${filtroEstado === 'enproceso' ? 'btn-active' : ''}`}
-                    onClick={() => setFiltroEstado('enproceso')}
-                  >
-                    En proceso
-                  </button>
-                  <button
-                    className={`btn btn-xs flex-1 rounded-none ${filtroEstado === 'planificados' ? 'btn-active' : ''}`}
-                    onClick={() => setFiltroEstado('planificados')}
-                  >
-                    Planificados
-                  </button>
-                  <button
-                    className={`btn btn-xs flex-1 rounded-none last:rounded-r-md ${filtroEstado === 'entregados' ? 'btn-active' : ''}`}
-                    onClick={() => setFiltroEstado('entregados')}
-                  >
-                    Entregados
-                  </button>
-                </div>
-              </div>
-            )}
-            <div>
-              <label className="block uppercase tracking-wide text-[10px] text-base-content/70 mb-2">
-                Hub de Origen
-              </label>
-              <select
-                className="select select-sm w-full"
-                value={filtroHub}
-                onChange={(e) => setFiltroHub(e.target.value)}
-                disabled={false}
+
+            <div className="flex items-center justify-between">
+              <button
+                type="button"
+                className="btn btn-ghost btn-xs px-2 h-auto min-h-0 inline-flex items-center gap-1"
+                onClick={() => setFiltersOpen(v => !v)}
+                aria-label={filtersOpen ? 'Contraer filtros' : 'Expandir filtros'}
               >
-                <option value="">Todos</option>
-                <option value="SPIM">Lima (SPIM)</option>
-                <option value="EBCI">Bruselas (EBCI)</option>
-                <option value="UBBB">Baku (UBBB)</option>
-              </select>
-              {selectedOrderIds && (
-                <button
-                  className="btn btn-ghost btn-xs mt-2"
-                  onClick={clearSelectedOrders}
-                >
-                  Limpiar selección de avión
-                </button>
-              )}
+                <span className="text-[11px] uppercase tracking-wide text-base-content/70">Filtros</span>
+                {filtersOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+              </button>
             </div>
+
+            {filtersOpen && (
+              <>
+                {vistaPanel === 'envios' && (
+                  <div className="form-control">
+                    <span className="block uppercase tracking-wide text-[10px] text-base-content/70 mb-1">
+                      Estado
+                    </span>
+                    <div className="btn-group w-full">
+                      <button
+                        className={`btn btn-xs flex-1 rounded-none first:rounded-l-md ${filtroEstado === 'enproceso' ? 'btn-active' : ''}`}
+                        onClick={() => setFiltroEstado('enproceso')}
+                      >
+                        En proceso
+                      </button>
+                      <button
+                        className={`btn btn-xs flex-1 rounded-none ${filtroEstado === 'planificados' ? 'btn-active' : ''}`}
+                        onClick={() => setFiltroEstado('planificados')}
+                      >
+                        Planificados
+                      </button>
+                      <button
+                        className={`btn btn-xs flex-1 rounded-none last:rounded-r-md ${filtroEstado === 'entregados' ? 'btn-active' : ''}`}
+                        onClick={() => setFiltroEstado('entregados')}
+                      >
+                        Entregados
+                      </button>
+                    </div>
+                  </div>
+                )}
+                <div>
+                  <label className="block uppercase tracking-wide text-[10px] text-base-content/70 mb-2">
+                    Hub de Origen
+                  </label>
+                  <select
+                    className="select select-sm w-full"
+                    value={filtroHub}
+                    onChange={(e) => setFiltroHub(e.target.value)}
+                    disabled={false}
+                  >
+                    <option value="">Todos</option>
+                    <option value="SPIM">Lima (SPIM)</option>
+                    <option value="EBCI">Bruselas (EBCI)</option>
+                    <option value="UBBB">Baku (UBBB)</option>
+                  </select>
+                  {selectedOrderIds && (
+                    <button
+                      className="btn btn-ghost btn-xs mt-2"
+                      onClick={clearSelectedOrders}
+                    >
+                      Limpiar selección de avión
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
           </div>
         </>
       );
