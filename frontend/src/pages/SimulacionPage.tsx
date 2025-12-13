@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useSimulacion } from '../hooks/useSimulacion';
 import { MapaVuelos } from '../components/mapas/MapaVuelos';
 import type { OrderRequest } from '../types/orderRequest';
-import type { OrderStatusTick, SimulationOrderPlan } from '../types/simulation';
+import type { SimulationOrderPlan } from '../types/simulation';
 import { SimTopBar } from '../components/simulacion/SimTopBar';
 import { SimSidebar } from '../components/simulacion/SimSidebar';
 import type { EnvioInfo, FlightGroup } from '../types/simulacionUI';
@@ -41,7 +41,6 @@ export default function SimulacionPage() {
       setNotificacion,
       plannedLog: plannedLogState = [],
       deliveredPage,
-      deliveredLoading,
       fetchDeliveries,
   } = useSimulacion();
   const location = useLocation();

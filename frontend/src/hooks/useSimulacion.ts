@@ -16,9 +16,7 @@ import type {
   ActiveAirportTick,
   SimulationOrderPlan,
   OrderPlansDiff,
-  DeliveredPage,
-  DeliveredOrder
-} from '../types/simulation';
+  DeliveredPage} from '../types/simulation';
 import type { OrderStatusTick } from '../types/simulation';
 
 export interface VueloEnMovimiento {

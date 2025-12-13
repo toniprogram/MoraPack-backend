@@ -1,4 +1,4 @@
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap, Tooltip, useMapEvents, ZoomControl } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap, Tooltip, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { useEffect, useRef, useState, useMemo } from 'react';
 import type { LatLngExpression } from 'leaflet';
@@ -17,7 +17,7 @@ const getStatusColor = (pct: number) => {
   if (pct <= 30) return '#ef4444'; // Rojo (Crítico/Lleno)
   return '#22c55e';
 };
-const getAirportIcon = (pct: number, forPopup = false, lat?: number, northBound?: number) => {
+const getAirportIcon = (pct: number, forPopup = false, lat?: number, _northBound?: number) => {
   const color = getStatusColor(pct);
   const animId = `airport-${Math.random().toString(36).substr(2, 9)}`;
   const size = forPopup ? 20 : 20;
@@ -77,7 +77,7 @@ const getAirportIcon = (pct: number, forPopup = false, lat?: number, northBound?
   });
 };
 
-const getHubIcon = (pct: number, hubHex?: string, forPopup = false, lat?: number, northBound?: number) => {
+const getHubIcon = (pct: number, hubHex?: string, forPopup = false, lat?: number, _northBound?: number) => {
   const fallback = getStatusColor(pct);
   const colorHex = hubHex ?? fallback;
   const animId = `pulse-${Math.random().toString(36).substr(2, 9)}`;
@@ -545,7 +545,7 @@ export function MapaVuelos({
       touchZoom={false}
       boxZoom={false}
       dragging={false}
-      maxBounds={maxBounds || undefined}
+      bounds={maxBounds as [[number, number], [number, number]] | undefined}
       maxBoundsViscosity={1}
       className="w-full h-full z-0"
       style={{ backgroundColor: mapTheme === 'dark' ? '#1f2937' : '#e5e7eb' }}
@@ -657,7 +657,6 @@ export function MapaVuelos({
               className="p-0 overflow-hidden rounded-xl thin-popup"
               minWidth={200}
               autoPan={false}
-              autoPanOnFocus={false}
             >
               <div className="bg-base-100 text-base-content text-xs w-52 shadow-xl overflow-hidden">
                 <div className="bg-base-200 p-2 border-b border-base-content/10 flex items-center gap-2">
@@ -818,7 +817,6 @@ export function MapaVuelos({
               className="p-0 overflow-hidden rounded-xl thin-popup"
               maxWidth={320}
               autoPan={false}
-              autoPanOnFocus={false}
               offset={popupOffsetForLat(coord[0])}
             >
               <div className="bg-base-100 text-base-content text-xs w-72 shadow-xl overflow-hidden">
