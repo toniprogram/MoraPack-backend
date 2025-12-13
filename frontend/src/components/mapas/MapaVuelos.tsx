@@ -571,7 +571,7 @@ export function MapaVuelos({
       <MapResizer isLoading={isLoading} />
 
       {/* LEYENDA */}
-      <div className="leaflet-bottom leaflet-left m-2 z-[1000]">
+      <div className="leaflet-bottom leaflet-left m-2 z-[200] pointer-events-auto">
         <div className="card compact bg-base-100/90 shadow-xl border border-base-content/10 text-[10px] p-2 backdrop-blur-sm w-36">
           <h4 className="font-bold mb-1 text-base-content uppercase tracking-wider border-b border-base-content/10 pb-1">
             Leyenda
@@ -631,7 +631,7 @@ export function MapaVuelos({
                 ? (airportHighlights.size > 0 && !airportHighlights.has(aeropuerto.id || aeropuerto.code || '') ? 0.2 : 1.0)
                 : 0.5
             }
-            zIndexOffset={esSede ? 1000 : 0}
+            zIndexOffset={esSede ? 3000 : 2000}
             eventHandlers={{
               click: () => {
                 const code = aeropuerto.id || aeropuerto.code || null;
@@ -799,7 +799,7 @@ export function MapaVuelos({
             key={vuelo.id}
             position={[coord[0], coord[1]]}
             icon={getPlaneIcon(vuelo.origenCode, bearing, capacityPct)}
-            zIndexOffset={2000}
+            zIndexOffset={1000}
             opacity={dimmed ? 0.35 : 1}
             eventHandlers={{
               click: () => {
