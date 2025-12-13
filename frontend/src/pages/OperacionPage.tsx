@@ -21,6 +21,7 @@ export default function OperacionPage() {
         simClock,
         actions,
         isReplanning,
+        isClearingPlan,
         lastUpdated
     } = useOperacion();
 
@@ -43,7 +44,8 @@ export default function OperacionPage() {
         const val = e.target.value;
         setManualDateStr(val);
         if (val) {
-            actions.setManualTime(new Date(val));
+            const utcDate = new Date(`${val}:00Z`);
+            actions.setManualTime(utcDate);
         }
     };
 
@@ -77,8 +79,7 @@ export default function OperacionPage() {
 
     const getInputValue = () => {
         if (manualDateStr) return manualDateStr;
-        const tzOffset = simClock.getTimezoneOffset() * 60000;
-        return (new Date(simClock.getTime() - tzOffset)).toISOString().slice(0, 16);
+        return simClock.toISOString().slice(0, 16);
     };
 
     const isRealtime = Math.abs(simClock.getTime() - Date.now()) < 60_000; // permitir 1 min de desvío
@@ -127,32 +128,27 @@ export default function OperacionPage() {
                 {!collapsed && (
                 <div className="p-5 bg-base-100 border-b border-base-300 shrink-0">
 
-                    {/* RELOJ */}
-                    <div className="bg-base-200 rounded-xl border border-base-300 p-4 text-center relative overflow-hidden group">
-                        <div className="text-5xl font-black font-mono tracking-widest text-primary tabular-nums">
-                            {formatTime(simClock)}
+                    {/* RELOJ COMPACTO: solo selector UTC */}
+                    <div className="bg-base-200 rounded-lg border border-base-300 p-2 text-center">
+                        <div className="flex items-center justify-between text-[11px] text-base-content/70 mb-2">
+                            <span className="uppercase font-semibold">Hora (UTC)</span>
+                            <span className="badge badge-ghost badge-xs font-mono">UTC</span>
                         </div>
-                        <div className="text-sm text-base-content/80 font-medium mt-1 uppercase tracking-widest">
-                            {simClock.toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'short', timeZone: 'UTC' })}
-                        </div>
-
-                        {/* Control Manual de Tiempo */}
-                        <div className="mt-4 flex gap-2 items-center">
-                            <div className="relative flex-1">
+                        <div className="flex gap-2 items-center">
+                            <div className="flex-1">
                                 <input
                                     type="datetime-local"
-                                    className="input input-xs input-bordered w-full font-mono"
+                                    className="input input-xs input-bordered w-full font-mono h-8"
                                     value={getInputValue()}
                                     onChange={handleTimeChange}
                                 />
-                                <Calendar className="absolute right-2 top-1 text-base-content/80 pointer-events-none" size={14}/>
                             </div>
                             <button
                                 onClick={handleResetTime}
                                 className="btn btn-xs btn-square btn-ghost"
                                 title="Volver al presente"
                             >
-                                <RefreshCw size={14} />
+                                <RefreshCw size={12} />
                             </button>
                         </div>
                     </div>
@@ -189,14 +185,28 @@ export default function OperacionPage() {
                             <span>Last Sync: {lastUpdated ? formatShortTime(lastUpdated.toISOString()) : '--:--'}</span>
                             {!isRealtime && <span className="text-warning">Modo histórico</span>}
                         </div>
-                        <button
-                            onClick={() => actions.planificar()}
-                            disabled={status === 'buffering' || isReplanning || !isRealtime}
-                            className="btn btn-primary w-full gap-2 font-bold shadow-lg hover:shadow-primary/20 transition-all"
+                        <div className="space-y-2">
+                            <button
+                                onClick={() => actions.planificar()}
+                                disabled={status === 'buffering' || isReplanning || !isRealtime}
+                                className="btn btn-primary w-full gap-2 font-bold shadow-lg hover:shadow-primary/20 transition-all"
+                                >
+                                {isReplanning ? <span className="loading loading-spinner loading-xs"></span> : <Server size={16} />}
+                                {isReplanning ? 'OPTIMIZANDO...' : 'EJECUTAR PLANIFICADOR'}
+                            </button>
+                            <button
+                                onClick={() => {
+                                    if (window.confirm('¿Eliminar toda la planificación actual?')) {
+                                        actions.clearPlan();
+                                    }
+                                }}
+                                disabled={isClearingPlan || isReplanning || status === 'buffering'}
+                                className="btn btn-error btn-outline w-full gap-2 font-semibold"
                             >
-                        {isReplanning ? <span className="loading loading-spinner loading-xs"></span> : <Server size={16} />}
-                        {isReplanning ? 'OPTIMIZANDO...' : 'EJECUTAR PLANIFICADOR'}
-                        </button>
+                                {isClearingPlan ? <span className="loading loading-spinner loading-xs"></span> : <RefreshCw size={14} />}
+                                Borrar planificación
+                            </button>
+                        </div>
                         {!isRealtime && (
                           <p className="text-[11px] text-warning mt-2">
                             Ajusta el reloj al presente para ejecutar el planificador.
@@ -289,7 +299,7 @@ function OrderCardDetail({ order, formatDateTime }: { order: OrderStatusDetail, 
                         {order.isDelayed && <span className="badge badge-xs badge-error text-[9px]">DELAY</span>}
                     </div>
                     <div className="text-[10px] text-gray-400 mt-0.5">
-                        Capacidad: <span className="text-gray-200 font-bold">{order.quantity} un.</span>
+                        Cantidad: <span className="text-gray-200 font-bold">{order.quantity} un.</span>
                     </div>
                 </div>
                 <div className="text-right">
@@ -305,21 +315,23 @@ function OrderCardDetail({ order, formatDateTime }: { order: OrderStatusDetail, 
             </div>
 
             {/* Ruta: Origen -> Destino */}
-            <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 mb-3 text-gray-300">
-                <div>
-                    <div className="text-[9px] text-gray-500 uppercase font-bold">Origen</div>
-                    <div className="font-mono font-bold text-lg leading-none">{order.originAirport}</div>
-                    <div className="text-[10px] opacity-70">{formatDateTime(order.departureTime)}</div>
-                </div>
+                <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 mb-3 text-gray-300">
+                    <div>
+                        <div className="text-[9px] text-gray-500 uppercase font-bold">Origen</div>
+                        <div className="font-mono font-bold text-lg leading-none">{order.originAirport}</div>
+                        <div className="text-[10px] opacity-70">{formatDateTime(order.departureTime)}</div>
+                    </div>
 
-                <div className="flex flex-col items-center justify-center px-2">
-                    {order.status === 'IN_FLIGHT' ? <Plane size={14} className="text-blue-400"/> : <ArrowRight size={14} className="opacity-30"/>}
-                    <div className="text-[9px] font-mono text-gray-500 mt-1">{Math.round(order.progress)}%</div>
-                </div>
+                    <div className="flex flex-col items-center justify-center px-2">
+                        {order.status === 'IN_FLIGHT' ? <Plane size={14} className="text-blue-400"/> : <ArrowRight size={14} className="opacity-30"/>}
+                        <div className="text-[9px] font-mono text-gray-500 mt-1">
+                            {order.status === 'IN_FLIGHT' ? `${Math.round(order.progress)}%` : '--'}
+                        </div>
+                    </div>
 
-                <div className="text-right">
-                    <div className="text-[9px] text-gray-500 uppercase font-bold">Destino Final</div>
-                    <div className="font-mono font-bold text-lg leading-none">{order.finalDestination}</div>
+                    <div className="text-right">
+                        <div className="text-[9px] text-gray-500 uppercase font-bold">Destino Final</div>
+                        <div className="font-mono font-bold text-lg leading-none">{order.finalDestination}</div>
                     <div className="text-[10px] opacity-70">{formatDateTime(order.arrivalTime)}</div>
                 </div>
             </div>
@@ -337,6 +349,35 @@ function OrderCardDetail({ order, formatDateTime }: { order: OrderStatusDetail, 
                         <span>Próx. Escala:</span>
                         <span className="font-mono text-white">{order.nextAirport}</span>
                     </div>
+                </div>
+            )}
+            {order.routesDetail && order.routesDetail.length > 0 && (
+                <div className="mt-2 text-[10px] text-base-content bg-base-200 border border-base-300 rounded p-2 space-y-1.5">
+                    <div className="uppercase font-semibold text-base-content/80">Rutas y vuelos</div>
+                    {order.routesDetail.map(route => (
+                        <div key={`route-${route.routeIndex}`} className="border border-base-300 rounded bg-base-100/70 p-2 space-y-1">
+                            <div className="text-[10px] font-semibold text-base-content/70">Ruta {route.routeIndex}</div>
+                            {route.segments.map((seg, idx) => (
+                                <div key={`${seg.flightId}-${idx}`} className="flex flex-col border border-base-300 rounded px-2 py-1 bg-base-100">
+                                    <div className="flex items-center justify-between">
+                                        <span className="badge badge-neutral badge-outline badge-xs font-mono">{seg.flightId}</span>
+                                        <span className="text-[9px] text-base-content/70">Qty: {seg.quantity}</span>
+                                    </div>
+                                    <div className="flex justify-between text-[10px]">
+                                        <div>
+                                            <div className="font-bold">{seg.origin}</div>
+                                            <div className="opacity-70">{formatDateTime(seg.departureUtc)}</div>
+                                        </div>
+                                        <div className="text-center text-base-content/70">➔</div>
+                                        <div className="text-right">
+                                            <div className="font-bold">{seg.destination}</div>
+                                            <div className="opacity-70">{formatDateTime(seg.arrivalUtc)}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    ))}
                 </div>
             )}
         </div>

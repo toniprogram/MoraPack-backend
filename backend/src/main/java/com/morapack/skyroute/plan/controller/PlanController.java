@@ -41,4 +41,13 @@ public class PlanController {
         planningService.clearCurrentPlan();
         return ResponseEntity.noContent().build();
     }
+
+    /**
+     * Borra toda la información de planificación (plan actual y consumos de capacidad).
+     */
+    @DeleteMapping("/all")
+    public ResponseEntity<Void> deleteAllPlans() {
+        planningService.clearAllPlans();
+        return ResponseEntity.noContent().build();
+    }
 }

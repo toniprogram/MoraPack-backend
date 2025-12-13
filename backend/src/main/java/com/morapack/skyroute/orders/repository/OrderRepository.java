@@ -22,6 +22,8 @@ public interface OrderRepository extends JpaRepository<Order, String> {
                                                                          Instant start,
                                                                          Instant end);
 
+    void deleteAllByScope(OrderScope scope);
+
     Optional<Order> findFirstByScopeOrderByCreationUtcAsc(OrderScope scope);
 
     Optional<Order> findFirstByScopeOrderByCreationUtcDesc(OrderScope scope);

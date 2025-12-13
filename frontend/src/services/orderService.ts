@@ -28,12 +28,14 @@ export const orderService = {
   update: (id: string, request: OrderRequest) =>
     API.put<Order>(`/orders/${id}`, request).then(res => res.data),
   delete: (id: string) => API.delete(`/orders/${id}`),
-  createProjectedBatch: async (orders: OrderRequest[]) => {
+  createBatch: async (orders: OrderRequest[], projected: boolean) => {
     if (!orders.length) return [];
     const payload = {
-      orders: orders.map(order => ({ ...order, projected: true })),
+      orders: orders.map(order => ({ ...order, projected })),
     };
     const res = await API.post<Order[]>("/orders/batch", payload);
     return res.data;
   },
+  createProjectedBatch: async (orders: OrderRequest[]) => orderService.createBatch(orders, true),
+  deleteAllReal: () => API.delete<void>("/orders?scope=REAL"),
 };

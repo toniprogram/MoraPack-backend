@@ -107,4 +107,13 @@ public class PlanningService {
         flightCapacityRepository.deleteAll();
         planRepository.deleteById(1L);
     }
+
+    /**
+     * Elimina cualquier plan guardado y las capacidades agregadas.
+     */
+    @Transactional
+    public void clearAllPlans() {
+        flightCapacityRepository.deleteAll();
+        planRepository.deleteAll();
+    }
 }

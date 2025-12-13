@@ -59,6 +59,18 @@ export interface OrderStatusDetail {
     quantity: number;
     currentSegDeparture?: string;
     currentSegArrival?: string;
+    flights?: string[];
+    routesDetail?: {
+        routeIndex: number;
+        segments: {
+            flightId: string;
+            origin: string;
+            destination: string;
+            departureUtc: string;
+            arrivalUtc: string;
+            quantity: number;
+        }[];
+    }[];
 }
 
 export interface OperationMetrics {
@@ -73,6 +85,7 @@ export interface OperationMetrics {
 export const useOperacion = () => {
     const [status, setStatus] = useState<'idle' | 'buffering' | 'running' | 'error'>('idle');
     const [isReplanning, setIsReplanning] = useState(false);
+    const [isClearingPlan, setIsClearingPlan] = useState(false);
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
     const [dayPlan, setDayPlan] = useState<CurrentPlanResponse | null>(null);
@@ -82,6 +95,18 @@ export const useOperacion = () => {
         queryFn: aeropuertoService.getAll,
         staleTime: 1000 * 60 * 60,
     });
+
+    useEffect(() => {
+        if (aeropuertos.length) {
+            // Depuración: ver capacidades recibidas del backend
+            // eslint-disable-next-line no-console
+            console.log('Aeropuertos recibidos (capacidad):', aeropuertos.map(a => ({
+                id: a.id,
+                code: a.code,
+                storageCapacity: a.storageCapacity,
+            })));
+        }
+    }, [aeropuertos]);
 
     // --- CONTROL DE TIEMPO ---
     const [simClock, setSimClock] = useState<Date>(new Date());
@@ -182,6 +207,32 @@ export const useOperacion = () => {
         }
     });
 
+    const clearPlanMutation = useMutation({
+        mutationFn: () => planService.resetAllPlans(),
+        onMutate: () => {
+            setIsClearingPlan(true);
+        },
+        onSuccess: () => {
+            setDayPlan(null);
+            setActiveSegments([]);
+            setVuelosEnMovimiento([]);
+            setOrderStatusList([]);
+            setMetrics({
+                totalOrders: 0,
+                ordersInTransit: 0,
+                totalFlights: 0,
+                activeFlights: 0,
+                slaPercentage: 0,
+                delayedOrders: 0
+            });
+            setStatus('idle');
+            setLastUpdated(new Date());
+        },
+        onSettled: () => {
+            setIsClearingPlan(false);
+        }
+    });
+
     // --- CORE ---
     useEffect(() => {
         if (!dayPlan) return;
@@ -216,15 +267,15 @@ export const useOperacion = () => {
             const isDelayed = slackVal <= 0;
             if (isDelayed) countDelayed++;
 
+            const fixDate = (d: string) => {
+                if (!d) return new Date().toISOString();
+                if (d.includes('T') && !d.endsWith('Z') && !d.includes('+') && !d.includes('-')) return d + 'Z';
+                return d;
+            };
+
             const routes = plan.routes || [];
 
             const allSegments = routes.flatMap((r: { segments?: any[]; quantity?: number }) => r.segments || []).map((s: any) => {
-                const fixDate = (d: string) => {
-                    if (!d) return new Date().toISOString();
-                    if (d.includes('T') && !d.endsWith('Z') && !d.includes('+') && !d.includes('-')) return d + 'Z';
-                    return d;
-                };
-
                 const flightId = s.flight?.id || s.flightId || "FL-UNK";
                 uniqueFlightsTotal.add(flightId);
 
@@ -238,6 +289,19 @@ export const useOperacion = () => {
                     routeQuantity: s.routeQuantity || quantity
                 };
             }).filter((s: any) => s.origin && s.destination);
+
+            const allFlightIds = allSegments.map((s: any) => s.flightId).filter(Boolean);
+            const routesDetail = (plan.routes || []).map((r: { segments?: any[] }, idx: number) => ({
+                routeIndex: idx + 1,
+                segments: (r.segments || []).map((s: any) => ({
+                    flightId: s.flight?.id || s.flightId || 'FL-UNK',
+                    origin: s.flight?.origin?.code || s.flight?.originCode || s.from || s.origin,
+                    destination: s.flight?.destination?.code || s.flight?.destinationCode || s.to || s.destination,
+                    departureUtc: fixDate(s.exactDepDateTime || s.departureUtc || s.departure),
+                    arrivalUtc: fixDate(s.exactArrDateTime || s.arrivalUtc || s.arrival),
+                    quantity: s.routeQuantity ?? quantity,
+                })).filter((seg: any) => seg.origin && seg.destination),
+            })).filter(r => r.segments.length > 0);
 
             if (allSegments.length === 0) return;
 
@@ -376,7 +440,9 @@ export const useOperacion = () => {
                 progress: totalProgress,
                 isDelayed: isDelayed,
                 originAirport: allSegments[0].origin ?? 'UNK',
-                quantity: quantity
+                quantity: quantity,
+                flights: allFlightIds,
+                routesDetail: routesDetail
             });
         });
 
@@ -408,8 +474,10 @@ export const useOperacion = () => {
         metrics,
         status,
         simClock,
+        isClearingPlan,
         actions: {
             planificar: runPlanningMutation.mutate,
+            clearPlan: clearPlanMutation.mutate,
             setManualTime,
             resetTime
         },

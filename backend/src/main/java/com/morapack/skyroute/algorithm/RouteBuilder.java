@@ -158,6 +158,7 @@ class RouteBuilder {
     }
 
     private Map<String, Integer> computeHopDistances(String destination) {
+        // Conservamos la función para compatibilidad, aunque la prioridad ahora es por distancia geográfica.
         Map<String, Integer> distances = new HashMap<>();
         Deque<String> queue = new ArrayDeque<>();
         distances.put(destination, 0);
@@ -192,8 +193,9 @@ class RouteBuilder {
         if (mode == SelectionMode.RANDOM_APPROACH) {
             List<Flight> prioritized = new ArrayList<>();
             for (Flight option : options) {
-                int nextDist = distances.getOrDefault(option.getDestinationCode(), Integer.MAX_VALUE);
-                if (nextDist < currentDist || option.getDestinationCode().equals(destination)) {
+                double currentGeo = distanceToDestination(option.getOriginCode(), destination);
+                double nextGeo = distanceToDestination(option.getDestinationCode(), destination);
+                if (nextGeo < currentGeo || option.getDestinationCode().equals(destination)) {
                     prioritized.add(option);
                 }
             }
@@ -227,20 +229,23 @@ class RouteBuilder {
     private double slackScore(Flight flight,
                               String destination,
                               Map<String, Integer> distances) {
-        int nextDist = distances.getOrDefault(flight.getDestinationCode(), Integer.MAX_VALUE);
+        double geoDistance = distanceToDestination(flight.getDestinationCode(), destination);
         int directBonus = flight.getDestinationCode().equals(destination) ? -10 : 0;
-        double heuristic = heuristic(flight.getDestinationCode(), destination);
-        return nextDist * 10 + heuristic + directBonus;
+        double continentPenalty = continentPenalty(flight.getDestinationCode(), destination);
+        return geoDistance + continentPenalty + directBonus;
     }
 
-    private double heuristic(String airportCode, String destinationCode) {
+    private double continentPenalty(String airportCode, String destinationCode) {
         Airport target = airports.get(destinationCode);
         Airport candidate = airports.get(airportCode);
         if (target == null || candidate == null) {
-            return Double.MAX_VALUE;
+            return 0;
         }
-        int diffOffset = Math.abs(target.getZoneOffset().getTotalSeconds() - candidate.getZoneOffset().getTotalSeconds());
-        return diffOffset;
+        if (Objects.equals(target.getContinent(), candidate.getContinent())) {
+            return 0;
+        }
+        // penalización suave para preferir mismo continente
+        return 5_000;
     }
 
     private boolean reserveSegment(Route route, Flight flight, LocalDate date, int quantity, boolean finalLeg, Instant dueInstant) {
@@ -284,6 +289,26 @@ class RouteBuilder {
 
     private LocalDateTime toLocal(Instant instant, ZoneOffset offset) {
         return LocalDateTime.ofInstant(instant, offset);
+    }
+
+    private double distanceToDestination(String airportCode, String destinationCode) {
+        Airport origin = airports.get(airportCode);
+        Airport destination = airports.get(destinationCode);
+        if (origin == null || destination == null) {
+            return Double.MAX_VALUE / 2;
+        }
+        return haversineKm(origin.getLatitude(), origin.getLongitude(), destination.getLatitude(), destination.getLongitude());
+    }
+
+    private double haversineKm(double lat1, double lon1, double lat2, double lon2) {
+        double R = 6371.0;
+        double dLat = Math.toRadians(lat2 - lat1);
+        double dLon = Math.toRadians(lon2 - lon1);
+        double a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
+                        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c;
     }
 
     private Duration slaFor(String originCode, String destinationCode) {
