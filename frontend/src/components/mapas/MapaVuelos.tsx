@@ -630,7 +630,6 @@ export function MapaVuelos({
             progressClass = 'progress-success';
         }
         const vuelosSalientes = activeSegments.filter(s => s.origin === (aeropuerto.id || aeropuerto.code));
-        const hasSelection = (selectedOrders && selectedOrders.length > 0) || !!selectedFlightId;
         return (
           <Marker
             key={aeropuerto.id}

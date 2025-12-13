@@ -1,4 +1,4 @@
-import { Box, Plane } from 'lucide-react';
+import { Box } from 'lucide-react';
 import type { SegmentoVuelo } from '../../hooks/useSimulacion';
 
 interface OutgoingOrdersListProps {
@@ -20,9 +20,7 @@ interface FlatOutgoingOrder {
 export function OutgoingOrdersList({
   outgoingFlights,
   selectedOrders,
-  selectedFlightId,
-  onSelectOrder,
-  onSelectFlight
+  onSelectOrder
 }: OutgoingOrdersListProps) {
   const flatOrders: FlatOutgoingOrder[] = outgoingFlights.flatMap(vuelo => {
     if (vuelo.orderLoads && vuelo.orderLoads.length > 0) {
