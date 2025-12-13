@@ -417,8 +417,8 @@ const getPlaneIcon = (_originCode: string, rotation: number, capacityPct: number
     html,
     className: 'bg-transparent border-none',
     iconSize: [PLANE_HITBOX, PLANE_HITBOX],
-    iconAnchor: [PLANE_CENTER, PLANE_HITBOX], // base inferior del hitbox
-    popupAnchor: [0, 14],
+    iconAnchor: [PLANE_CENTER, PLANE_CENTER], // ancla al centro para alinear con la ruta
+    popupAnchor: [0, 18], // desplaza solo el popup
   });
 };
 

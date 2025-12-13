@@ -20,6 +20,8 @@ public class Config {
     // GA
     public static final int POP_SIZE = 15; // bajar costo por generación manteniendo diversidad moderada
     public static final int MAX_GEN = 1_000_000;
+    // Número de generaciones para ejecución operativa (planificador diario)
+    public static final int OPERATION_MAX_GEN = 30;
     public static final double P_CROSS = 0.5;
     public static final double P_MUT = 0.7; // ligera alza para romper estancamiento
 }

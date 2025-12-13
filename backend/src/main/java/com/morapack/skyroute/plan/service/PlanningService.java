@@ -46,7 +46,7 @@ public class PlanningService {
         }
 
         GeneticAlgorithm geneticAlgorithm = new GeneticAlgorithm(snapshot.world(), snapshot.demand());
-        Individual best = geneticAlgorithm.run(Config.POP_SIZE, Config.MAX_GEN);
+        Individual best = geneticAlgorithm.run(Config.POP_SIZE, Config.OPERATION_MAX_GEN);
         CurrentPlan entity = mapper.toEntity(best);
         persistFlightCapacities(entity);
         planRepository.save(entity);

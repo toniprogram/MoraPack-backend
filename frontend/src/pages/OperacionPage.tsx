@@ -81,6 +81,8 @@ export default function OperacionPage() {
         return (new Date(simClock.getTime() - tzOffset)).toISOString().slice(0, 16);
     };
 
+    const isRealtime = Math.abs(simClock.getTime() - Date.now()) < 60_000; // permitir 1 min de desvío
+
     return (
         <div className="flex h-[calc(100vh-4rem)] w-full bg-base-200 text-base-content overflow-hidden font-sans">
 
@@ -91,7 +93,6 @@ export default function OperacionPage() {
                         <div className="flex items-center gap-2">
                             <Radio className={status === 'running' ? 'text-success animate-pulse' : 'text-base-content/70'} size={18} />
                             <div>
-                                <div className="text-xs uppercase tracking-widest text-base-content/70">Operación diaria</div>
                                 <div className="text-sm font-semibold text-base-content/90">Estado {status.toUpperCase()}</div>
                             </div>
                         </div>
@@ -125,13 +126,6 @@ export default function OperacionPage() {
 
                 {!collapsed && (
                 <div className="p-5 bg-base-100 border-b border-base-300 shrink-0">
-                    <div className="flex justify-between items-center mb-4">
-                        <h1 className="text-lg font-bold tracking-tight flex items-center gap-2">
-                            <Radio className={status === 'running' ? 'text-success animate-pulse' : 'text-base-content/70'} size={20} />
-                            OPERACION DÍA A DÍA
-                        </h1>
-                        <span className="badge badge-outline text-xs font-mono opacity-80">UTC ZONE</span>
-                    </div>
 
                     {/* RELOJ */}
                     <div className="bg-base-200 rounded-xl border border-base-300 p-4 text-center relative overflow-hidden group">
@@ -165,50 +159,6 @@ export default function OperacionPage() {
                 </div>
                 )}
 
-                {/* KPIs */}
-                {!collapsed && (
-                <div className="p-4 bg-base-200 border-b border-base-300 shrink-0 grid grid-cols-2 gap-3">
-
-                    {/* Pedidos Totales */}
-                    <div className="bg-base-100 p-3 rounded-lg border border-base-300">
-                        <div className="flex items-center gap-2 text-base-content/70 text-[10px] uppercase font-bold mb-1">
-                            <Package size={12} className="text-primary"/> Pedidos Totales
-                        </div>
-                        <div className="text-2xl font-bold">{metrics.totalOrders}</div>
-                    </div>
-
-                    {/* Pedidos en Tránsito */}
-                    <div className="bg-base-100 p-3 rounded-lg border border-base-300">
-                        <div className="flex items-center gap-2 text-base-content/70 text-[10px] uppercase font-bold mb-1">
-                            <Activity size={12} className="text-warning"/> En Tránsito
-                        </div>
-                        <div className="text-2xl font-bold text-warning">{metrics.ordersInTransit}</div>
-                    </div>
-
-                    {/* Vuelos Totales vs Activos */}
-                    <div className="bg-base-100 p-3 rounded-lg border border-base-300 col-span-2 flex justify-between items-center">
-                        <div>
-                            <div className="flex items-center gap-2 text-base-content/70 text-[10px] uppercase font-bold mb-1">
-                                <Plane size={12} className="text-primary"/> Vuelos (Activos / Total)
-                            </div>
-                            <div className="text-xl font-bold flex items-baseline gap-1">
-                                <span className="text-primary">{metrics.activeFlights}</span>
-                                <span className="text-sm text-base-content/60 font-normal">/ {metrics.totalFlights}</span>
-                            </div>
-                        </div>
-                        {/* SLA Mini Chart */}
-                        <div className="text-right">
-                            <div className="flex items-center gap-1 text-base-content/70 text-[10px] uppercase font-bold justify-end mb-1">
-                                <CheckCircle size={12} className={metrics.slaPercentage >= 90 ? "text-success" : "text-error"}/> SLA On-Time
-                            </div>
-                            <div className={`text-xl font-bold ${metrics.slaPercentage >= 90 ? "text-success" : "text-error"}`}>
-                                {metrics.slaPercentage.toFixed(1)}%
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                )}
-
                 {!collapsed && (
                 <>
                     {/* 3. REPORTE DE PEDIDOS */}
@@ -237,15 +187,21 @@ export default function OperacionPage() {
                     <div className="p-4 bg-base-100 border-t border-base-300 shrink-0">
                         <div className="flex justify-between text-[10px] text-base-content/60 mb-2 font-mono">
                             <span>Last Sync: {lastUpdated ? formatShortTime(lastUpdated.toISOString()) : '--:--'}</span>
+                            {!isRealtime && <span className="text-warning">Modo histórico</span>}
                         </div>
                         <button
                             onClick={() => actions.planificar()}
-                            disabled={status === 'buffering' || isReplanning}
+                            disabled={status === 'buffering' || isReplanning || !isRealtime}
                             className="btn btn-primary w-full gap-2 font-bold shadow-lg hover:shadow-primary/20 transition-all"
-                        >
-                            {isReplanning ? <span className="loading loading-spinner loading-xs"></span> : <Server size={16} />}
-                            {isReplanning ? 'OPTIMIZANDO...' : 'EJECUTAR PLANIFICADOR'}
+                            >
+                        {isReplanning ? <span className="loading loading-spinner loading-xs"></span> : <Server size={16} />}
+                        {isReplanning ? 'OPTIMIZANDO...' : 'EJECUTAR PLANIFICADOR'}
                         </button>
+                        {!isRealtime && (
+                          <p className="text-[11px] text-warning mt-2">
+                            Ajusta el reloj al presente para ejecutar el planificador.
+                          </p>
+                        )}
                     </div>
                 </>
                 )}
@@ -253,6 +209,42 @@ export default function OperacionPage() {
 
             {/* MAPA */}
             <div className="flex-1 relative z-0 bg-base-200 h-full">
+                {/* Barra superior de métricas (similar a simulación) */}
+                <div className="absolute top-0 left-0 right-0 z-30 pointer-events-none">
+                    <div className="flex gap-3 px-4 py-2 text-xs text-base-content pointer-events-none">
+                        <div className="bg-base-100/80 backdrop-blur rounded-md px-3 py-2 shadow-sm flex items-center gap-2">
+                            <Package size={14} className="text-sky-400" />
+                            <div className="flex flex-col leading-tight">
+                                <span className="uppercase tracking-wide text-[10px] text-base-content/70">Pedidos Totales</span>
+                                <span className="font-bold text-base">{metrics.totalOrders}</span>
+                            </div>
+                        </div>
+                        <div className="bg-base-100/80 backdrop-blur rounded-md px-3 py-2 shadow-sm flex items-center gap-2">
+                            <Activity size={14} className="text-indigo-400" />
+                            <div className="flex flex-col leading-tight">
+                                <span className="uppercase tracking-wide text-[10px] text-base-content/70">En Tránsito</span>
+                                <span className="font-bold text-base">{metrics.ordersInTransit}</span>
+                            </div>
+                        </div>
+                        <div className="bg-base-100/80 backdrop-blur rounded-md px-3 py-2 shadow-sm flex items-center gap-2">
+                            <Plane size={14} className="text-cyan-400" />
+                            <div className="flex flex-col leading-tight">
+                                <span className="uppercase tracking-wide text-[10px] text-base-content/70">Vuelos</span>
+                                <span className="font-bold text-base">
+                                    {metrics.activeFlights} / {metrics.totalFlights}
+                                </span>
+                            </div>
+                        </div>
+                        <div className="bg-base-100/80 backdrop-blur rounded-md px-3 py-2 shadow-sm flex items-center gap-2">
+                            <CheckCircle size={14} className="text-blue-400" />
+                            <div className="flex flex-col leading-tight">
+                                <span className="uppercase tracking-wide text-[10px] text-base-content/70">On-Time</span>
+                                <span className="font-bold text-base">{metrics.slaPercentage.toFixed(1)}%</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <MapaVuelos
                     aeropuertos={aeropuertos}
                     activeSegments={activeSegments}
