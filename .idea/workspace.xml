@@ -4,7 +4,17 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="b35ae8fe-ef62-4df8-8c95-fabb041a599f" name="Changes" comment="" />
+    <list default="true" id="b35ae8fe-ef62-4df8-8c95-fabb041a599f" name="Changes" comment="">
+      <change afterPath="$PROJECT_DIR$/frontend/src/components/simulacion/OutgoingOrdersList.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/api/api.ts" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/api/api.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/mapas/MapaVuelos.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/mapas/MapaVuelos.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/simulacion/FlightsList.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/simulacion/FlightsList.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/simulacion/OrdersList.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/simulacion/OrdersList.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/simulacion/SidebarAeropuertosPanel.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/simulacion/SidebarAeropuertosPanel.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/simulacion/SimSidebar.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/simulacion/SimSidebar.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/simulacion/SimTopBar.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/simulacion/SimTopBar.tsx" afterDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -41,17 +51,17 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "ModuleVcsDetector.initialDetectionPerformed": "true",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "git-widget-placeholder": "mueble",
-    "kotlin-language-version-configured": "true",
-    "last_opened_file_path": "C:/Users/lacra/IdeaProjects/MoraPack-backend"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;mueble&quot;,
+    &quot;kotlin-language-version-configured&quot;: &quot;true&quot;,
+    &quot;last_opened_file_path&quot;: &quot;C:/Users/lacra/IdeaProjects/MoraPack-backend&quot;
   }
-}]]></component>
+}</component>
   <component name="RecentsManager">
     <key name="MoveFile.RECENT_KEYS">
       <recent name="C:\Users\lacra\IdeaProjects\MoraPack-backend\frontend\public\images" />
