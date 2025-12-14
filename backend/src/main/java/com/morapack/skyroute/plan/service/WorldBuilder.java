@@ -25,6 +25,7 @@ import java.util.stream.Collectors;
 
 @Component
 public class WorldBuilder {
+    private static final Set<String> PRODUCTION_HUBS = Set.of("SPIM", "EBCI", "UBBB");
 
     private final AirportRepository airportRepository;
     private final FlightRepository flightRepository;
@@ -80,6 +81,11 @@ public class WorldBuilder {
         }
         Airport destination = airports.get(source.getDestinationCode());
         if (destination == null) {
+            return null;
+        }
+        // Ignorar pedidos cuyo destino sea un hub de producción (SPIM, EBCI, UBBB)
+        String destCode = destination.code != null ? destination.code.toUpperCase() : "";
+        if (PRODUCTION_HUBS.contains(destCode)) {
             return null;
         }
         return new Order(

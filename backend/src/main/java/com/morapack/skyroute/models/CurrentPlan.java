@@ -25,6 +25,12 @@ public class CurrentPlan {
     @OneToMany(mappedBy = "plan", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<OrderPlan> orderPlans;
 
+    @Transient
+    private boolean slaCompliant;
+
+    @Transient
+    private int slaViolations;
+
     public CurrentPlan(LocalDateTime generatedAt, double fitness, List<OrderPlan> orderPlans) {
         this.generatedAt = generatedAt;
         this.fitness = fitness;

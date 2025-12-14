@@ -5,12 +5,33 @@ import { NavLink } from "react-router-dom";
 
 export default function Navbar() {
   const [status] = useState(true);
-  const [time, setTime] = useState("");
+  const [timeUtc, setTimeUtc] = useState("");
+  const [timeLima, setTimeLima] = useState("");
 
   useEffect(() => {
     dayjs.locale("es");
     const updateTime = () => {
-      setTime(dayjs().format("DD MMM YYYY, HH:mm"));
+      const now = new Date();
+      setTimeUtc(
+        now.toLocaleString("es-PE", {
+          timeZone: "UTC",
+          day: "2-digit",
+          month: "short",
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        })
+      );
+      setTimeLima(
+        now.toLocaleString("es-PE", {
+          timeZone: "America/Lima",
+          day: "2-digit",
+          month: "short",
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        })
+      );
     };
     updateTime();
     const interval = setInterval(updateTime, 60000);
@@ -82,7 +103,16 @@ export default function Navbar() {
           <span className={`text-xs font-semibold ${status ? "text-success" : "text-error"}`}>
             ● {status ? "Conectado" : "Desconectado"}
           </span>
-          <span className="text-[11px] opacity-80">{time}</span>
+          <div className="flex flex-col text-[11px] opacity-80">
+            <span className="flex items-center gap-1" title="Hora UTC">
+              <span className="badge badge-outline badge-xs">UTC</span>
+              {timeUtc}
+            </span>
+            <span className="flex items-center gap-1" title="Hora Lima">
+              <span className="badge badge-outline badge-xs">LIM</span>
+              {timeLima}
+            </span>
+          </div>
         </div>
         <div className="dropdown dropdown-end">
           <button className="btn btn-circle btn-ghost avatar">

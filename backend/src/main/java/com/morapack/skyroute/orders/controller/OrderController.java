@@ -60,6 +60,12 @@ public class OrderController {
         service.delete(id);
     }
 
+    @DeleteMapping
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteAll(@RequestParam(name = "scope") OrderScope scope) {
+        service.deleteAll(scope);
+    }
+
     @GetMapping("/count")
     public OrderCountResponse count(@RequestParam(name = "scope", required = false) OrderScope scope) {
         return new OrderCountResponse(scope, service.count(scope));

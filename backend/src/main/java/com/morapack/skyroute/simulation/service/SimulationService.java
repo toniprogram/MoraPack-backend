@@ -16,6 +16,11 @@ import com.morapack.skyroute.simulation.dto.*;
 import com.morapack.skyroute.simulation.live.*;
 import com.morapack.skyroute.simulation.dto.SimulationRoute;
 import com.morapack.skyroute.simulation.dto.OrderStatusTick;
+import com.morapack.skyroute.simulation.dto.SimulationPlanSummary;
+import com.morapack.skyroute.simulation.dto.DeliveredOrderDto;
+import com.morapack.skyroute.simulation.dto.DeliveredPage;
+import com.morapack.skyroute.simulation.model.SimulationDelivery;
+import com.morapack.skyroute.simulation.repository.SimulationDeliveryRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -42,12 +47,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 
 @Slf4j
 @Service
@@ -60,6 +68,7 @@ public class SimulationService {
     private final OrderRepository orderRepository;
     private final SimpMessagingTemplate messagingTemplate;
     private final ObjectMapper objectMapper;
+    private final SimulationDeliveryRepository deliveryRepository;
     private final Path snapshotsDir = Paths.get("snapshots");
     private final ExecutorService executorService = Executors.newCachedThreadPool();
     private final ScheduledExecutorService tickerExecutor = Executors.newSingleThreadScheduledExecutor();
@@ -69,11 +78,13 @@ public class SimulationService {
     public SimulationService(WorldBuilder worldBuilder,
                              OrderRepository orderRepository,
                              SimpMessagingTemplate messagingTemplate,
-                             ObjectMapper objectMapper) {
+                             ObjectMapper objectMapper,
+                             SimulationDeliveryRepository deliveryRepository) {
         this.worldBuilder = worldBuilder;
         this.orderRepository = orderRepository;
         this.messagingTemplate = messagingTemplate;
         this.objectMapper = objectMapper;
+        this.deliveryRepository = deliveryRepository;
     }
 
     public SimulationStartResponse startSimulation(SimulationStartRequest request) {
@@ -399,7 +410,6 @@ public class SimulationService {
             }
             log.debug("[SIM:{}] Adding order {} to batch demand (current demand size={})", session.id, order.getId(), demand.size());
             demand.add(order);
-            world.advanceTo(order.getCreationUtc());
 
             if (useHeuristicSeed && heuristicSeed != null) {
                 Individual patched = heuristicSeed.tryInsertOrder(world, order, random);
@@ -411,9 +421,43 @@ public class SimulationService {
             }
         }
 
+        // Avanzar el reloj al final de la ventana solo después del primer GA;
+        // el primer batch corre en el instante inicial configurado
+        if (snapshotInstant != null && session.gaRuns.get() > 0) {
+            world.advanceTo(snapshotInstant);
+        }
+
         // Ejecutar GA una vez por batch
-        GeneticAlgorithm ga = new GeneticAlgorithm(world, List.copyOf(demand));
         Instant simInstant = world.getCurrentInstant();
+        Individual completionSource = heuristicSeed != null ? heuristicSeed : previousBest;
+        if (!demand.isEmpty() && completionSource != null) {
+            Map<String, Instant> completion = completionSource.computeCompletionTimes(world, demand);
+            Set<String> activeIds = new HashSet<>();
+            for (Order order : demand) {
+                Instant done = completion.get(order.getId());
+                if (done == null || done.isAfter(simInstant)) {
+                    activeIds.add(order.getId());
+                }
+            }
+            if (activeIds.size() < demand.size()) {
+                int removed = demand.size() - activeIds.size();
+                log.info("[SIM:{}] Pruning {} delivered/expired orders before GA (simTime={})", session.id, removed, simInstant);
+                demand.removeIf(o -> !activeIds.contains(o.getId()));
+                heuristicSeed = heuristicSeed != null ? heuristicSeed.pruneToOrders(world, activeIds) : null;
+                previousBest = previousBest != null ? previousBest.pruneToOrders(world, activeIds) : null;
+                if (session.lastPopulation != null && !session.lastPopulation.isEmpty()) {
+                    session.lastPopulation = session.lastPopulation.stream()
+                            .map(ind -> ind.pruneToOrders(world, activeIds))
+                            .filter(Objects::nonNull)
+                            .toList();
+                }
+            }
+        }
+        if (demand.isEmpty()) {
+            log.warn("[SIM:{}] No active orders after pruning; skipping GA for this batch", session.id);
+            return heuristicSeed != null ? heuristicSeed : previousBest;
+        }
+        GeneticAlgorithm ga = new GeneticAlgorithm(world, List.copyOf(demand));
         log.info("[SIM:{}] Starting GA for batch (simTime={})", session.id, simInstant);
         long start = System.nanoTime();
         long gaBudgetMs = Math.max(1_000L, targetEndMillis - System.currentTimeMillis());
@@ -437,6 +481,7 @@ public class SimulationService {
                 nanosToMillis(gaDuration),
                 nanosToMillis(System.nanoTime() - iterationStart));
 
+        // Ya avanzamos antes de correr el GA; mantenemos el instante alineado por seguridad
         if (snapshotInstant != null) {
             Instant currentInstant = world.getCurrentInstant();
             if (currentInstant == null || snapshotInstant.isAfter(currentInstant)) {
@@ -447,6 +492,20 @@ public class SimulationService {
         session.update(snapshot);
         persistDiff(session, snapshot);
         persistSnapshot(session, snapshot);
+        // Build detailed updates for frontend cache (nuevos/actualizados)
+        Map<String, Instant> creationMap = demand.stream()
+                .collect(Collectors.toMap(Order::getId, Order::getCreationUtc, (a, b) -> a));
+        List<SimulationOrderPlan> detailedUpdates = new ArrayList<>();
+        Map<String, SimulationOrderPlan> detailsMap = new HashMap<>(session.lastDetails);
+        best.getPlans().forEach(p -> {
+            SimulationOrderPlan dto = toOrderPlanDto(p, creationMap.get(p.getOrderId()));
+            SimulationOrderPlan prev = detailsMap.get(dto.orderId());
+            if (prev == null || !prev.equals(dto)) {
+                detailedUpdates.add(dto);
+                detailsMap.put(dto.orderId(), dto);
+            }
+        });
+        session.lastDetails = detailsMap;
         if (session.liveWorld != null && best.getPlans() != null) {
             best.getPlans().forEach(p -> {
                 var plannedTick = new OrderStatusTick(
@@ -465,7 +524,7 @@ public class SimulationService {
         // Enviamos snapshot de avance (sin tick) para liberar overlay en frontend sin duplicar ticks
         messagingTemplate.convertAndSend(
                 topic(session.id),
-                SimulationMessage.progress(session.id.toString(), snapshot, null)
+                SimulationMessage.progress(session.id.toString(), snapshot, null, detailedUpdates.isEmpty() ? null : detailedUpdates)
         );
         // Arrancamos ticker y cronómetro real solo después del primer GA
         if (session.realStartMillis == 0) {
@@ -551,8 +610,11 @@ public class SimulationService {
                                           List<Order> demand) {
 
         Instant currentSimTime = world.getCurrentInstant();
+        Map<String, Instant> creationMap = demand.stream()
+                .collect(Collectors.toMap(Order::getId, Order::getCreationUtc, (a, b) -> a));
+
         List<SimulationOrderPlan> orderPlans = best.getPlans().stream()
-                .map(this::toOrderPlanDto)
+                .map(p -> toOrderPlanDto(p, creationMap.get(p.getOrderId())))
                 .collect(Collectors.toList());
 
         return new SimulationSnapshot(
@@ -566,11 +628,15 @@ public class SimulationService {
     }
 
     private SimulationOrderPlan toOrderPlanDto(com.morapack.skyroute.models.OrderPlan plan) {
+        return toOrderPlanDto(plan, null);
+    }
+
+    private SimulationOrderPlan toOrderPlanDto(com.morapack.skyroute.models.OrderPlan plan, Instant creationUtc) {
         long slackMinutes = optionalDurationMinutes(plan.getSlack());
         List<SimulationRoute> routes = plan.getRoutes() == null
                 ? List.of()
                 : plan.getRoutes().stream().map(this::toRouteDto).toList();
-        return new SimulationOrderPlan(plan.getOrderId(), slackMinutes, routes);
+        return new SimulationOrderPlan(plan.getOrderId(), creationUtc, slackMinutes, routes);
     }
 
     private SimulationRoute toRouteDto(Route route) {
@@ -630,6 +696,9 @@ public class SimulationService {
         if (plannedStatuses != null && !plannedStatuses.isEmpty()) {
             log.debug("[SIM:{}] Enviando planificados en tick: {}", session.id, plannedStatuses.stream().map(OrderStatusTick::orderId).toList());
         }
+        if (deliveredStatuses != null && !deliveredStatuses.isEmpty()) {
+            persistDeliveredAsync(session.id, simTime, deliveredStatuses);
+        }
         Map<String, String> statusMap = new HashMap<>();
         orderStatuses.forEach(os -> statusMap.put(os.orderId(), os.status()));
 
@@ -657,8 +726,18 @@ public class SimulationService {
                     List<SimulationRoute> routes = (base.routes() != null && !base.routes().isEmpty())
                             ? base.routes()
                             : p.routes();
-                    return new SimulationOrderPlan(p.orderId(), slack, routes);
+                    Instant creation = base.creationUtc() != null ? base.creationUtc() : p.creationUtc();
+                    return new SimulationOrderPlan(p.orderId(), creation, slack, routes);
                 })
+                .toList();
+        List<SimulationPlanSummary> planSummaries = currentPlans.stream()
+                .map(p -> new SimulationPlanSummary(
+                        p.orderId(),
+                        p.slackMinutes(),
+                        p.routes() != null && !p.routes().isEmpty()
+                                ? p.routes().get(0).segments()
+                                : List.of()
+                ))
                 .toList();
         List<ActiveAirportTick> airportTicks = session.liveWorld.getAirports().values().stream()
                 .map(a -> {
@@ -688,28 +767,10 @@ public class SimulationService {
         // calcular diff de planes
         Map<String, SimulationOrderPlan> currentMap = new HashMap<>();
         currentPlans.forEach(p -> currentMap.put(p.orderId(), p));
-        List<SimulationOrderPlan> added = new ArrayList<>();
-        List<SimulationOrderPlan> updated = new ArrayList<>();
-        List<String> removed = new ArrayList<>();
-
-        session.lastPlans.forEach((id, plan) -> {
-            if (!currentMap.containsKey(id)) {
-                removed.add(id);
-            }
-        });
-        // Si es la primera vez (lastPlans vacío) evitamos un diff masivo de removals
-        if (session.lastPlans.isEmpty()) {
-            removed.clear();
-        }
-        currentMap.forEach((id, plan) -> {
-            SimulationOrderPlan prev = session.lastPlans.get(id);
-            if (prev == null) {
-                added.add(plan);
-            } else if (!prev.equals(plan)) {
-                updated.add(plan);
-            }
-        });
-        log.debug("[SIM:{}] Diff planes -> added:{} updated:{} removed:{}", session.id, added.size(), updated.size(), removed.size());
+        // No enviamos diffs pesados en cada tick; snapshots/GA commits llevan el detalle completo
+        List<SimulationOrderPlan> added = List.of();
+        List<SimulationOrderPlan> updated = List.of();
+        List<String> removed = List.of();
         session.lastPlans = currentMap;
         List<String> nowInTransit = new ArrayList<>();
         statusMap.forEach((id, st) -> {
@@ -725,7 +786,7 @@ public class SimulationService {
 
         // orderPlans se envía vacío para reducir payload; diffs llevan los cambios
         List<SimulationOrderPlan> orderPlans = List.of();
-        return new SimulationTick(session.id.toString(), simTime, realElapsedMs, speed, status, session.collapseMessage, orderPlans, diff, actives, airportTicks, deliveredOrders, inTransitOrders, orderStatuses, deliveredStatuses, plannedStatuses, nowInTransit);
+        return new SimulationTick(session.id.toString(), simTime, realElapsedMs, speed, status, session.collapseMessage, orderPlans, diff, actives, airportTicks, deliveredOrders, inTransitOrders, orderStatuses, deliveredStatuses, plannedStatuses, nowInTransit, planSummaries);
     }
 
     private SimulationSegment toSegmentDto(RouteSegment segment) {
@@ -907,6 +968,65 @@ public class SimulationService {
         }
     }
 
+    private void persistDeliveredAsync(UUID simulationId, Instant simTime, List<OrderStatusTick> delivered) {
+        if (delivered == null || delivered.isEmpty()) {
+            return;
+        }
+        executorService.submit(() -> {
+            for (OrderStatusTick os : delivered) {
+                try {
+                    SimulationDelivery existing = deliveryRepository
+                            .findBySimulationIdAndOrderId(simulationId, os.orderId())
+                            .orElse(null);
+                    if (existing == null) {
+                        SimulationDelivery entity = new SimulationDelivery(
+                                simulationId,
+                                os.orderId(),
+                                os.quantity(),
+                                os.location(),
+                                simTime,
+                                simTime
+                        );
+                        deliveryRepository.save(entity);
+                    } else {
+                        int updatedQty = existing.getDeliveredQtyTotal() + os.quantity();
+                        existing.setDeliveredQtyTotal(updatedQty);
+                        if (os.location() != null && !os.location().isBlank()) {
+                            existing.setLastLocation(os.location());
+                        }
+                        existing.setLastDeliveredAt(simTime);
+                        existing.setLastSimTime(simTime);
+                        deliveryRepository.save(existing);
+                    }
+                } catch (Exception ex) {
+                    log.warn("[SIM:{}] Unable to persist delivery for order {}: {}", simulationId, os.orderId(), ex.getMessage());
+                }
+            }
+        });
+    }
+
+    public DeliveredPage getDelivered(UUID simulationId, int page, int size, String search) {
+        int sanitizedPage = Math.max(0, page);
+        int sanitizedSize = Math.min(Math.max(1, size), 200);
+        PageRequest pr = PageRequest.of(sanitizedPage, sanitizedSize);
+        Page<SimulationDelivery> deliveries;
+        if (search != null && !search.isBlank()) {
+            deliveries = deliveryRepository.findBySimulationIdAndOrderIdContainingIgnoreCase(simulationId, search, pr);
+        } else {
+            deliveries = deliveryRepository.findBySimulationId(simulationId, pr);
+        }
+        List<DeliveredOrderDto> items = deliveries.getContent().stream()
+                .map(d -> new DeliveredOrderDto(
+                        d.getOrderId(),
+                        d.getDeliveredQtyTotal(),
+                        d.getLastLocation(),
+                        d.getLastDeliveredAt(),
+                        d.getLastSimTime()
+                ))
+                .toList();
+        return new DeliveredPage(deliveries.getTotalElements(), deliveries.getNumber(), deliveries.getSize(), items);
+    }
+
     private String topic(UUID simulationId) {
         return TOPIC_PREFIX + simulationId;
     }
@@ -933,6 +1053,7 @@ public class SimulationService {
         private volatile LiveSimulationWorld liveWorld;
         private volatile Map<String, SimulationOrderPlan> lastPlans = new HashMap<>();
         private volatile Map<String, String> lastStatuses = new HashMap<>();
+        private volatile Map<String, SimulationOrderPlan> lastDetails = new HashMap<>();
         private volatile long lastClientPingMillis = System.currentTimeMillis();
         private volatile String collapseMessage;
 

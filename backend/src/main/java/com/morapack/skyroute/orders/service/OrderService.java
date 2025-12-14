@@ -13,6 +13,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
@@ -126,6 +127,14 @@ public class OrderService {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Order " + id + " not found");
         }
         orderRepository.deleteById(id);
+    }
+
+    @Transactional
+    public void deleteAll(OrderScope scope) {
+        if (scope == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "scope is required to delete orders");
+        }
+        orderRepository.deleteAllByScope(scope);
     }
 
     private Order buildOrderFromRequest(OrderRequest request) {

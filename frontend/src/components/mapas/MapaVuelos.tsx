@@ -3,7 +3,6 @@ import L from 'leaflet';
 import { useEffect, useRef, useState, useMemo } from 'react';
 import type { LatLngExpression } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import planeIconUrl from '/images/plane-line.svg?url';
 import type { Airport } from '../../types/airport';
 import { FlightsList } from '../simulacion/FlightsList';
 import type { ActiveAirportTick } from '../../types/simulation';
@@ -13,16 +12,19 @@ import { Plane, Building } from 'lucide-react';
 
 const getStatusColor = (pct: number) => {
   if (pct === 0) return '#22c55e';
-  if (pct < 70) return '#22c55e'; // Verde (Ok)
-  if (pct < 90) return '#eab308'; // Amarillo (Advertencia)
-  if (pct <= 100) return '#ef4444'; // Rojo (Crítico/Lleno)
+  if (pct < 10) return '#22c55e'; // Verde (Ok)
+  if (pct < 20) return '#eab308'; // Amarillo (Advertencia)
+  if (pct <= 30) return '#ef4444'; // Rojo (Crítico/Lleno)
   return '#22c55e';
 };
-const getAirportIcon = (pct: number, forPopup = false) => {
+const getAirportIcon = (pct: number, forPopup = false, lat?: number, northBound?: number) => {
   const color = getStatusColor(pct);
   const animId = `airport-${Math.random().toString(36).substr(2, 9)}`;
   const size = forPopup ? 20 : 20;
   const iconSize = forPopup ? 12 : 12;
+  const nearTop = lat !== undefined ? lat > 10 : false; // 10° al sur del ecuador
+  const anchorY = size; // ancla siempre abajo, solo movemos el offset
+  const popupY = nearTop ? 295 : -30;
 
 
   return L.divIcon({
@@ -70,18 +72,22 @@ const getAirportIcon = (pct: number, forPopup = false) => {
       </div>
     `,
     iconSize: [size, size],
-    iconAnchor: [size/2, size/2],
-    popupAnchor: [0, -14],
+    iconAnchor: [size / 2, anchorY],
+    popupAnchor: [0, popupY],
   });
 };
 
-const getHubIcon = (pct: number, forPopup = false) => {
-  const color = getStatusColor(pct);
+const getHubIcon = (pct: number, hubHex?: string, forPopup = false, lat?: number, northBound?: number) => {
+  const fallback = getStatusColor(pct);
+  const colorHex = hubHex ?? fallback;
   const animId = `pulse-${Math.random().toString(36).substr(2, 9)}`;
   const outerSize = forPopup ? 32 : 32;
   const innerSize = forPopup ? 18 : 34;
   const iconSize = forPopup ? 18 : 22;
   const borderWidth = forPopup ? 2 : 3;
+  const nearTop = lat !== undefined ? lat > -10 : false; // 10° al NORTE del ecuador
+  const anchorY = 10; // ancla fija abajo, solo cambia offset
+  const popupY = nearTop ? 170 : -25;
 
   if (forPopup) {
     return `
@@ -93,28 +99,28 @@ const getHubIcon = (pct: number, forPopup = false) => {
           width: ${outerSize}px;
           height: ${outerSize}px;
           border-radius: 50%;
-          border: 2px dashed #FCD34D;
+          border: 2px dashed ${colorHex};
           opacity: 0.5;
         "></div>
         <div style="
           position: absolute;
           top: ${(outerSize - innerSize) / 2}px;
           left: ${(outerSize - innerSize) / 2}px;
-          background: ${color};
+          background: ${colorHex};
           width: ${innerSize}px;
           height: ${innerSize}px;
           border-radius: 50%;
-          border: ${borderWidth}px solid #FCD34D;
+          border: ${borderWidth}px solid ${colorHex};
           display: flex;
           align-items: center;
           justify-content: center;
-          box-shadow: 0 0 12px rgba(252, 211, 77, 0.6);
+          box-shadow: 0 0 12px ${colorHex}99;
         ">
           <svg xmlns="http://www.w3.org/2000/svg" width="${iconSize}" height="${iconSize}" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0px 1px 3px rgba(0,0,0,0.7));">
             <path d="M4 16h16"/>
             <path d="M4 20h16"/>
             <path d="M8 12h8l-2-8H10l-2 8Z"/>
-            <circle cx="12" cy="2" r="1.5" fill="#FCD34D"/>
+            <circle cx="12" cy="2" r="1.5" fill="${colorHex}"/>
             <path d="M17.8 19.2 16 11l3.5-3.5" opacity="0.8"/>
             <path d="M6.2 19.2 8 11 4.5 7.5" opacity="0.8"/>
           </svg>
@@ -130,14 +136,14 @@ const getHubIcon = (pct: number, forPopup = false) => {
         @keyframes ${animId} {
           0%, 100% {
             transform: scale(1);
-            box-shadow: 0 0 16px rgba(252, 211, 77, 0.8),
-                        0 0 32px rgba(252, 211, 77, 0.4),
+            box-shadow: 0 0 16px ${colorHex}cc,
+                        0 0 32px ${colorHex}66,
                         inset 0 0 12px rgba(0,0,0,0.2);
           }
           50% {
             transform: scale(1.08);
-            box-shadow: 0 0 24px rgba(252, 211, 77, 1),
-                        0 0 48px rgba(252, 211, 77, 0.6),
+            box-shadow: 0 0 24px ${colorHex},
+                        0 0 48px ${colorHex}99,
                         inset 0 0 12px rgba(0,0,0,0.2);
           }
         }
@@ -156,7 +162,7 @@ const getHubIcon = (pct: number, forPopup = false) => {
           width: ${outerSize}px;
           height: ${outerSize}px;
           border-radius: 50%;
-          border: 2.5px dashed #FCD34D;
+          border: 2.5px dashed ${colorHex};
           opacity: 0.6;
           animation: ${animId}-rotate 8s linear infinite;
         "></div>
@@ -165,11 +171,11 @@ const getHubIcon = (pct: number, forPopup = false) => {
           position: absolute;
           top: ${(outerSize - innerSize) / 2}px;
           left: ${(outerSize - innerSize) / 2}px;
-          background: ${color};
+          background: ${colorHex};
           width: ${innerSize}px;
           height: ${innerSize}px;
           border-radius: 50%;
-          border: ${borderWidth}px solid #FCD34D;
+          border: ${borderWidth}px solid ${colorHex};
           display: flex;
           align-items: center;
           justify-content: center;
@@ -180,7 +186,7 @@ const getHubIcon = (pct: number, forPopup = false) => {
             <path d="M4 16h16"/>
             <path d="M4 20h16"/>
             <path d="M8 12h8l-2-8H10l-2 8Z"/>
-            <circle cx="12" cy="2" r="1.5" fill="#FCD34D"/>
+            <circle cx="12" cy="2" r="1.5" fill="${colorHex}"/>
             <path d="M17.8 19.2 16 11l3.5-3.5" opacity="0.8"/>
             <path d="M6.2 19.2 8 11 4.5 7.5" opacity="0.8"/>
           </svg>
@@ -188,8 +194,8 @@ const getHubIcon = (pct: number, forPopup = false) => {
       </div>
     `,
     iconSize: [outerSize, outerSize],
-    iconAnchor: [outerSize/2, outerSize/2],
-    popupAnchor: [0, -24],
+    iconAnchor: [outerSize / 2, anchorY],
+    popupAnchor: [0, popupY],
   });
 };
 // Fix básico de Leaflet
@@ -233,16 +239,17 @@ const isMainHub = (code: string) => {
 
 const getHubColor = (originCode: string) => {
   const code = originCode ? originCode.toUpperCase() : '';
-  if (code === 'SPIM' || code === 'LIM') return { hex: '#22c55e', twClass: 'text-success' };
-  if (code === 'UBBB' || code === 'GYD') return { hex: '#3b82f6', twClass: 'text-info' };
-  if (code === 'EBCI' || code === 'BRU' || code === 'CRL') return { hex: '#ef4444', twClass: 'text-error' };
+  // Colores diferenciados del semáforo (verde/amarillo/rojo) para evitar confusión visual.
+  if (code === 'SPIM' || code === 'LIM') return { hex: '#22d3ee', twClass: 'text-sky-400' };   // Celeste
+  if (code === 'UBBB' || code === 'GYD') return { hex: '#fb923c', twClass: 'text-orange-400' }; // Naranja
+  if (code === 'EBCI' || code === 'BRU' || code === 'CRL') return { hex: '#f472b6', twClass: 'text-pink-400' }; // Rosado
   return { hex: '#a6adbb', twClass: 'text-base-content' };
 };
 
 const getLoadColor = (pct: number) => {
-  if (pct < 70) return { hex: '#22c55e', twClass: 'text-success' }; // Verde (Ok)
-  if (pct < 90) return { hex: '#eab308', twClass: 'text-warning' }; // Amarillo (Llenándose)
-  return { hex: '#ef4444', twClass: 'text-error' };                 // Rojo (Crítico/Lleno)
+  if (pct >= 20) return { hex: '#ef4444', twClass: 'text-error' };   // Rojo (Crítico/Lleno)
+  if (pct >= 10) return { hex: '#eab308', twClass: 'text-warning' }; // Amarillo (Llenándose)
+  return { hex: '#22c55e', twClass: 'text-success' };                // Verde (Ok)
 };
 
 const PLANE_SIZE = 20; // tamaño visual del avión (reducido)
@@ -378,7 +385,7 @@ const getRemainingPath = (path: [number, number][], progress: number): [number, 
 };
 
 const getPlaneIcon = (_originCode: string, rotation: number, capacityPct: number) => {
-  const { twClass } = getLoadColor(capacityPct);
+  const { hex } = getLoadColor(capacityPct);
   const html = `
     <div style="
       width: ${PLANE_HITBOX}px;
@@ -400,7 +407,9 @@ const getPlaneIcon = (_originCode: string, rotation: number, capacityPct: number
         align-items: center;
         justify-content: center;
       ">
-        <img src="${planeIconUrl}" alt="plane" class="${twClass}" width="${PLANE_SIZE}" height="${PLANE_SIZE}" style="display: block; filter: drop-shadow(0px 2px 2px rgba(0,0,0,0.5)); pointer-events: none;" />
+        <svg xmlns="http://www.w3.org/2000/svg" width="${PLANE_SIZE}" height="${PLANE_SIZE}" viewBox="0 0 1024 1024" fill="${hex}" stroke="${hex}" style="display:block; filter: drop-shadow(0px 2px 2px rgba(0,0,0,0.5)); pointer-events:none;">
+          <path d="M597.333333 381.738667L938.666667 597.333333v85.333334l-341.333334-107.776v228.693333l128 71.082667V938.666667l-192-42.666667L341.333333 938.666667v-64l128-71.125334v-228.693333L128 682.666667v-85.333334l341.333333-215.594666V149.333333a64 64 0 0 1 128 0v232.405334z" />
+        </svg>
       </div>
     </div>
   `;
@@ -408,7 +417,8 @@ const getPlaneIcon = (_originCode: string, rotation: number, capacityPct: number
     html,
     className: 'bg-transparent border-none',
     iconSize: [PLANE_HITBOX, PLANE_HITBOX],
-    iconAnchor: [PLANE_CENTER, PLANE_CENTER],
+    iconAnchor: [PLANE_CENTER, PLANE_CENTER], // ancla al centro para alinear con la ruta
+    popupAnchor: [0, 18], // desplaza solo el popup
   });
 };
 
@@ -477,6 +487,23 @@ export function MapaVuelos({
       .filter((a) => typeof a.latitude === 'number' && typeof a.longitude === 'number')
       .map((a) => [a.id, [a.latitude, a.longitude]])
   );
+
+  // Limitar el mapa al bounding box de aeropuertos para que Leaflet no considere espacio "extra" hacia arriba/abajo.
+  const maxBounds = useMemo(() => {
+    if (!aeropuertos.length) return null;
+    const lats = aeropuertos.map(a => a.latitude).filter(n => typeof n === 'number');
+    const lngs = aeropuertos.map(a => a.longitude).filter(n => typeof n === 'number');
+    if (!lats.length || !lngs.length) return null;
+    const padding = 5; // grados de margen
+    const southWest: [number, number] = [Math.min(...lats) - padding, Math.min(...lngs) - padding];
+    const northEast: [number, number] = [Math.max(...lats) + padding, Math.max(...lngs) + padding];
+    return [southWest, northEast] as const;
+  }, [aeropuertos]);
+  const northBound = maxBounds ? maxBounds[1][0] : 90;
+  const popupOffsetForLat = (lat: number): [number, number] => {
+    const nearTop = lat > -10; // considerar todo lo que esté al norte del ecuador (margen de 10°)
+    return nearTop ? [0, 260] : [0, 32];
+  };
   const pathsPorSegmento = useRef(new Map<string, [number, number][]>());
   const segmentsMap = useMemo(() => {
     const m = new Map<string, SegmentoVuelo>();
@@ -510,12 +537,20 @@ export function MapaVuelos({
     <MapContainer
       center={initialPosition}
       zoom={3}
-      minZoom={2}
+      minZoom={3}
+      maxZoom={3}
       zoomControl={false}
+      scrollWheelZoom={false}
+      doubleClickZoom={false}
+      touchZoom={false}
+      boxZoom={false}
+      dragging={false}
+      maxBounds={maxBounds || undefined}
+      maxBoundsViscosity={1}
       className="w-full h-full z-0"
       style={{ backgroundColor: mapTheme === 'dark' ? '#1f2937' : '#e5e7eb' }}
     >
-      <ZoomControl position="bottomright" />
+      {/* Sin controles de zoom ni wheel/pinch */}
       <MapClickReset onClear={() => { onSelectOrders?.(null); onSelectFlight?.(null); onSelectAirport?.(null); }} />
       {mapTheme === 'dark' ? (
         <TileLayer
@@ -536,7 +571,7 @@ export function MapaVuelos({
       <MapResizer isLoading={isLoading} />
 
       {/* LEYENDA */}
-      <div className="leaflet-bottom leaflet-left m-2 z-[1000]">
+      <div className="leaflet-bottom leaflet-left m-2 z-[200] pointer-events-auto">
         <div className="card compact bg-base-100/90 shadow-xl border border-base-content/10 text-[10px] p-2 backdrop-blur-sm w-36">
           <h4 className="font-bold mb-1 text-base-content uppercase tracking-wider border-b border-base-content/10 pb-1">
             Leyenda
@@ -587,13 +622,16 @@ export function MapaVuelos({
           <Marker
             key={aeropuerto.id}
             position={[aeropuerto.latitude, aeropuerto.longitude]}
-            icon={esSede ? getHubIcon(stockPct) : getAirportIcon(stockPct)}
+            icon={esSede
+              ? getHubIcon(stockPct, getHubColor(aeropuerto.id || aeropuerto.code || '').hex, false, aeropuerto.latitude, northBound)
+              : getAirportIcon(stockPct, false, aeropuerto.latitude, northBound)
+            }
             opacity={
               (!filtroHubActivo || filtroHubActivo === aeropuerto.id)
                 ? (airportHighlights.size > 0 && !airportHighlights.has(aeropuerto.id || aeropuerto.code || '') ? 0.2 : 1.0)
                 : 0.5
             }
-            zIndexOffset={esSede ? 1000 : 0}
+            zIndexOffset={esSede ? 3000 : 2000}
             eventHandlers={{
               click: () => {
                 const code = aeropuerto.id || aeropuerto.code || null;
@@ -615,7 +653,12 @@ export function MapaVuelos({
             )}
 
             {/* POPUP DETALLADO DE AEROPUERTO */}
-            <Popup className="p-0 overflow-hidden rounded-xl" minWidth={200}>
+            <Popup
+              className="p-0 overflow-hidden rounded-xl thin-popup"
+              minWidth={200}
+              autoPan={false}
+              autoPanOnFocus={false}
+            >
               <div className="bg-base-100 text-base-content text-xs w-52 shadow-xl overflow-hidden">
                 <div className="bg-base-200 p-2 border-b border-base-content/10 flex items-center gap-2">
                     <Building size={14} className="text-primary"/>
@@ -756,7 +799,7 @@ export function MapaVuelos({
             key={vuelo.id}
             position={[coord[0], coord[1]]}
             icon={getPlaneIcon(vuelo.origenCode, bearing, capacityPct)}
-            zIndexOffset={2000}
+            zIndexOffset={1000}
             opacity={dimmed ? 0.35 : 1}
             eventHandlers={{
               click: () => {
@@ -771,7 +814,13 @@ export function MapaVuelos({
               },
             }}
           >
-            <Popup className="p-0 overflow-hidden rounded-xl" maxWidth={320}>
+            <Popup
+              className="p-0 overflow-hidden rounded-xl thin-popup"
+              maxWidth={320}
+              autoPan={false}
+              autoPanOnFocus={false}
+              offset={popupOffsetForLat(coord[0])}
+            >
               <div className="bg-base-100 text-base-content text-xs w-72 shadow-xl overflow-hidden">
 
                 {/* HEADER VUELO */}

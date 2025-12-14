@@ -46,7 +46,7 @@ public class PlanningService {
         }
 
         GeneticAlgorithm geneticAlgorithm = new GeneticAlgorithm(snapshot.world(), snapshot.demand());
-        Individual best = geneticAlgorithm.run(Config.POP_SIZE, Config.MAX_GEN);
+        Individual best = geneticAlgorithm.run(Config.POP_SIZE, Config.OPERATION_MAX_GEN);
         CurrentPlan entity = mapper.toEntity(best);
         persistFlightCapacities(entity);
         planRepository.save(entity);
@@ -106,5 +106,14 @@ public class PlanningService {
     public void clearCurrentPlan() {
         flightCapacityRepository.deleteAll();
         planRepository.deleteById(1L);
+    }
+
+    /**
+     * Elimina cualquier plan guardado y las capacidades agregadas.
+     */
+    @Transactional
+    public void clearAllPlans() {
+        flightCapacityRepository.deleteAll();
+        planRepository.deleteAll();
     }
 }

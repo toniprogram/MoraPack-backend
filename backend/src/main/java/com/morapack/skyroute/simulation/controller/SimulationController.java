@@ -6,6 +6,7 @@ import com.morapack.skyroute.simulation.dto.SimulationStartResponse;
 import com.morapack.skyroute.simulation.dto.SimulationStatus;
 import com.morapack.skyroute.simulation.live.SimulationFinalReport;
 import com.morapack.skyroute.simulation.service.SimulationService;
+import com.morapack.skyroute.simulation.dto.DeliveredPage;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -65,5 +66,13 @@ public class SimulationController {
     @GetMapping("/{simulationId}/report")
     public SimulationFinalReport report(@PathVariable UUID simulationId) {
         return simulationService.getReport(simulationId);
+    }
+
+    @GetMapping("/{simulationId}/deliveries")
+    public DeliveredPage delivered(@PathVariable UUID simulationId,
+                                   @RequestParam(defaultValue = "0") int page,
+                                   @RequestParam(defaultValue = "20") int size,
+                                   @RequestParam(required = false) String search) {
+        return simulationService.getDelivered(simulationId, page, size, search);
     }
 }

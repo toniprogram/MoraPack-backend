@@ -30,8 +30,8 @@ interface SimSidebarProps {
   onPausar: () => void;
   vistaPanel: VistaPanel;
   setVistaPanel: Dispatch<SetStateAction<VistaPanel>>;
-  filtroEstado: 'enproceso' | 'planificados' | 'entregados' | 'todos';
-  setFiltroEstado: Dispatch<SetStateAction<'enproceso' | 'planificados' | 'entregados' | 'todos'>>;
+  filtroEstado: 'enproceso' | 'planificados' | 'entregados';
+  setFiltroEstado: Dispatch<SetStateAction<'enproceso' | 'planificados' | 'entregados'>>;
   filtroTexto: string;
   setFiltroTexto: Dispatch<SetStateAction<string>>;
   enviosFiltrados: EnvioInfo[];
