@@ -141,7 +141,7 @@ public class SimulationService {
         }
         Map<String, LiveAirport> liveAirports = new HashMap<>();
         simulationWorld.getAirports().asMap().forEach((code, airport) -> {
-            liveAirports.put(code, new LiveAirport(code, airport.getStorageCapacity()));
+            liveAirports.put(code, new LiveAirport(code, airport.getStorageCapacity(), airport.getLatitude(), airport.getLongitude()));
         });
         LiveSimulationWorld liveWorld = new LiveSimulationWorld(
                 simulationId.toString(),

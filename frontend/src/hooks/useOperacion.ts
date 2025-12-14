@@ -1,10 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { Client } from '@stomp/stompjs';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { planService } from '../services/planService';
+import { operationService } from '../services/operationService';
 import { aeropuertoService } from '../services/aeropuertoService';
 import type { Airport } from '../types/airport';
-import type { CurrentPlanResponse } from '../types/plan';
+import type { ActiveAirportTick, SimulationMessage, SimulationTick, OrderStatusTick, ActiveSegment } from '../types/simulation';
 
 // --- TIPOS ---
 export interface SegmentoVuelo {
@@ -89,8 +91,6 @@ export const useOperacion = () => {
     const [isClearingPlan, setIsClearingPlan] = useState(false);
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-    const [dayPlan, setDayPlan] = useState<CurrentPlanResponse | null>(null);
-
     const { data: aeropuertos = [] } = useQuery<Airport[]>({
         queryKey: ['aeropuertos'],
         queryFn: aeropuertoService.getAll,
@@ -117,7 +117,11 @@ export const useOperacion = () => {
         const offset = newDate.getTime() - Date.now();
         setTimeOffset(offset);
         setSimClock(newDate);
+        simClockRef.current = newDate;
+        // Notificamos al backend para reposicionar el mundo
+        operationService.setTime(newDate.toISOString()).catch(() => {/* ignore */});
     };
+    const simClockRef = useRef<Date>(new Date());
 
     const resetTime = () => {
         setTimeOffset(0);
@@ -128,6 +132,7 @@ export const useOperacion = () => {
     const [vuelosEnMovimiento, setVuelosEnMovimiento] = useState<VueloEnMovimiento[]>([]);
     const [orderStatusList, setOrderStatusList] = useState<OrderStatusDetail[]>([]);
     const [airportStocks, setAirportStocks] = useState<Record<string, number>>({});
+    const stompClientRef = useRef<Client | null>(null);
 
     const [metrics, setMetrics] = useState<OperationMetrics>({
         totalOrders: 0,
@@ -138,55 +143,16 @@ export const useOperacion = () => {
         delayedOrders: 0
     });
 
-    const fetchRealTimePlan = useCallback(async () => {
-        try {
-            const rawResponse: unknown = await planService.getCurrentPlan();
-            let parsedPlan: unknown = rawResponse;
-
-            if (typeof rawResponse === 'string') {
-                try {
-                    parsedPlan = JSON.parse(rawResponse);
-                } catch {
-                    console.warn("⚠️ JSON roto, intentando reparar...");
-                    try {
-                        const sanitized = (rawResponse as string).replace(/,"plan":\{.*?(?=}\]|},)/g, '');
-                        parsedPlan = JSON.parse(sanitized);
-                    } catch (e2) {
-                        console.error("❌ Imposible reparar JSON:", e2);
-                    }
-                }
-            }
-
-            if (parsedPlan && typeof parsedPlan === 'object') {
-                const planObj = parsedPlan as { generatedAt?: string; fitness?: number; orderPlans?: unknown };
-                const cleanPlan: CurrentPlanResponse = {
-                    generatedAt: planObj.generatedAt ?? new Date().toISOString(),
-                    fitness: planObj.fitness ?? 0,
-                    orderPlans: Array.isArray(planObj.orderPlans) ? planObj.orderPlans : []
-                };
-                setDayPlan(cleanPlan);
-                setLastUpdated(new Date());
-                setStatus('running');
-            } else {
-                setDayPlan({ generatedAt: new Date().toISOString(), fitness: 0, orderPlans: [] });
-                setStatus('idle');
-            }
-        } catch (error) {
-            console.error("Error fetch plan:", error);
-            setDayPlan(null);
-            setStatus('idle');
-        }
+    // Inicializa el mundo de operación en backend (sincroniza hora actual)
+    useEffect(() => {
+        operationService.initWorld(simClockRef.current.toISOString()).catch(() => {});
     }, []);
 
     useEffect(() => {
-        fetchRealTimePlan();
-        const interval = setInterval(fetchRealTimePlan, 30000);
-        return () => clearInterval(interval);
-    }, [fetchRealTimePlan]);
-
-    useEffect(() => {
         const interval = setInterval(() => {
-            setSimClock(new Date(Date.now() + timeOffset));
+            const now = new Date(Date.now() + timeOffset);
+            simClockRef.current = now;
+            setSimClock(now);
         }, 1000);
         return () => clearInterval(interval);
     }, [timeOffset]);
@@ -198,7 +164,12 @@ export const useOperacion = () => {
             setStatus('buffering');
         },
         onSuccess: async () => {
-            await fetchRealTimePlan();
+            // Rehidrata el mundo en backend con la hora actual para empezar a recibir ticks
+            try {
+                await operationService.initWorld(simClockRef.current.toISOString());
+            } catch {
+                // ignore
+            }
             setIsReplanning(false);
             setStatus('running');
         },
@@ -234,238 +205,110 @@ export const useOperacion = () => {
         }
     });
 
-    // --- CORE ---
+    // Suscribirse al tópico de operación y consumir ticks desde el backend
     useEffect(() => {
-        if (!dayPlan) return;
+        const resolveWsUrl = () => {
+            const envWs = import.meta.env.VITE_WS_URL as string | undefined;
+            if (envWs) return envWs;
+            const apiBase = import.meta.env.VITE_API_URL as string | undefined;
+            const base = apiBase ?? 'http://localhost:8080/api';
+            const wsBase = base.replace(/^http/, 'ws').replace(/\/api\/?$/, '');
+            return `${wsBase}/ws`;
+        };
 
-        const orders = dayPlan.orderPlans || [];
-        const currentMs = simClock.getTime();
-        const airportMap = new Map((aeropuertos || []).map(a => [a.id, [a.latitude, a.longitude]]));
+        const client = new Client({
+            brokerURL: resolveWsUrl(),
+            reconnectDelay: 5000,
+            onConnect: () => {
+                client.subscribe('/topic/ops/current', (message) => {
+                    try {
+                        const parsed: SimulationMessage = JSON.parse(message.body);
+                        // Depuración: ver payload de tick recibido
+                        // eslint-disable-next-line no-console
+                        console.log('[OPS] Tick recibido:', parsed);
+                        const tick: SimulationTick | null = parsed.tick ?? null;
+                        if (!tick) return;
+                        const simTime = tick.simTime ? new Date(tick.simTime) : new Date();
+                        setSimClock(simTime);
+                        simClockRef.current = simTime;
 
-        const mapSegmentos = new Map<string, SegmentoVuelo>();
-        const mapVuelos = new Map<string, VueloEnMovimiento>();
-        const processedOrders: OrderStatusDetail[] = [];
-        const uniqueFlightsTotal = new Set<string>();
+                        const actives: ActiveSegment[] = tick.activeSegments ?? [];
+                        setActiveSegments(actives.map(seg => ({
+                            id: seg.id,
+                            flightId: seg.flightId,
+                            origin: seg.origin,
+                            destination: seg.destination,
+                            departureUtc: seg.departureUtc ?? '',
+                            arrivalUtc: seg.arrivalUtc ?? '',
+                            orderIds: seg.orderIds ?? [],
+                            retrasado: false,
+                            routeQuantity: seg.capacityUsed ?? seg.capacityTotal ?? 0,
+                        })));
 
-        const tempStocks: Record<string, number> = {};
-
-        let countDelayed = 0;
-        let countInTransit = 0;
-
-        orders.forEach((plan: { routes?: any[]; slack?: unknown; slackMinutes?: number; orderId?: string; customerReference?: string; creationUtc?: string }) => {
-            let orderStatus: OrderStatusDetail['status'] = 'WAITING';
-            let currentFlightId = undefined;
-            let nextAirport = undefined;
-            let currentSegDep = undefined;
-            let currentSegArr = undefined;
-
-            const quantity = (plan.routes || []).reduce((sum: number, r: { quantity?: number }) => sum + (r.quantity || 0), 0);
-
-            let slackVal = 10;
-            if (typeof plan.slack === 'string') slackVal = 10;
-            else if (typeof plan.slackMinutes === 'number') slackVal = plan.slackMinutes;
-
-            const isDelayed = slackVal <= 0;
-            if (isDelayed) countDelayed++;
-
-            const fixDate = (d: string) => {
-                if (!d) return new Date().toISOString();
-                if (d.includes('T') && !d.endsWith('Z') && !d.includes('+') && !d.includes('-')) return d + 'Z';
-                return d;
-            };
-
-            const routes = plan.routes || [];
-
-            const allSegments = routes.flatMap((r: { segments?: any[]; quantity?: number }) => r.segments || []).map((s: any) => {
-                const flightId = s.flight?.id || s.flightId || "FL-UNK";
-                uniqueFlightsTotal.add(flightId);
-
-                return {
-                    flightId: flightId,
-                    origin: s.flight?.origin?.code || s.flight?.originCode || s.from || s.origin,
-                    destination: s.flight?.destination?.code || s.flight?.destinationCode || s.to || s.destination,
-                    departure: fixDate(s.exactDepDateTime || s.departureUtc || s.departure),
-                    arrival: fixDate(s.exactArrDateTime || s.arrivalUtc || s.arrival),
-                    capacity: s.flight?.dailyCapacity || s.flight?.capacity || 300,
-                    routeQuantity: s.routeQuantity || quantity
-                };
-            }).filter((s: any) => s.origin && s.destination);
-
-            const allFlightIds = allSegments.map((s: any) => s.flightId).filter(Boolean);
-            const routesDetail = (plan.routes || []).map((r: { segments?: any[] }, idx: number) => ({
-                routeIndex: idx + 1,
-                segments: (r.segments || []).map((s: any) => ({
-                    flightId: s.flight?.id || s.flightId || 'FL-UNK',
-                    origin: s.flight?.origin?.code || s.flight?.originCode || s.from || s.origin,
-                    destination: s.flight?.destination?.code || s.flight?.destinationCode || s.to || s.destination,
-                    departureUtc: fixDate(s.exactDepDateTime || s.departureUtc || s.departure),
-                    arrivalUtc: fixDate(s.exactArrDateTime || s.arrivalUtc || s.arrival),
-                    quantity: s.routeQuantity ?? quantity,
-                })).filter((seg: any) => seg.origin && seg.destination),
-            })).filter(r => r.segments.length > 0);
-
-            if (allSegments.length === 0) return;
-
-            const firstDep = new Date(allSegments[0].departure).getTime();
-            const lastArr = new Date(allSegments[allSegments.length - 1].arrival).getTime();
-
-            const totalDuration = lastArr - firstDep;
-            const elapsedTotal = currentMs - firstDep;
-            const totalProgress = totalDuration > 0
-                ? Math.min(100, Math.max(0, (elapsedTotal / totalDuration) * 100))
-                : 0;
-
-            if (currentMs < firstDep) {
-                orderStatus = 'WAITING';
-                currentFlightId = allSegments[0].flightId;
-                nextAirport = allSegments[0].destination;
-                currentSegDep = allSegments[0].departure;
-                currentSegArr = allSegments[0].arrival;
-
-                const code = allSegments[0].origin;
-                tempStocks[code] = (tempStocks[code] || 0) + quantity;
-
-            } else if (currentMs > lastArr) {
-                orderStatus = 'COMPLETED';
-                const code = allSegments[allSegments.length - 1].destination;
-                tempStocks[code] = (tempStocks[code] || 0) + quantity;
-
-            } else {
-                countInTransit++;
-                let inAir = false;
-
-                for (const seg of allSegments) {
-                    const depMs = new Date(seg.departure).getTime();
-                    const arrMs = new Date(seg.arrival).getTime();
-                    const uniqueId = `${seg.flightId}-${seg.departure}`;
-
-                    if (currentMs >= depMs && currentMs <= arrMs) {
-                        inAir = true;
-                        orderStatus = 'IN_FLIGHT';
-                        currentFlightId = seg.flightId;
-                        nextAirport = seg.destination;
-
-                        currentSegDep = seg.departure;
-                        currentSegArr = seg.arrival;
-
-                        const origin = airportMap.get(seg.origin);
-                        const dest = airportMap.get(seg.destination);
-
-                        if (origin && dest) {
-                            if (!mapSegmentos.has(uniqueId)) {
-                                mapSegmentos.set(uniqueId, {
-                                    id: uniqueId,
-                                    flightId: seg.flightId ?? 'FL-UNK',
-                                    origin: seg.origin ?? 'UNK',
-                                    destination: seg.destination ?? 'UNK',
-                                    departureUtc: seg.departure ?? '',
-                                    arrivalUtc: seg.arrival ?? '',
-                                    orderIds: [plan.orderId ?? 'UNK'],
-                                    retrasado: isDelayed,
-                                    routeQuantity: seg.routeQuantity ?? quantity
-                                });
-                            } else {
-                                mapSegmentos.get(uniqueId)?.orderIds.push(plan.orderId ?? 'UNK');
-                            }
-
-                            const pct = ((currentMs - depMs) / (arrMs - depMs)) * 100;
-
-                            if (!mapVuelos.has(uniqueId)) {
-                                mapVuelos.set(uniqueId, {
-                                    id: uniqueId,
-                                    orderId: plan.orderId ?? 'UNK',
-                                    flightId: seg.flightId ?? 'FL-UNK',
-                                    latActual: origin[0] + (dest[0] - origin[0]) * (pct / 100),
-                                    lonActual: origin[1] + (dest[1] - origin[1]) * (pct / 100),
-                                    progreso: pct,
-                                    estadoVisual: isDelayed ? 'retrasado' : 'en curso',
-                                    origenCode: seg.origin ?? 'UNK',
-                                    destinoCode: seg.destination ?? 'UNK',
-                                    salidaProgramada: seg.departure ?? '',
-                                    llegadaProgramada: seg.arrival ?? '',
-                                    capacidadTotal: seg.capacity ?? 0,
-                                    capacidadUsada: seg.routeQuantity ?? 0,
-                                    pedidos: [{
-                                        orderId: plan.orderId ?? 'UNK',
-                                        cliente: plan.customerReference || "N/A",
-                                        fechaCreacion: plan.creationUtc || "---",
-                                        cantidad: seg.routeQuantity ?? 0
-                                    }]
-                                });
-                            } else {
-                                const v = mapVuelos.get(uniqueId);
-                                if(v) {
-                                    if (!v.pedidos.some(p => p.orderId === (plan.orderId ?? 'UNK'))) {
-                                        v.capacidadUsada += seg.routeQuantity ?? 0;
-                                        v.pedidos.push({
-                                            orderId: plan.orderId ?? 'UNK',
-                                            cliente: plan.customerReference || "N/A",
-                                            fechaCreacion: plan.creationUtc || "---",
-                                            cantidad: seg.routeQuantity ?? 0
-                                        });
-                                        if (isDelayed) v.estadoVisual = 'retrasado';
-                                    }
-                                }
-                            }
-                        }
-                        break;
+                        const airportTicks: ActiveAirportTick[] = tick.activeAirports ?? [];
+                        setAirportStocks(
+                            airportTicks.reduce((acc, a) => {
+                                acc[a.airportCode] = a.currentLoad ?? 0;
+                                return acc;
+                            }, {} as Record<string, number>)
+                        );
+                        const combinedStatuses: Record<string, OrderStatusDetail> = {};
+                        // plannedStatuses se consideran WAITING
+                        (tick.plannedStatuses ?? []).forEach((os: OrderStatusTick) => {
+                            combinedStatuses[os.orderId] = {
+                                orderId: os.orderId,
+                                status: 'WAITING',
+                                finalDestination: os.location ?? '',
+                                originAirport: '',
+                                quantity: os.quantity ?? 0,
+                                progress: 0,
+                                isDelayed: false,
+                                departureTime: '',
+                                arrivalTime: '',
+                            };
+                        });
+                        (tick.orderStatuses ?? []).forEach((os: OrderStatusTick) => {
+                            const stRaw = (os.status ?? '').toUpperCase();
+                            const st: OrderStatusDetail['status'] =
+                                stRaw === 'COMPLETED' ? 'COMPLETED'
+                                : stRaw === 'IN_FLIGHT' ? 'IN_FLIGHT'
+                                : stRaw === 'LAYOVER' ? 'LAYOVER'
+                                : 'WAITING';
+                            combinedStatuses[os.orderId] = {
+                                orderId: os.orderId,
+                                status: st,
+                                finalDestination: os.location ?? '',
+                                originAirport: '',
+                                quantity: os.quantity ?? 0,
+                                progress: 0,
+                                isDelayed: false,
+                                departureTime: '',
+                                arrivalTime: '',
+                            };
+                        });
+                        setOrderStatusList(Object.values(combinedStatuses));
+                        setMetrics((prev) => ({
+                            ...prev,
+                            totalOrders: tick.orderStatuses?.length ?? prev.totalOrders,
+                            ordersInTransit: tick.inTransitOrders ?? prev.ordersInTransit,
+                            activeFlights: tick.activeSegments?.length ?? prev.activeFlights,
+                            totalFlights: tick.activeSegments?.length ?? prev.totalFlights,
+                        }));
+                        setStatus('running');
+                    } catch (err) {
+                        console.warn('No se pudo parsear tick de operación', err);
                     }
-                }
-
-                if (!inAir && currentMs <= lastArr) {
-                    orderStatus = 'LAYOVER';
-
-                    for (let i = 0; i < allSegments.length - 1; i++) {
-                        const arrCurrent = new Date(allSegments[i].arrival).getTime();
-                        const depNext = new Date(allSegments[i+1].departure).getTime();
-
-                        if (currentMs >= arrCurrent && currentMs <= depNext) {
-                            const code = allSegments[i].destination;
-                            tempStocks[code] = (tempStocks[code] || 0) + quantity;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            processedOrders.push({
-                orderId: plan.orderId ?? 'UNK',
-                status: orderStatus,
-                currentFlightId: currentFlightId,
-                nextAirport: nextAirport,
-                finalDestination: allSegments[allSegments.length - 1].destination ?? 'UNK',
-                departureTime: allSegments[0].departure ?? '',
-                arrivalTime: allSegments[allSegments.length - 1].arrival ?? '',
-                currentSegDeparture: currentSegDep ?? '',
-                currentSegArrival: currentSegArr ?? '',
-                progress: totalProgress,
-                isDelayed: isDelayed,
-                originAirport: allSegments[0].origin ?? 'UNK',
-                quantity: quantity,
-                flights: allFlightIds,
-                routesDetail: routesDetail,
-                slackMinutes: typeof plan.slackMinutes === 'number' ? plan.slackMinutes : undefined
-            });
+                });
+            },
+            onStompError: (frame) => console.warn('WS OPS error', frame),
         });
-
-        const total = processedOrders.length;
-        const sla = total > 0 ? ((total - countDelayed) / total) * 100 : 100;
-
-        setMetrics({
-            totalOrders: total,
-            ordersInTransit: countInTransit,
-            totalFlights: uniqueFlightsTotal.size,
-            activeFlights: mapVuelos.size,
-            slaPercentage: sla,
-            delayedOrders: countDelayed
-        });
-
-        setActiveSegments(Array.from(mapSegmentos.values()));
-        setVuelosEnMovimiento(Array.from(mapVuelos.values()));
-        setOrderStatusList(processedOrders);
-        setAirportStocks(tempStocks);
-
-    }, [simClock, dayPlan, aeropuertos]);
+        client.activate();
+        stompClientRef.current = client;
+        return () => {
+            client.deactivate();
+            stompClientRef.current = null;
+        };
+    }, []);
 
     return {
         aeropuertos,
