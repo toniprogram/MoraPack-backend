@@ -4,6 +4,7 @@ import { useState, useRef } from 'react';
 import { SidebarEnviosPanel } from './SidebarEnviosPanel';
 import { SidebarVuelosPanel } from './SidebarVuelosPanel';
 import { SidebarAeropuertosPanel } from './SidebarAeropuertosPanel';
+import { SimControls } from './SimControls';
 import type { Dispatch, SetStateAction } from 'react';
 import type { Airport } from '../../types/airport';
 import type { EnvioInfo, FlightGroup } from '../../types/simulacionUI';
@@ -101,10 +102,6 @@ export function SimSidebar({
   const controlIsDisabled = estaSincronizando || isStarting;
   const terminarDisabled = isStarting ? true : (!estaActivo && !estaVisualizando);
   const isPaused = animPaused || status === 'paused';
-  const playPauseIcon = isPaused || (!estaActivo && !estaVisualizando) ? <Play size={16} /> : <Pause size={16} />;
-  const playPauseClass = isPaused || (!estaActivo && !estaVisualizando)
-    ? 'btn-success'
-    : (estaActivo ? 'btn-warning' : 'btn-success');
   return (
     <div className={`bg-base-100 shadow-lg flex flex-col border-r border-base-300 transition-all ${collapsed ? 'w-9' : 'w-80'}`}>
       <div className="flex items-center justify-between px-2 py-1 border-b border-base-300">
@@ -122,7 +119,7 @@ export function SimSidebar({
       {collapsed && (
         <div className="flex flex-col items-center gap-2 pb-2 pt-2">
           <button
-            className={`btn btn-circle btn-xs ${playPauseClass}`}
+            className={`btn btn-circle btn-xs ${isPaused ? 'btn-success' : (estaActivo ? 'btn-warning' : 'btn-success')}`}
             onClick={() => {
               if (!estaActivo && !estaVisualizando) {
                 onIniciar();
@@ -133,7 +130,7 @@ export function SimSidebar({
             disabled={controlIsDisabled}
             title={animPaused ? 'Reanudar' : (!estaActivo && !estaVisualizando ? 'Iniciar' : 'Pausar/Reanudar')}
           >
-            {playPauseIcon}
+            {isPaused || (!estaActivo && !estaVisualizando) ? <Play size={16} /> : <Pause size={16} />}
           </button>
           <button
             className="btn btn-circle btn-xs btn-error"
@@ -146,33 +143,41 @@ export function SimSidebar({
         </div>
       )}
       {!collapsed && (
-      <SidebarFilters
-        ordenesParaSimular={ordenesParaSimular}
-            startDate={startDate}
-            endDate={endDate}
-            setStartDate={setStartDate}
-            setEndDate={setEndDate}
-            hastaColapso={hastaColapso}
-            setHastaColapso={setHastaColapso}
-            estaActivo={estaActivo}
-            estaVisualizando={estaVisualizando}
-            animPaused={animPaused}
-            status={status}
-            isStarting={isStarting}
-            estaSincronizando={estaSincronizando}
-            onIniciar={onIniciar}
-            onTerminar={onTerminar}
-            onPausar={onPausar}
-        filtroHub={filtroHub}
-        setFiltroHub={setFiltroHub}
-        selectedOrderIds={selectedOrderIds}
-        clearSelectedOrders={clearSelectedOrders}
-        filtroTexto={filtroTexto}
-        setFiltroTexto={setFiltroTexto}
-        filtroEstado={filtroEstado}
-        setFiltroEstado={setFiltroEstado}
-        vistaPanel={vistaPanel}
-      />
+      <>
+        <SidebarFilters
+          ordenesParaSimular={ordenesParaSimular}
+          startDate={startDate}
+          endDate={endDate}
+          setStartDate={setStartDate}
+          setEndDate={setEndDate}
+          hastaColapso={hastaColapso}
+          setHastaColapso={setHastaColapso}
+          filtroHub={filtroHub}
+          setFiltroHub={setFiltroHub}
+          selectedOrderIds={selectedOrderIds}
+          clearSelectedOrders={clearSelectedOrders}
+          status={status}
+          filtroTexto={filtroTexto}
+          setFiltroTexto={setFiltroTexto}
+          filtroEstado={filtroEstado}
+          setFiltroEstado={setFiltroEstado}
+          vistaPanel={vistaPanel}
+          afterDates={(
+            <div className="bg-primary text-primary-content rounded-lg">
+              <SimControls
+                estaActivo={estaActivo}
+                estaVisualizando={estaVisualizando}
+                animPaused={animPaused}
+                isStarting={isStarting}
+                estaSincronizando={estaSincronizando}
+                onIniciar={onIniciar}
+                onTerminar={onTerminar}
+                onPausar={onPausar}
+              />
+            </div>
+          )}
+        />
+      </>
       )}
 
       {!collapsed && (
