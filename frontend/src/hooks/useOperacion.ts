@@ -60,6 +60,7 @@ export interface OrderStatusDetail {
     currentSegDeparture?: string;
     currentSegArrival?: string;
     flights?: string[];
+    slackMinutes?: number;
     routesDetail?: {
         routeIndex: number;
         segments: {
@@ -442,7 +443,8 @@ export const useOperacion = () => {
                 originAirport: allSegments[0].origin ?? 'UNK',
                 quantity: quantity,
                 flights: allFlightIds,
-                routesDetail: routesDetail
+                routesDetail: routesDetail,
+                slackMinutes: typeof plan.slackMinutes === 'number' ? plan.slackMinutes : undefined
             });
         });
 
