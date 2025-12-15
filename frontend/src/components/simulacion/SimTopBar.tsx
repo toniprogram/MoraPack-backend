@@ -68,8 +68,8 @@ export function SimTopBar({
 
   // Color dinámico según el porcentaje de uso (Nuevo feature del merge)
   const capacidadColorClass = useMemo(() => {
-    if (capacidadFlotaPct > 90) return 'text-error';
-    if (capacidadFlotaPct > 70) return 'text-warning';
+    if (capacidadFlotaPct > 50) return 'text-error';
+    if (capacidadFlotaPct > 20) return 'text-warning';
     return 'text-success';
   }, [capacidadFlotaPct]);
 
