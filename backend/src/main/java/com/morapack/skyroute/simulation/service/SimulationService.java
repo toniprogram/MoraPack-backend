@@ -12,17 +12,30 @@ import com.morapack.skyroute.models.Route;
 import com.morapack.skyroute.models.RouteSegment;
 import com.morapack.skyroute.plan.service.WorldBuilder;
 import com.morapack.skyroute.orders.repository.OrderRepository;
-import com.morapack.skyroute.simulation.dto.*;
-import com.morapack.skyroute.simulation.live.*;
-import com.morapack.skyroute.simulation.repository.SimulationPlanRepository;
-import com.morapack.skyroute.simulation.service.SimulationPlanMapper;
-import com.morapack.skyroute.simulation.dto.SimulationRoute;
-import com.morapack.skyroute.simulation.dto.OrderStatusTick;
-import com.morapack.skyroute.simulation.dto.SimulationPlanSummary;
+import com.morapack.skyroute.simulation.dto.ActiveAirportTick;
+import com.morapack.skyroute.simulation.dto.ActiveSegment;
 import com.morapack.skyroute.simulation.dto.DeliveredOrderDto;
 import com.morapack.skyroute.simulation.dto.DeliveredPage;
-import com.morapack.skyroute.simulation.model.SimulationDelivery;
+import com.morapack.skyroute.simulation.dto.OrderLoadTick;
+import com.morapack.skyroute.simulation.dto.OrderPlansDiff;
+import com.morapack.skyroute.simulation.dto.OrderStatusTick;
+import com.morapack.skyroute.simulation.dto.PrewarmResponse;
+import com.morapack.skyroute.simulation.dto.SimulationMessage;
+import com.morapack.skyroute.simulation.dto.SimulationOrderPlan;
+import com.morapack.skyroute.simulation.dto.SimulationPlanSummary;
+import com.morapack.skyroute.simulation.dto.SimulationSegment;
+import com.morapack.skyroute.simulation.dto.SimulationSnapshot;
+import com.morapack.skyroute.simulation.dto.SimulationStatus;
+import com.morapack.skyroute.simulation.dto.SimulationStartRequest;
+import com.morapack.skyroute.simulation.dto.SimulationStartResponse;
+import com.morapack.skyroute.simulation.dto.SimulationTick;
+import com.morapack.skyroute.simulation.live.*;
+import com.morapack.skyroute.simulation.repository.SimulationPlanRepository;
 import com.morapack.skyroute.simulation.repository.SimulationDeliveryRepository;
+import com.morapack.skyroute.simulation.service.SimulationPlanMapper;
+import com.morapack.skyroute.simulation.model.SimulationDelivery;
+import com.morapack.skyroute.simulation.model.SimulationPlan;
+import com.morapack.skyroute.simulation.model.SimulationRoute;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -608,6 +621,35 @@ public class SimulationService {
         });
     }
 
+    private void persistStatusChangesAsync(UUID simulationId, Map<String, String> statusChanges) {
+        if (statusChanges == null || statusChanges.isEmpty()) {
+            return;
+        }
+        executorService.submit(() -> {
+            try {
+                simulationPlanRepository.findBySimulationId(simulationId.toString()).ifPresent(plan -> {
+                    Map<String, com.morapack.skyroute.simulation.model.SimulationOrderPlan> byOrder = plan.getOrderPlans() == null
+                            ? new HashMap<>()
+                            : plan.getOrderPlans().stream()
+                            .collect(Collectors.toMap(com.morapack.skyroute.simulation.model.SimulationOrderPlan::getOrderId, p -> p, (a, b) -> a, HashMap::new));
+                    boolean dirty = false;
+                    for (Map.Entry<String, String> entry : statusChanges.entrySet()) {
+                        com.morapack.skyroute.simulation.model.SimulationOrderPlan sop = byOrder.get(entry.getKey());
+                        if (sop != null && !Objects.equals(sop.getStatus(), entry.getValue())) {
+                            sop.setStatus(entry.getValue());
+                            dirty = true;
+                        }
+                    }
+                    if (dirty) {
+                        simulationPlanRepository.save(plan);
+                    }
+                });
+            } catch (Exception ex) {
+                log.warn("[SIM:{}] Could not persist status changes: {}", simulationId, ex.getMessage());
+            }
+        });
+    }
+
     private Individual processOrder(SimulationSession session,
                                     World world,
                                     Individual previousBest,
@@ -633,7 +675,7 @@ public class SimulationService {
         Map<String, Instant> creationMap = demand.stream()
                 .collect(Collectors.toMap(Order::getId, Order::getCreationUtc, (a, b) -> a));
 
-        List<SimulationOrderPlan> orderPlans = best.getPlans().stream()
+        List<com.morapack.skyroute.simulation.dto.SimulationOrderPlan> orderPlans = best.getPlans().stream()
                 .map(p -> toOrderPlanDto(p, creationMap.get(p.getOrderId())))
                 .collect(Collectors.toList());
 
@@ -649,10 +691,62 @@ public class SimulationService {
 
     private void persistSimulationPlan(UUID simulationId, Individual best) {
         try {
-            simulationPlanRepository.deleteBySimulationId(simulationId.toString());
-            var entity = simulationPlanMapper.toEntity(simulationId.toString(), best);
-            simulationPlanRepository.save(entity);
-            log.debug("[SIM:{}] Persisted simulation plan with {} orders", simulationId, entity.getOrderPlans() != null ? entity.getOrderPlans().size() : 0);
+            String simId = simulationId.toString();
+            com.morapack.skyroute.simulation.model.SimulationPlan plan = simulationPlanRepository.findBySimulationId(simId).orElse(null);
+            if (plan == null) {
+                plan = new com.morapack.skyroute.simulation.model.SimulationPlan();
+                plan.setSimulationId(simId);
+            }
+            plan.setGeneratedAt(LocalDateTime.now());
+            plan.setFitness(best.getFitness());
+            plan.setSlaCompliant(best.isSlaCompliant());
+            plan.setSlaViolations(best.getSlaViolations());
+
+            // indexar existentes por orderId para upsert
+            Map<String, com.morapack.skyroute.simulation.model.SimulationOrderPlan> existingByOrder = plan.getOrderPlans() == null
+                    ? new HashMap<>()
+                    : plan.getOrderPlans().stream().collect(Collectors.toMap(com.morapack.skyroute.simulation.model.SimulationOrderPlan::getOrderId, p -> p, (a, b) -> a, HashMap::new));
+
+            List<com.morapack.skyroute.simulation.model.SimulationOrderPlan> updatedPlans = new ArrayList<>();
+            for (var original : best.getPlans()) {
+                com.morapack.skyroute.simulation.model.SimulationOrderPlan target = existingByOrder.get(original.getOrderId());
+                if (target == null) {
+                    target = new com.morapack.skyroute.simulation.model.SimulationOrderPlan();
+                    target.setOrderId(original.getOrderId());
+                    target.setPlan(plan);
+                } else {
+                    // limpiar rutas anteriores para reemplazar
+                    if (target.getRoutes() != null) {
+                        target.getRoutes().clear();
+                    }
+                }
+                target.setSlack(original.getSlack());
+                if (target.getStatus() == null) {
+                    target.setStatus("WAITING"); // solo nuevas inserciones arrancan en WAITING
+                }
+
+                List<com.morapack.skyroute.simulation.model.SimulationRoute> routes = original.getRoutes() == null
+                        ? new ArrayList<>()
+                        : original.getRoutes().stream()
+                            .map(simulationPlanMapper::mapRoute)
+                            .collect(Collectors.toCollection(ArrayList::new));
+                final com.morapack.skyroute.simulation.model.SimulationOrderPlan planTarget = target;
+                routes.forEach(r -> r.setOrderPlan(planTarget));
+                target.setRoutes(routes);
+                updatedPlans.add(target);
+            }
+
+            // Mantener planes previos que ya no fueron devueltos por el GA (ej. entregados)
+            existingByOrder.forEach((orderId, op) -> {
+                boolean alreadyIncluded = updatedPlans.stream().anyMatch(p -> p.getOrderId().equals(orderId));
+                if (!alreadyIncluded) {
+                    updatedPlans.add(op);
+                }
+            });
+
+            plan.setOrderPlans(updatedPlans);
+            simulationPlanRepository.save(plan);
+            log.debug("[SIM:{}] Persisted simulation plan with {} orders", simulationId, updatedPlans.size());
         } catch (Exception ex) {
             log.warn("[SIM:{}] Could not persist simulation plan: {}", simulationId, ex.getMessage());
         }
@@ -687,24 +781,24 @@ public class SimulationService {
         });
     }
 
-    private SimulationOrderPlan toOrderPlanDto(com.morapack.skyroute.models.OrderPlan plan) {
+    private com.morapack.skyroute.simulation.dto.SimulationOrderPlan toOrderPlanDto(com.morapack.skyroute.models.OrderPlan plan) {
         return toOrderPlanDto(plan, null);
     }
 
-    private SimulationOrderPlan toOrderPlanDto(com.morapack.skyroute.models.OrderPlan plan, Instant creationUtc) {
+    private com.morapack.skyroute.simulation.dto.SimulationOrderPlan toOrderPlanDto(com.morapack.skyroute.models.OrderPlan plan, Instant creationUtc) {
         long slackMinutes = optionalDurationMinutes(plan.getSlack());
-        List<SimulationRoute> routes = plan.getRoutes() == null
+        List<com.morapack.skyroute.simulation.dto.SimulationRoute> routes = plan.getRoutes() == null
                 ? List.of()
                 : plan.getRoutes().stream().map(this::toRouteDto).toList();
-        return new SimulationOrderPlan(plan.getOrderId(), creationUtc, slackMinutes, routes);
+        return new com.morapack.skyroute.simulation.dto.SimulationOrderPlan(plan.getOrderId(), creationUtc, slackMinutes, routes);
     }
 
-    private SimulationRoute toRouteDto(Route route) {
+    private com.morapack.skyroute.simulation.dto.SimulationRoute toRouteDto(Route route) {
         long slackMinutes = optionalDurationMinutes(route.getSlack());
         List<SimulationSegment> segments = route.getSegments() == null
                 ? List.of()
                 : route.getSegments().stream().map(this::toSegmentDto).toList();
-        return new SimulationRoute(route.getQuantity(), slackMinutes, segments);
+        return new com.morapack.skyroute.simulation.dto.SimulationRoute(route.getQuantity(), slackMinutes, segments);
     }
 
     private void scheduleLiveFlightsFromIndividual(SimulationSession session, Individual best, List<Order> batchOrders) {
@@ -750,55 +844,16 @@ public class SimulationService {
         List<ActiveSegment> actives = session.liveWorld.toActiveSegments();
         Map<String, Integer> loads = session.liveWorld.getAirportLoads();
         Map<String, Map<String, Integer>> inventory = session.liveWorld.getAirportInventory();
-        List<OrderStatusTick> orderStatuses = session.liveWorld.buildOrderStatuses();
-        List<OrderStatusTick> deliveredStatuses = session.liveWorld.buildDeliveredStatuses();
-        List<OrderStatusTick> plannedStatuses = session.liveWorld.buildPlannedStatuses();
-        if (plannedStatuses != null && !plannedStatuses.isEmpty()) {
-            log.debug("[SIM:{}] Enviando planificados en tick: {}", session.id, plannedStatuses.stream().map(OrderStatusTick::orderId).toList());
-        }
-        if (deliveredStatuses != null && !deliveredStatuses.isEmpty()) {
-            persistDeliveredAsync(session.id, simTime, deliveredStatuses);
-        }
+        // Simplified payload: omit order-level details en el mensaje,
+        // pero igual persistimos entregas en BD.
+        List<OrderStatusTick> orderStatuses = List.of();
+        List<OrderStatusTick> deliveredStatuses = List.of();
+        List<OrderStatusTick> plannedStatuses = List.of();
+        List<OrderStatusTick> deliveredForDb = session.liveWorld.drainDeliveredOnce();
+        Map<String, String> statusChanges = session.liveWorld.captureStatusChanges();
         Map<String, String> statusMap = new HashMap<>();
-        orderStatuses.forEach(os -> statusMap.put(os.orderId(), os.status()));
-
-        // filtrar planes: solo pedidos activos (no planificados)
-        Set<String> activeOrderIds = new HashSet<>();
-        orderStatuses.forEach(os -> activeOrderIds.add(os.orderId()));
-        plannedStatuses.forEach(ps -> activeOrderIds.add(ps.orderId()));
-
-        Map<String, SimulationOrderPlan> snapshotPlans = session.lastSnapshot == null
-                ? Map.of()
-                : session.lastSnapshot.orderPlans().stream()
-                .collect(Collectors.toMap(SimulationOrderPlan::orderId, Function.identity(), (a, b) -> a));
-
-        List<SimulationOrderPlan> currentPlans = session.liveWorld.buildOrderPlansForTick().stream()
-                .filter(p -> activeOrderIds.contains(p.orderId()))
-                .map(p -> {
-                    SimulationOrderPlan base = session.lastPlans.get(p.orderId());
-                    if (base == null) {
-                        base = snapshotPlans.get(p.orderId());
-                    }
-                    if (base == null) {
-                        return p;
-                    }
-                    long slack = base.slackMinutes();
-                    List<SimulationRoute> routes = (base.routes() != null && !base.routes().isEmpty())
-                            ? base.routes()
-                            : p.routes();
-                    Instant creation = base.creationUtc() != null ? base.creationUtc() : p.creationUtc();
-                    return new SimulationOrderPlan(p.orderId(), creation, slack, routes);
-                })
-                .toList();
-        List<SimulationPlanSummary> planSummaries = currentPlans.stream()
-                .map(p -> new SimulationPlanSummary(
-                        p.orderId(),
-                        p.slackMinutes(),
-                        p.routes() != null && !p.routes().isEmpty()
-                                ? p.routes().get(0).segments()
-                                : List.of()
-                ))
-                .toList();
+        List<SimulationOrderPlan> currentPlans = List.of();
+        List<SimulationPlanSummary> planSummaries = List.of();
         List<ActiveAirportTick> airportTicks = session.liveWorld.getAirports().values().stream()
                 .map(a -> {
                     var inv = inventory.getOrDefault(a.getAirportCode(), Map.of());
@@ -824,29 +879,17 @@ public class SimulationService {
             status = "collapsed";
         }
         long realElapsedMs = session.realStartMillis > 0 ? System.currentTimeMillis() - session.realStartMillis : 0L;
-        // calcular diff de planes
-        Map<String, SimulationOrderPlan> currentMap = new HashMap<>();
-        currentPlans.forEach(p -> currentMap.put(p.orderId(), p));
-        // No enviamos diffs pesados en cada tick; snapshots/GA commits llevan el detalle completo
-        List<SimulationOrderPlan> added = List.of();
-        List<SimulationOrderPlan> updated = List.of();
-        List<String> removed = List.of();
-        session.lastPlans = currentMap;
-        List<String> nowInTransit = new ArrayList<>();
-        statusMap.forEach((id, st) -> {
-            String prev = session.lastStatuses.get(id);
-            if (prev == null || !"IN_TRANSIT".equalsIgnoreCase(prev)) {
-                if ("IN_TRANSIT".equalsIgnoreCase(st)) {
-                    nowInTransit.add(id);
-                }
-            }
-        });
-        session.lastStatuses = statusMap;
-        OrderPlansDiff diff = new OrderPlansDiff(simTime, added, updated, removed);
+        // calcular diff de planes (vacío porque no enviamos órdenes en tick)
+        OrderPlansDiff diff = new OrderPlansDiff(simTime, List.of(), List.of(), List.of());
+        List<String> nowInTransit = List.of();
 
-        // orderPlans se envía vacío para reducir payload; diffs llevan los cambios
+        // Persistimos entregas aunque no las incluyamos en el tick
+        persistDeliveredAsync(session.id, simTime, deliveredForDb);
+        persistStatusChangesAsync(session.id, statusChanges);
+        // orderPlans se envía vacío para reducir payload; diffs y estados se omiten
         List<SimulationOrderPlan> orderPlans = List.of();
-        return new SimulationTick(session.id.toString(), simTime, realElapsedMs, speed, status, session.collapseMessage, orderPlans, diff, actives, airportTicks, deliveredOrders, inTransitOrders, orderStatuses, deliveredStatuses, plannedStatuses, nowInTransit, planSummaries);
+        List<String> changedOrderIds = statusChanges == null ? List.of() : new ArrayList<>(statusChanges.keySet());
+        return new SimulationTick(session.id.toString(), simTime, realElapsedMs, speed, status, session.collapseMessage, orderPlans, diff, actives, airportTicks, deliveredOrders, inTransitOrders, orderStatuses, deliveredStatuses, plannedStatuses, nowInTransit, planSummaries, changedOrderIds);
     }
 
     private SimulationSegment toSegmentDto(RouteSegment segment) {
