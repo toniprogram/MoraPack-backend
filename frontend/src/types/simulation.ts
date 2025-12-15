@@ -86,6 +86,9 @@ export interface ActiveSegmentTick {
   capacityUsed: number;
   capacityTotal: number;
   orderLoads?: { orderId: string; quantity: number }[];
+  latitude?: number | null;
+  longitude?: number | null;
+  progressPct?: number | null;
 }
 
 export interface ActiveAirportTick {
