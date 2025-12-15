@@ -432,7 +432,7 @@ export function MapaVuelos({
       touchZoom={false}
       boxZoom={false}
       dragging={false}
-      maxBounds={maxBounds || undefined}
+      bounds={maxBounds || undefined}
       maxBoundsViscosity={1}
       className="w-full h-full z-0"
       style={{ backgroundColor: mapTheme === 'dark' ? '#1f2937' : '#e5e7eb' }}
@@ -582,7 +582,7 @@ export function MapaVuelos({
                           </div>
                           <FlightsList
                             vuelos={vuelosSalientes}
-                            selectedFlightId={selectedFlightId}
+                            onSelectFlight={selectedFlightId}
                             onSelectFlight={onSelectFlight}
                             onSelectOrders={onSelectOrders}
                           />
