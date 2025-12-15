@@ -62,6 +62,12 @@ export function SimTopBar({
     return Math.round((capacidadUsadaFlota / capacidadTotalFlota) * 100);
   }, [capacidadUsadaFlota, capacidadTotalFlota]);
 
+const capacidadColorClass = useMemo(() => {
+    if (capacidadFlotaPct > 70) return 'text-error';
+    if (capacidadFlotaPct >= 50) return 'text-warning';
+    return 'text-success';
+}, [capacidadFlotaPct]);
+
   const tiempoEjecucionSim = useMemo(() => {
     if (!tiempoSimulado || !startDateString) return null;
     try {
@@ -106,7 +112,9 @@ export function SimTopBar({
         {/* Capacidad */}
         <div className="bg-base-300/90 px-2 py-1 rounded-lg text-[10px] shadow-sm backdrop-blur flex items-center gap-2 w-fit border border-base-content/5">
           <span className="text-base-content/70 font-semibold uppercase">Capacidad Flota Total</span>
-          <span className="font-mono font-bold text-success text-xs">{capacidadFlotaPct}%</span>
+          <span className={`font-mono font-bold ${capacidadColorClass} text-sm`}>
+            {capacidadFlotaPct}%
+          </span>
         </div>
       </div>
 
