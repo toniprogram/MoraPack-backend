@@ -59,6 +59,30 @@ public class LiveSimulationWorld {
         }
     }
 
+    /**
+     * Registra un pedido sin depender de la entidad Order, útil para reconstruir
+     * un mundo a partir de planes ya calculados.
+     */
+    public void registerOrderBasic(String orderId,
+                                   int quantity,
+                                   String destinationCode,
+                                   Instant creationUtc,
+                                   Instant dueUtc) {
+        if (orderId == null || quantity <= 0) {
+            return;
+        }
+        if (orders.containsKey(orderId)) {
+            return;
+        }
+        orders.put(orderId, new LiveOrder(
+                orderId,
+                quantity,
+                destinationCode,
+                creationUtc != null ? creationUtc : startTime,
+                dueUtc != null ? dueUtc : startTime.plus(Config.WAREHOUSE_DWELL)
+        ));
+    }
+
     public void registerOrder(Order order) {
         if (order == null || order.getId() == null) {
             return;
@@ -163,20 +187,13 @@ public class LiveSimulationWorld {
                         boolean esDestinoFinal = order.getDestinationCode() != null && order.getDestinationCode().equals(flight.getDestination());
                         if (esDestinoFinal) {
                             order.decrementRemainingToDestination(qty);
-                            if (order.getRemainingToDestination() == 0) {
-                                int qtyTotal = airportInventory
-                                        .getOrDefault(flight.getDestination(), Map.of())
-                                        .getOrDefault(orderId, 0);
-                                if (qtyTotal > 0) {
-                                    order.markWaiting(flight.getArrivalTime());
-                                    releaseQueue.add(new ReleaseEvent(
-                                            flight.getArrivalTime().plus(Config.WAREHOUSE_DWELL),
-                                            flight.getDestination(),
-                                            orderId,
-                                            qtyTotal
-                                    ));
-                                }
-                            }
+                            order.markWaiting(flight.getArrivalTime());
+                            releaseQueue.add(new ReleaseEvent(
+                                    flight.getArrivalTime().plus(Config.WAREHOUSE_DWELL),
+                                    flight.getDestination(),
+                                    orderId,
+                                    qty
+                            ));
                         }
                     }
                 });
@@ -250,6 +267,30 @@ public class LiveSimulationWorld {
             List<OrderLoadTick> loads = flight.getOrderLoads().entrySet().stream()
                     .map(e -> new OrderLoadTick(e.getKey(), e.getValue()))
                     .toList();
+            Double lat = null;
+            Double lon = null;
+            Double progress = null;
+            LiveAirport origenAirport = airports.get(flight.getOrigin());
+            LiveAirport destAirport = airports.get(flight.getDestination());
+            if (origenAirport != null && destAirport != null &&
+                    origenAirport.getLatitude() != null && origenAirport.getLongitude() != null &&
+                    destAirport.getLatitude() != null && destAirport.getLongitude() != null) {
+                Instant dep = flight.getDepartureTime();
+                Instant arr = flight.getArrivalTime();
+                double pct = 0.0;
+                if (currentSimTime.isAfter(arr) || currentSimTime.equals(arr)) {
+                    pct = 1.0;
+                } else if (currentSimTime.isBefore(dep)) {
+                    pct = 0.0;
+                } else {
+                    long total = arr.toEpochMilli() - dep.toEpochMilli();
+                    long elapsed = currentSimTime.toEpochMilli() - dep.toEpochMilli();
+                    pct = total > 0 ? Math.min(1.0, Math.max(0.0, (double) elapsed / total)) : 0.0;
+                }
+                lat = origenAirport.getLatitude() + (destAirport.getLatitude() - origenAirport.getLatitude()) * pct;
+                lon = origenAirport.getLongitude() + (destAirport.getLongitude() - origenAirport.getLongitude()) * pct;
+                progress = pct * 100.0;
+            }
             list.add(new ActiveSegment(
                     flight.getFlightId() + "|" + flight.getDepartureTime(),
                     flight.getFlightId(),
@@ -260,7 +301,10 @@ public class LiveSimulationWorld {
                     orderIds,
                     flight.getCapacityUsed(),
                     flight.getCapacityTotal(),
-                    loads
+                    loads,
+                    lat,
+                    lon,
+                    progress
             ));
         }
         return list;

@@ -22,6 +22,7 @@ public class Individual {
     private final FlightSchedule flightSchedule;
     private final AirportSchedule airportSchedule;
     private double fitness;
+    private int slaViolations;
 
     private Individual(List<OrderPlan> plans, FlightSchedule flightSchedule, AirportSchedule airportSchedule) {
         this.plans = plans;
@@ -122,6 +123,7 @@ public class Individual {
         List<OrderPlan> planCopies = deepCopyPlans(this.plans);
         Individual clone = new Individual(planCopies, flightSchedule.copy(), airportSchedule.copy());
         clone.fitness = this.fitness;
+        clone.slaViolations = this.slaViolations;
         return clone;
     }
 
@@ -232,9 +234,33 @@ public class Individual {
 
     private void evaluate() {
         double total = 0;
+        this.slaViolations = 0;
         for (OrderPlan plan : plans) {
-            total += plan.getSlack().toMinutes();
+            long slackMinutes = plan.getSlack().toMinutes();
+            if (slackMinutes < 0) {
+                slaViolations++;
+                // Penalización proporcional al retraso: cada minuto tarde resta mucho al fitness.
+                double tardinessPenalty = Math.abs(slackMinutes) * 1_000_000d;
+                total -= tardinessPenalty;
+            } else {
+                total += slackMinutes;
+            }
         }
+
+        // Penalización suave por uso de tiempo de vuelo y cantidad de vuelos distintos.
+        double totalFlightMinutes = 0;
+        Set<String> flightsUsed = new HashSet<>();
+        for (OrderPlan plan : plans) {
+            for (Route route : plan.getRoutes()) {
+                for (RouteSegment segment : route.getSegments()) {
+                    totalFlightMinutes += segment.getFlight().getFlightDuration().toMinutes();
+                    flightsUsed.add(segment.getFlight().getId());
+                }
+            }
+        }
+        // factor pequeño para no eclipsar la holgura, pero suficiente para preferir rutas cortas y reutilizar aviones
+        total -= totalFlightMinutes * 0.1;
+        total -= flightsUsed.size() * 10.0;
         this.fitness = total;
     }
 
@@ -254,6 +280,14 @@ public class Individual {
 
     public FlightSchedule getFlightSchedule() {
         return flightSchedule;
+    }
+
+    public int getSlaViolations() {
+        return slaViolations;
+    }
+
+    public boolean isSlaCompliant() {
+        return slaViolations == 0;
     }
 
     public AirportSchedule getAirportSchedule() {
@@ -398,18 +432,15 @@ public class Individual {
                 }
             }
             if (!built) {
-                stagnation++;
-                if (stagnation > hubs.size()) {
-                    throw new IllegalStateException("No feasible route for remaining quantity of order " + order.getId());
-                }
+                // Infeasible: penalizar y salir
+                plan.setSlack(Duration.ofMinutes(-10_000));
+                plan.getRoutes().clear();
+                remaining = 0;
             } else {
                 stagnation = 0;
             }
         }
         plan.setSlack(determinePlanSlack(world, order, plan));
-        if (plan.getSlack() == null || plan.getSlack().isNegative()) {
-            throw new IllegalStateException("Plan violates SLA for order " + order.getId());
-        }
         return plan;
     }
 
@@ -447,18 +478,14 @@ public class Individual {
                 }
             }
             if (!built) {
-                stagnation++;
-                if (stagnation > preferredHubs.size()) {
-                    throw new IllegalStateException("No feasible route for remaining quantity of order " + order.getId());
-                }
+                plan.setSlack(Duration.ofMinutes(-10_000));
+                plan.getRoutes().clear();
+                remaining = 0;
             } else {
                 stagnation = 0;
             }
         }
         plan.setSlack(determinePlanSlack(world, order, plan));
-        if (plan.getSlack() == null || plan.getSlack().isNegative()) {
-            throw new IllegalStateException("Plan violates SLA for order " + order.getId());
-        }
         return plan;
     }
 
@@ -546,7 +573,7 @@ public class Individual {
             OrderPlan adopted = new OrderPlan(order.getId());
             adopted.setRoutes(adoptedRoutes);
             adopted.setSlack(determinePlanSlack(world, order, adopted));
-            return adopted.getSlack() == null || adopted.getSlack().isNegative() ? null : adopted;
+            return adopted;
         } catch (Exception ex) {
             Collections.reverse(rollbacks);
             for (Runnable r : rollbacks) {

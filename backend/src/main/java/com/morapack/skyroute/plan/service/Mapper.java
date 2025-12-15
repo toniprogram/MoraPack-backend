@@ -28,6 +28,8 @@ public class Mapper {
         CurrentPlan plan = new CurrentPlan();
         plan.setGeneratedAt(LocalDateTime.now());
         plan.setFitness(individual.getFitness());
+        plan.setSlaCompliant(individual.isSlaCompliant());
+        plan.setSlaViolations(individual.getSlaViolations());
 
         List<com.morapack.skyroute.models.OrderPlan> mappedPlans = individual.getPlans().stream()
                 .map(original -> mapOrderPlan(original, plan))

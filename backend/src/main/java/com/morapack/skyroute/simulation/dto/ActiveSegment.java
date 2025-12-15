@@ -10,5 +10,8 @@ public record ActiveSegment(
         java.util.List<String> orderIds,
         int capacityUsed,
         int capacityTotal,
-        java.util.List<OrderLoadTick> orderLoads
+        java.util.List<OrderLoadTick> orderLoads,
+        Double latitude,
+        Double longitude,
+        Double progressPct
 ) {}
