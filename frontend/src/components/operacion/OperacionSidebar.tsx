@@ -141,6 +141,34 @@ export function OperacionSidebar({
     });
   }, [orderStatusList, filtroTexto, filtroHub, filtroEstado]);
 
+  const vuelosFiltrados = useMemo<FlightGroup[]>(() => {
+        const term = filtroTexto.toLowerCase();
+        if (!term) return flightGroups;
+
+        return flightGroups.filter(v => {
+          return (
+            v.flightId.toLowerCase().includes(term) ||
+            v.origen.toLowerCase().includes(term) ||
+            v.destino.toLowerCase().includes(term) ||
+            v.pedidos.some(p => p.toLowerCase().includes(term))
+          );
+        });
+    }, [flightGroups, filtroTexto]);
+    const aeropuertosFiltrados = useMemo(() => {
+        const term = filtroTexto.toLowerCase();
+        if (!term) return aeropuertos;
+
+        return aeropuertos.filter(a => {
+          const nameMatch = a.name?.toLowerCase().includes(term);
+          const cityMatch = (a as any).city?.toLowerCase().includes(term);
+          const codeMatch = (a.code || a.id)?.toLowerCase().includes(term);
+
+          return nameMatch || cityMatch || codeMatch;
+        });
+    }, [aeropuertos, filtroTexto]);
+
+
+
   return (
     <div className={`max-w-full flex flex-col bg-base-100 z-20 h-full max-h-full shrink-0 border-r border-base-300 shadow-lg transition-all overflow-hidden ${collapsed ? 'w-9' : 'w-80'}`}>
       <div className="flex items-center justify-between px-3 py-2 border-b border-base-300 bg-base-100">
@@ -286,7 +314,7 @@ export function OperacionSidebar({
           setFiltroTexto={setFiltroTexto}
           filtroEstado={filtroEstado}
           setFiltroEstado={setFiltroEstado}
-          vistaPanel="envios"
+          vistaPanel={vistaPanel === 'pedidos' ? 'envios' : vistaPanel}
           hideDateSection
         />
 
@@ -356,7 +384,8 @@ export function OperacionSidebar({
 
           {vistaPanel === 'vuelos' && (
             <SidebarVuelosPanel
-              vuelosFiltrados={flightGroups}
+              //vuelosFiltrados={flightGroups}
+              vuelosFiltrados={vuelosFiltrados}
               vuelosTotal={flightGroups.length}
               vuelosEnMovimiento={vuelosEnMovimiento}
               selectedFlightId={selectedFlightId}
@@ -369,7 +398,8 @@ export function OperacionSidebar({
 
           {vistaPanel === 'aeropuertos' && (
             <SidebarAeropuertosPanel
-              aeropuertos={aeropuertos}
+              //aeropuertos={aeropuertos}
+              aeropuertos={aeropuertosFiltrados}
               activeAirports={activeAirports}
               activeSegments={activeSegments}
               selectedAirportIds={selectedAirportIds}

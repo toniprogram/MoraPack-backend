@@ -11,7 +11,7 @@ interface SidebarTabsProps {
   onChange: (key: string) => void;
 }
 
-// Barra de tabs reutilizable (mismo estilo que simulación semanal)
+// Barra de tabs reutilizable
 export function SidebarTabs({ activeKey, items, onChange }: SidebarTabsProps) {
   return (
     <div className="flex border-b border-base-300 bg-base-200">

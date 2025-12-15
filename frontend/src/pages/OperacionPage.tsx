@@ -1,12 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useOperacion } from '../hooks/useOperacion';
 import { MapaVuelos } from '../components/mapas/MapaVuelos';
-import {
-    Plane, Package, CheckCircle,
-    Activity
-} from 'lucide-react';
 import type { ActiveAirportTick } from '../types/simulation';
 import { OperacionSidebar } from '../components/operacion/OperacionSidebar';
+import { OperacionTopBar } from '../components/operacion/OperacionTopBar';
 
 export default function OperacionPage() {
     const {
@@ -24,15 +21,19 @@ export default function OperacionPage() {
         lastUpdated
     } = useOperacion();
 
-    const activeAirports: ActiveAirportTick[] = useMemo(() => {
-        return aeropuertos.map(a => {
-            const code = a.id || a.code || '';
+     const activeAirports: ActiveAirportTick[] = useMemo(() => {
+        const result = aeropuertos.map(a => {
+            const code = a.code || a.id || '';
+            const stock = airportStocks[code];
+            const capacity = a.storageCapacity;
+
             return {
                 airportCode: code,
-                currentLoad: airportStocks[code] || 0,
-                maxThroughputPerHour: a.storageCapacity || 0
+                currentLoad: stock || 0,
+                maxThroughputPerHour: capacity || 0
             };
         });
+        return result;
     }, [aeropuertos, airportStocks]);
 
     const [manualDateStr, setManualDateStr] = useState('');
@@ -41,14 +42,6 @@ export default function OperacionPage() {
         const val = e.target.value;
         setManualDateStr(val);
     };
-
-    const handleResetTime = () => {
-        setManualDateStr('');
-        actions.resetTime();
-    };
-
-    const formatTime = (date: Date) =>
-        date.toLocaleTimeString('es-PE', { timeZone: 'UTC', hour12: false });
 
     const formatShortTime = (isoDate: string) => {
         if(!isoDate) return '--:--';
@@ -69,13 +62,12 @@ export default function OperacionPage() {
         });
     };
 
-
     const getInputValue = () => {
         if (manualDateStr) return manualDateStr;
         return simClock.toISOString().slice(0, 16);
     };
 
-    const isRealtime = Math.abs(simClock.getTime() - Date.now()) < 60_000; // permitir 1 min de desvío
+    const isRealtime = Math.abs(simClock.getTime() - Date.now()) < 60_000;
 
     return (
         <div className="flex h-[calc(100vh-3rem)] min-h-[calc(100vh-3rem)] w-full bg-base-200 text-base-content">
@@ -107,41 +99,14 @@ export default function OperacionPage() {
 
             {/* MAPA */}
             <div className="flex-1 relative z-0 bg-base-200 h-full max-h-full overflow-hidden">
-                {/* Barra superior de métricas (similar a simulación) */}
-                <div className="absolute top-0 left-0 right-0 z-30 pointer-events-none">
-                    <div className="flex gap-3 px-4 py-2 text-xs text-base-content pointer-events-none">
-                        <div className="bg-base-100/80 backdrop-blur rounded-md px-3 py-2 shadow-sm flex items-center gap-2">
-                            <Package size={14} className="text-sky-400" />
-                            <div className="flex flex-col leading-tight">
-                                <span className="uppercase tracking-wide text-[10px] text-base-content/70">Pedidos Totales</span>
-                                <span className="font-bold text-base">{metrics.totalOrders}</span>
-                            </div>
-                        </div>
-                        <div className="bg-base-100/80 backdrop-blur rounded-md px-3 py-2 shadow-sm flex items-center gap-2">
-                            <Activity size={14} className="text-indigo-400" />
-                            <div className="flex flex-col leading-tight">
-                                <span className="uppercase tracking-wide text-[10px] text-base-content/70">En Tránsito</span>
-                                <span className="font-bold text-base">{metrics.ordersInTransit}</span>
-                            </div>
-                        </div>
-                        <div className="bg-base-100/80 backdrop-blur rounded-md px-3 py-2 shadow-sm flex items-center gap-2">
-                            <Plane size={14} className="text-cyan-400" />
-                            <div className="flex flex-col leading-tight">
-                                <span className="uppercase tracking-wide text-[10px] text-base-content/70">Vuelos</span>
-                                <span className="font-bold text-base">
-                                    {metrics.activeFlights} / {metrics.totalFlights}
-                                </span>
-                            </div>
-                        </div>
-                        <div className="bg-base-100/80 backdrop-blur rounded-md px-3 py-2 shadow-sm flex items-center gap-2">
-                            <CheckCircle size={14} className="text-blue-400" />
-                            <div className="flex flex-col leading-tight">
-                                <span className="uppercase tracking-wide text-[10px] text-base-content/70">On-Time</span>
-                                <span className="font-bold text-base">{metrics.slaPercentage.toFixed(1)}%</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+
+                <OperacionTopBar
+                    metrics={metrics}
+                    simClock={simClock}
+                    status={status}
+                    activeSegments={activeSegments}
+                    lastUpdated={lastUpdated}
+                />
 
                 <MapaVuelos
                     aeropuertos={aeropuertos}
@@ -151,6 +116,7 @@ export default function OperacionPage() {
                     isLoading={status === 'buffering'}
                     filtroHubActivo=""
                 />
+
                 {isReplanning && (
                     <div className="absolute inset-0 z-[100] bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center animate-in fade-in duration-300">
                         <div className="bg-neutral-800 p-8 rounded-2xl shadow-2xl border border-gray-700 text-center max-w-md">

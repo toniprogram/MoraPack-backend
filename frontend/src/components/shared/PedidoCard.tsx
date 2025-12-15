@@ -45,12 +45,12 @@ const estadoBadgeClass = (estado: string) => {
   return 'badge-neutral';
 };
 
-// --- FUNCIONES DE FORMATO 100% UTC ---
+// --- FUNCIONES DE FORMATO ---
 
 const formatDate = (ms?: number) => {
   if (!ms || Number.isNaN(ms)) return 'N/A';
   return new Date(ms).toLocaleDateString('es-PE', {
-    timeZone: 'UTC', // <--- Forzado a UTC
+    timeZone: 'UTC',
     day: '2-digit',
     month: 'short',
     year: 'numeric'
@@ -60,10 +60,10 @@ const formatDate = (ms?: number) => {
 const formatTime = (ms?: number) => {
   if (!ms || Number.isNaN(ms)) return 'N/A';
   return new Date(ms).toLocaleTimeString('es-PE', {
-    timeZone: 'UTC', // <--- Forzado a UTC
+    timeZone: 'UTC',
     hour: '2-digit',
     minute: '2-digit',
-    hour12: false    // <--- Formato 24h
+    hour12: false
   });
 };
 
@@ -73,12 +73,12 @@ const formatDateTimeUTC = (isoStr?: string) => {
   try {
     const d = new Date(isoStr);
     return d.toLocaleString('es-PE', {
-      timeZone: 'UTC', // <--- Forzado a UTC
+      timeZone: 'UTC',
       month: 'short',
       day: '2-digit',
       hour: '2-digit',
       minute: '2-digit',
-      hour12: false    // <--- Formato 24h
+      hour12: false
     });
   } catch (e) {
     return '--';
@@ -151,7 +151,7 @@ export const PedidoCard = memo(({ data, isSelected, hasSelection, onSelect, curr
           <span className={`badge badge-sm ${estadoBadgeClass(estado)}`}>{estado}</span>
         </div>
 
-        {/* INFO FECHA DE REGISTRO (AHORA EN UTC) */}
+        {/* INFO FECHA DE REGISTRO */}
         {creationMs && creationMs > 0 && (
             <div className="mt-2 pt-2 border-t border-base-300">
             <p className="text-[10px] text-base-content/60 mb-1">Fecha de Registro (UTC):</p>

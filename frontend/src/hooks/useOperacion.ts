@@ -105,18 +105,6 @@ export const useOperacion = () => {
         staleTime: 1000 * 60 * 60,
     });
 
-    useEffect(() => {
-        if (aeropuertos.length) {
-            // Depuración: ver capacidades recibidas del backend
-            // eslint-disable-next-line no-console
-            console.log('Aeropuertos recibidos (capacidad):', aeropuertos.map(a => ({
-                id: a.id,
-                code: a.code,
-                storageCapacity: a.storageCapacity,
-            })));
-        }
-    }, [aeropuertos]);
-
     // --- CONTROL DE TIEMPO ---
     const [simClock, setSimClock] = useState<Date>(new Date());
     const [timeOffset, setTimeOffset] = useState<number>(0);
@@ -182,8 +170,6 @@ export const useOperacion = () => {
     const loadOrders = async (targetDate: Date, page = 0) => {
         try {
             const res = await operationService.getOrders(targetDate.toISOString(), page);
-            // eslint-disable-next-line no-console
-            console.log('[OPS] Orders page response:', res);
             const items: OrderStatusDetail[] = (res.items ?? []).map((o: any) => ({
                 orderId: o.orderId,
                 status: (o.status === 'DELIVERED' ? 'COMPLETED' : o.status === 'IN_TRANSIT' ? 'IN_FLIGHT' : 'WAITING'),
@@ -236,19 +222,15 @@ export const useOperacion = () => {
     }, [timeOffset]);
 
     useEffect(() => {
-        // 1. Verificamos si tenemos datos básicos
+        // 1. Verificamos si tenemos datos
         if (!aeropuertos.length) return;
 
-        // Si no hay segmentos, avisamos en consola una sola vez (para no saturar)
         if (!activeSegments.length) {
-            // Descomenta esta línea si quieres confirmar que está vacío siempre
-            // console.log('[DEBUG] activeSegments está vacío. Esperando datos del WebSocket...');
             setVuelosEnMovimiento([]);
             return;
         }
 
         const nowMs = simClock.getTime();
-        // console.log(`[DEBUG] Calculando posiciones para ${activeSegments.length} vuelos. Hora Reloj: ${simClock.toISOString()}`);
 
         // Mapa de coordenadas
         const coordsMap = new Map<string, [number, number]>();
@@ -262,18 +244,6 @@ export const useOperacion = () => {
         const calculated = activeSegments.map((seg, index) => {
             const origen = coordsMap.get(seg.origin);
             const destino = coordsMap.get(seg.destination);
-
-            // --- LOG CRÍTICO FRONTEND ---
-            if (!origen || !destino) {
-                console.error(`[MAPA ERROR] Vuelo ${seg.flightId} recibido pero ignorado. Falta coord aeropuerto.`, {
-                    flightId: seg.flightId,
-                    orgCode: seg.origin,
-                    destCode: seg.destination,
-                    tieneOrigen: !!origen,
-                    tieneDestino: !!destino
-                });
-                return null;
-            }
 
             const horaSalida = Date.parse(seg.departureUtc);
             const horaLlegada = Date.parse(seg.arrivalUtc);
@@ -300,11 +270,6 @@ export const useOperacion = () => {
             } else {
                 // Aún no sale
                 progreso = 0;
-            }
-
-            // Solo mostramos logs de vuelos que deberían estar activos según tu descripción
-            if (estado === 'en curso') {
-                // console.log(`[DEBUG] Vuelo ACTIVO: ${seg.flightId} | Progreso: ${progreso.toFixed(1)}%`);
             }
 
             return {
@@ -402,11 +367,7 @@ export const useOperacion = () => {
                     try {
                         const parsed: SimulationMessage = JSON.parse(message.body);
 
-                        // LOG CRÍTICO: Ver qué llega realmente
-                        // console.log('[OPS WS] Tick recibido:', parsed);
-
                         if (parsed.tick && parsed.tick.activeSegments) {
-                            // console.log(`[OPS WS] Recibidos ${parsed.tick.activeSegments.length} segmentos activos`);
 
                             const mapped: SegmentoVuelo[] = parsed.tick.activeSegments.map((s: any) => ({
                                 id: s.id,
@@ -425,7 +386,7 @@ export const useOperacion = () => {
                                 capacityTotal: s.capacityTotal,
                                 orderLoads: s.orderLoads ?? []
                             }));
-                            setActiveSegments(mapped); // <--- ¡ASEGÚRATE DE QUE ESTA LÍNEA ESTÉ!
+                            setActiveSegments(mapped);
                         } else {
                              // Si activeSegments es null o vacío, el backend no está enviando vuelos
                              // console.warn('[OPS WS] El tick no tiene activeSegments o está vacío');
