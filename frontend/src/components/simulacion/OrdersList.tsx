@@ -19,9 +19,9 @@ export function OrdersList({ items, selectedOrders, onSelectOrder }: OrdersListP
   const isSelected = (id: string) => !!selectedOrders?.includes(id);
 
   return (
-    <div className="max-h-40 overflow-y-auto scrollbar-thin bg-base-100">
+    <div className="max-h-40 overflow-y-auto scrollbar-thin bg-transparent">
       <table className="table table-xs table-pin-rows w-full">
-        <thead className="bg-base-200">
+        <thead className="bg-base-200/40 text-[10px]">
           <tr>
             <th className="pl-3">Pedido</th>
             <th className="text-right pr-3">Carga</th>
@@ -31,7 +31,7 @@ export function OrdersList({ items, selectedOrders, onSelectOrder }: OrdersListP
           {items.map((p, idx) => (
             <tr
               key={`${p.orderId}-${idx}`}
-              className={`hover:bg-base-200/50 cursor-pointer ${isSelected(p.orderId) ? 'bg-primary/10' : ''}`}
+              className={`hover:bg-base-200/40 cursor-pointer ${isSelected(p.orderId) ? 'bg-primary/20' : ''}`}
               onClick={() => onSelectOrder?.(p.orderId)}
             >
               <td className="pl-3">

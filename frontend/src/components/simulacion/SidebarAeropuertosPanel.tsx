@@ -3,6 +3,7 @@ import type { ActiveAirportTick } from '../../types/simulation';
 import { useEffect, useMemo, useState } from 'react';
 import { OrdersList } from './OrdersList';
 import { FlightsList } from './FlightsList';
+import { OutgoingOrdersList } from './OutgoingOrdersList';
 
 interface SidebarAeropuertosPanelProps {
   aeropuertos: Airport[];
@@ -11,6 +12,7 @@ interface SidebarAeropuertosPanelProps {
   selectedAirportIds: string[] | null;
   onSelectAirport: (airportId: string | null) => void;
   selectedOrders?: string[] | null;
+  selectedFlightId?: string | null;
   scrollParent?: HTMLDivElement | null;
   onSelectOrders?: (orderIds: string[] | null) => void;
   onSelectFlight?: (flightId: string | null) => void;
@@ -33,6 +35,7 @@ export function SidebarAeropuertosPanel({
   selectedAirportIds,
   onSelectAirport,
   selectedOrders,
+  selectedFlightId,
   scrollParent,
   onSelectOrders,
   onSelectFlight,
@@ -155,10 +158,27 @@ export function SidebarAeropuertosPanel({
                   />
                 </div>
             )}
+            {isInfinite && (
+                <div className="border-t border-base-300 pt-2 mt-2">
+                  <div className="text-[10px] font-semibold uppercase opacity-70 mb-1">
+                      <span>Pedidos Salientes</span>
+                  </div>
+                  <OutgoingOrdersList
+                      outgoingFlights={vuelosSalientes}
+                      selectedOrders={selectedOrders}
+                      selectedFlightId={selectedFlightId}
+                      onSelectOrder={(oid) => {
+                          onSelectOrders?.([oid]);
+                      }}
+                      onSelectFlight={onSelectFlight}
+                  />
+                </div>
+            )}
             <div className="border-t border-base-300 pt-2 mt-2">
                 <div className="text-[10px] font-semibold uppercase opacity-70 mb-1">Vuelos Salientes</div>
                 <FlightsList
                     vuelos={vuelosSalientes}
+                    selectedFlightId={selectedFlightId}
                     onSelectFlight={onSelectFlight}
                     onSelectOrders={onSelectOrders}
                 />

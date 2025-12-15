@@ -251,6 +251,8 @@ export function SimSidebar({
             selectedOrders={selectedOrderIds}
             scrollParent={scrollRef.current}
             onSelectOrders={onSelectOrders}
+            selectedFlightId={selectedFlightId}
+            onSelectFlight={onSelectFlight}
           />
         )}
       </div>
