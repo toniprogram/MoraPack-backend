@@ -4,11 +4,15 @@ public class LiveAirport {
     private final String airportCode;
     private final int maxThroughputPerHour;
     private int currentLoad;
+    private final Double latitude;
+    private final Double longitude;
 
-    public LiveAirport(String airportCode, int maxThroughputPerHour) {
+    public LiveAirport(String airportCode, int maxThroughputPerHour, Double latitude, Double longitude) {
         this.airportCode = airportCode;
         this.maxThroughputPerHour = Math.max(0, maxThroughputPerHour);
         this.currentLoad = 0;
+        this.latitude = latitude;
+        this.longitude = longitude;
     }
 
     public boolean canProcess(int qty) {
@@ -33,5 +37,13 @@ public class LiveAirport {
 
     public int getMaxThroughputPerHour() {
         return maxThroughputPerHour;
+    }
+
+    public Double getLatitude() {
+        return latitude;
+    }
+
+    public Double getLongitude() {
+        return longitude;
     }
 }

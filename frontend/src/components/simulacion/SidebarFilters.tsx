@@ -1,34 +1,28 @@
-import { Play, Pause, XCircle, Search, ChevronDown, ChevronRight } from 'lucide-react';
+import { Search, ChevronDown, ChevronRight } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import type { Dispatch, SetStateAction } from 'react';
-    import type { OrderRequest } from '../../types/orderRequest';
+import type { Dispatch, SetStateAction, ReactNode } from 'react';
+import type { OrderRequest } from '../../types/orderRequest';
 
-    interface SidebarFiltersProps {
-      ordenesParaSimular: OrderRequest[];
-      startDate: string;
-      endDate: string;
-      setStartDate: Dispatch<SetStateAction<string>>;
-      setEndDate: Dispatch<SetStateAction<string>>;
-      hastaColapso: boolean;
-      setHastaColapso: Dispatch<SetStateAction<boolean>>;
-      estaActivo: boolean;
-      estaVisualizando: boolean;
-      animPaused: boolean;
-      isStarting: boolean;
-      estaSincronizando: boolean;
-      onIniciar: () => void;
-      onTerminar: () => void;
-      onPausar: () => void;
-      filtroHub: string;
-      setFiltroHub: Dispatch<SetStateAction<string>>;
-      selectedOrderIds: string[] | null;
-      clearSelectedOrders: () => void;
-      status: string;
-      filtroTexto: string;
-      setFiltroTexto: Dispatch<SetStateAction<string>>;
+interface SidebarFiltersProps {
+  ordenesParaSimular: OrderRequest[];
+  startDate: string;
+  endDate: string;
+  setStartDate: Dispatch<SetStateAction<string>>;
+  setEndDate: Dispatch<SetStateAction<string>>;
+  hastaColapso: boolean;
+  setHastaColapso: Dispatch<SetStateAction<boolean>>;
+  filtroHub: string;
+  setFiltroHub: Dispatch<SetStateAction<string>>;
+  selectedOrderIds: string[] | null;
+  clearSelectedOrders: () => void;
+  status: string;
+  filtroTexto: string;
+  setFiltroTexto: Dispatch<SetStateAction<string>>;
   filtroEstado: 'enproceso' | 'planificados' | 'entregados';
   setFiltroEstado: Dispatch<SetStateAction<'enproceso' | 'planificados' | 'entregados'>>;
   vistaPanel: 'envios' | 'vuelos' | 'aeropuertos';
+  afterDates?: ReactNode;
+  hideDateSection?: boolean;
 }
 
 export function SidebarFilters({
@@ -38,14 +32,6 @@ export function SidebarFilters({
   setEndDate,
       hastaColapso,
       setHastaColapso,
-      estaActivo,
-      estaVisualizando,
-      animPaused,
-      isStarting,
-      estaSincronizando,
-      onIniciar,
-      onTerminar,
-      onPausar,
       filtroHub,
       setFiltroHub,
       selectedOrderIds,
@@ -56,6 +42,8 @@ export function SidebarFilters({
   filtroEstado,
   setFiltroEstado,
   vistaPanel,
+  afterDates,
+  hideDateSection = false,
 }: SidebarFiltersProps) {
   const [draftFiltroTexto, setDraftFiltroTexto] = useState(filtroTexto);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -95,10 +83,10 @@ export function SidebarFilters({
       };
       return (
         <>
-          <div className="bg-primary text-primary-content p-4">
-            <div className="space-y-2">
+          {!hideDateSection && (
+            <div className="bg-base-100 text-base-content space-y-2 border-b border-base-300 p-3">
               {ordenesParaSimular.length > 0 && (
-                <div className="text-xs text-success-content text-center">
+                <div className="text-xs text-success text-center">
                   {ordenesParaSimular.length} órdenes listas para sincronizar
                 </div>
               )}
@@ -116,85 +104,47 @@ export function SidebarFilters({
                       disabled={inputsBloqueados}
                     />
                   </div>
-                  <div>
-                    <div className="flex items-center justify-end mt-2 gap-1">
-                      <span className="text-[10px] text-base-content/90">Hasta el colapso</span>
-                      <input
-                        type="checkbox"
-                        className="toggle toggle-xs toggle-primary"
-                        checked={hastaColapso}
-                        onChange={(e) => {
-                          setHastaColapso(e.target.checked);
-                        }}
-                        disabled={inputsBloqueados}
-                      />
-                    </div>
+                  <div className="flex items-center justify-end gap-1">
+                    <span className="text-[10px] text-base-content/90">Hasta el colapso</span>
+                    <input
+                      type="checkbox"
+                      className="toggle toggle-xs toggle-primary"
+                      checked={hastaColapso}
+                      onChange={(e) => {
+                        setHastaColapso(e.target.checked);
+                      }}
+                      disabled={inputsBloqueados}
+                    />
                   </div>
                 </div>
               )}
 
-              <div className="flex gap-2">
-                <button
-                  className={`btn btn-sm flex-1 ${animPaused || (!estaActivo && !estaVisualizando) ? 'btn-success' : (estaActivo ? 'btn-warning' : 'btn-success')}`}
-                  onClick={() => {
-                    if (!estaActivo && !estaVisualizando) {
-                      onIniciar();
-                    } else {
-                      onPausar();
-                    }
-                  }}
-                  disabled={estaSincronizando || isStarting}
-                >
-                  {animPaused ? (
-                    <span className="flex items-center gap-2">
-                      <Play size={16} /> <span>Reanudar</span>
-                    </span>
-                  ) : estaActivo ? (
-                    <span className="flex items-center gap-2">
-                      <Pause size={16} /> <span>Pausar</span>
-                    </span>
-                  ) : (
-                    <span className="flex items-center gap-2">
-                      <Play size={16} /> <span>{isStarting ? 'Preparando...' : (estaVisualizando ? 'Reanudar' : 'Iniciar')}</span>
-                    </span>
-                  )}
-                </button>
-
-                <button
-                  className="btn btn-sm btn-error flex-1"
-                  onClick={onTerminar}
-                  disabled={isStarting ? true : (!estaActivo && !estaVisualizando)}
-                >
-                  <XCircle size={16} /> Terminar
-                </button>
-              </div>
+              {afterDates}
             </div>
-          </div>
+          )}
 
           <div className="p-3 bg-base-200 border-b border-base-300 space-y-3">
-            <div>
-              <div className="relative">
-                <input
-                  type="text"
-                  placeholder={getPlaceholder()}
-                  className="input input-sm w-full pr-8 bg-base-100"
-                  value={draftFiltroTexto}
-                  onChange={(e) => setDraftFiltroTexto(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      setFiltroTexto(draftFiltroTexto);
-                    }
-                  }}
-                />
-                <button
-                  type="button"
-                  className="absolute right-1.5 top-1.5 btn btn-ghost btn-xs px-1"
-                  onClick={() => setFiltroTexto(draftFiltroTexto)}
-                  aria-label="Aplicar búsqueda"
-                >
-                  <Search size={16} />
-                </button>
-              </div>
+            <div className="flex gap-1 items-center">
+              <input
+                type="text"
+                placeholder={getPlaceholder()}
+                className="input input-sm w-full bg-base-100"
+                value={draftFiltroTexto}
+                onChange={(e) => setDraftFiltroTexto(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    setFiltroTexto(draftFiltroTexto);
+                  }
+                }}
+              />
+              <button
+                type="button"
+                className="btn btn-sm px-3 bg-base-200 border border-base-300 text-base-content/80 hover:bg-base-300"
+                onClick={() => setFiltroTexto(draftFiltroTexto)}
+                aria-label="Aplicar búsqueda"
+              >
+                <Search size={16} />
+              </button>
             </div>
 
             <div className="flex items-center justify-between">

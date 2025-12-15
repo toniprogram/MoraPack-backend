@@ -234,20 +234,33 @@ public class Individual {
 
     private void evaluate() {
         double total = 0;
-        for (OrderPlan plan : plans) {
-            total += plan.getSlack().toMinutes();
-        }
         this.slaViolations = 0;
         for (OrderPlan plan : plans) {
             long slackMinutes = plan.getSlack().toMinutes();
             if (slackMinutes < 0) {
                 slaViolations++;
-                // Penalizar de forma severa las violaciones de SLA (proporcional a la tardanza)
-                total += Math.abs(slackMinutes) * 1_000_000d;
+                // Penalización proporcional al retraso: cada minuto tarde resta mucho al fitness.
+                double tardinessPenalty = Math.abs(slackMinutes) * 1_000_000d;
+                total -= tardinessPenalty;
             } else {
                 total += slackMinutes;
             }
         }
+
+        // Penalización suave por uso de tiempo de vuelo y cantidad de vuelos distintos.
+        double totalFlightMinutes = 0;
+        Set<String> flightsUsed = new HashSet<>();
+        for (OrderPlan plan : plans) {
+            for (Route route : plan.getRoutes()) {
+                for (RouteSegment segment : route.getSegments()) {
+                    totalFlightMinutes += segment.getFlight().getFlightDuration().toMinutes();
+                    flightsUsed.add(segment.getFlight().getId());
+                }
+            }
+        }
+        // factor pequeño para no eclipsar la holgura, pero suficiente para preferir rutas cortas y reutilizar aviones
+        total -= totalFlightMinutes * 0.1;
+        total -= flightsUsed.size() * 10.0;
         this.fitness = total;
     }
 

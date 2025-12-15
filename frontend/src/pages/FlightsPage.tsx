@@ -302,14 +302,38 @@ export default function FlightsPage() {
               <tr><td colSpan={7} className="text-center opacity-60 py-4">No se encontraron vuelos.</td></tr>
             ) : (
               pagedFlights.map((flight) => {
-                const origenAirport = airportLookup.get(flight.origen);
-                const destinoAirport = airportLookup.get(flight.destino);
+                const origenCode = (flight as any).origen ?? (flight as any).origin ?? "";
+                const destinoCode = (flight as any).destino ?? (flight as any).destination ?? "";
+                const capacidadValor = (flight as any).capacidad ?? (flight as any).capacity;
+                const durationMin = (flight as any).durationMinutes ?? (typeof flight.salidaLocalMin === 'number' && typeof flight.llegadaLocalMin === 'number'
+                  ? flight.llegadaLocalMin - flight.salidaLocalMin
+                  : undefined);
+
+                // Fallback: parse salida desde id/código (formato ...-HH:MM)
+                const idOrCode = flight.codigoVuelo ?? String(flight.id ?? "");
+                let parsedSalidaMin: number | undefined;
+                const match = idOrCode.match(/(\d{2}):(\d{2})$/);
+                if (match) {
+                  const hh = Number(match[1]);
+                  const mm = Number(match[2]);
+                  if (!Number.isNaN(hh) && !Number.isNaN(mm)) {
+                    parsedSalidaMin = hh * 60 + mm;
+                  }
+                }
+
+                const salidaMin = typeof flight.salidaLocalMin === 'number' ? flight.salidaLocalMin : parsedSalidaMin;
+                const llegadaMin = typeof flight.llegadaLocalMin === 'number'
+                  ? flight.llegadaLocalMin
+                  : (typeof salidaMin === 'number' && typeof durationMin === 'number' ? salidaMin + durationMin : undefined);
+
+                const origenAirport = airportLookup.get(origenCode);
+                const destinoAirport = airportLookup.get(destinoCode);
                 const origenNombre = origenAirport
                   ? `${origenAirport.name} (${origenAirport.id})`
-                  : flight.origen;
+                  : origenCode;
                 const destinoNombre = destinoAirport
                   ? `${destinoAirport.name} (${destinoAirport.id})`
-                  : flight.destino;
+                  : destinoCode;
                 return (
                   <tr key={flight.id}>
                     <td><strong>{flight.codigoVuelo ?? `FL-${flight.id}`}</strong></td>
@@ -330,16 +354,22 @@ export default function FlightsPage() {
                       )}
                     </td>
                     <td>
-                      <div className="font-mono">
-                        {formatMinutes(flight.salidaLocalMin)} → {formatMinutes(flight.llegadaLocalMin)}
-                      </div>
-                      <div className="text-xs opacity-60">
-                        Origen: {formatGmtOffset(origenAirport?.gmtOffsetHours)} / Destino: {formatGmtOffset(destinoAirport?.gmtOffsetHours)}
-                      </div>
+                      {typeof salidaMin === 'number' && typeof llegadaMin === 'number' ? (
+                        <>
+                          <div className="font-mono">
+                            {formatMinutes(salidaMin)} → {formatMinutes(llegadaMin)}
+                          </div>
+                          <div className="text-xs opacity-60">
+                            Origen: {formatGmtOffset(origenAirport?.gmtOffsetHours)} / Destino: {formatGmtOffset(destinoAirport?.gmtOffsetHours)}
+                          </div>
+                        </>
+                      ) : (
+                        <span className="badge badge-outline">Sin horario</span>
+                      )}
                     </td>
-                    <td>{formatDuration(flight.salidaLocalMin, flight.llegadaLocalMin)}</td>
+                    <td>{typeof durationMin === 'number' ? `${Math.floor(durationMin/60)}h ${durationMin%60}m` : formatDuration(flight.salidaLocalMin, flight.llegadaLocalMin)}</td>
                     <td>
-                      <div>{flight.capacidad} pax/día</div>
+                      <div>{capacidadValor ?? flight.capacidad} pax/día</div>
                       {flight.aeronave && <div className="text-xs opacity-60">Aeronave: {flight.aeronave}</div>}
                     </td>
                     <td className="flex gap-2">

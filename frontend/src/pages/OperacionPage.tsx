@@ -40,10 +40,6 @@ export default function OperacionPage() {
     const handleTimeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const val = e.target.value;
         setManualDateStr(val);
-        if (val) {
-            const utcDate = new Date(`${val}:00Z`);
-            actions.setManualTime(utcDate);
-        }
     };
 
     const handleResetTime = () => {
@@ -82,7 +78,7 @@ export default function OperacionPage() {
     const isRealtime = Math.abs(simClock.getTime() - Date.now()) < 60_000; // permitir 1 min de desvío
 
     return (
-        <div className="flex h-[calc(100vh-4rem)] w-full bg-base-200 text-base-content overflow-hidden font-sans">
+        <div className="flex h-[calc(100vh-3rem)] min-h-[calc(100vh-3rem)] w-full bg-base-200 text-base-content">
 
             <OperacionSidebar
                 aeropuertos={aeropuertos}
@@ -110,7 +106,7 @@ export default function OperacionPage() {
             />
 
             {/* MAPA */}
-            <div className="flex-1 relative z-0 bg-base-200 h-full">
+            <div className="flex-1 relative z-0 bg-base-200 h-full max-h-full overflow-hidden">
                 {/* Barra superior de métricas (similar a simulación) */}
                 <div className="absolute top-0 left-0 right-0 z-30 pointer-events-none">
                     <div className="flex gap-3 px-4 py-2 text-xs text-base-content pointer-events-none">
