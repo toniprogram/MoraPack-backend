@@ -589,7 +589,31 @@ export function MapaVuelos({
           </h4>
           <ul className="space-y-2 font-semibold">
             <li className="flex items-center gap-2">
-              <span className="w-3 h-3 rounded-full bg-base-content/80 inline-block"></span>
+              {/* Contenedor para alinear el icono */}
+              <div className="flex items-center justify-center w-4 h-4">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="16"  // Tamaño adecuado para la leyenda
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  // 'currentColor' hace que herede el color de texto del elemento padre (neutro)
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  // Clase de Tailwind para usar el color de texto estándar, ligeramente atenuado
+                  className="text-base-content/80"
+                >
+                  <path d="M4 16h16"/>
+                  <path d="M4 20h16"/>
+                  <path d="M8 12h8l-2-8H10l-2 8Z"/>
+                  {/* También usamos currentColor para el relleno del pequeño círculo superior */}
+                  <circle cx="12" cy="2" r="1.5" fill="currentColor"/>
+                  <path d="M17.8 19.2 16 11l3.5-3.5" opacity="0.8"/>
+                  <path d="M6.2 19.2 8 11 4.5 7.5" opacity="0.8"/>
+                </svg>
+              </div>
               <span>Aeropuerto</span>
             </li>
             <li className="flex items-center gap-2">

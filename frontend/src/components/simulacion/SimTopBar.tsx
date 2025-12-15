@@ -89,16 +89,16 @@ export function SimTopBar({
       <div className="flex flex-col gap-2 pointer-events-auto">
         {/* Fila de KPIs */}
         <div className="flex gap-3 bg-base-100/90 backdrop-blur px-3 py-1.5 rounded-lg shadow-sm border border-base-content/10 w-fit">
-          <div className="flex items-center gap-1.5 tooltip tooltip-bottom" data-tip="Pedidos Entregados">
+          <div className="flex items-center gap-1.5 tooltip tooltip-right" data-tip="Pedidos Entregados">
             <Check size={14} className="text-success" />
             <span className="font-mono font-bold text-xs">{entregados}</span>
           </div>
-          <div className="flex items-center gap-1.5 tooltip tooltip-bottom" data-tip="Pedidos En Tránsito">
+          <div className="flex items-center gap-1.5 tooltip tooltip-right" data-tip="Pedidos En Tránsito">
             <Box size={14} className="text-info" />
             <span className="font-mono font-bold text-xs">{enTransito}</span>
           </div>
-          <div className="flex items-center gap-1.5 tooltip tooltip-bottom" data-tip="Vuelos Activos">
-            <Plane size={14} className="text-warning" />
+          <div className="flex items-center gap-1.5 tooltip tooltip-right" data-tip="Vuelos Activos">
+            <Plane size={14} className="blue text-300" />
             <span className="font-mono font-bold text-xs">{vuelosActivos}</span>
           </div>
         </div>
