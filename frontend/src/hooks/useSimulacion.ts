@@ -16,7 +16,9 @@ import type {
   ActiveAirportTick,
   SimulationOrderPlan,
   OrderPlansDiff,
-  DeliveredPage} from '../types/simulation';
+  DeliveredPage,
+  DeliveredOrder
+} from '../types/simulation';
 import type { OrderStatusTick } from '../types/simulation';
 
 export interface VueloEnMovimiento {
@@ -72,7 +74,6 @@ const resolveWsUrl = () => {
   return `${wsBase}/ws`;
 };
 const BROKER_URL = resolveWsUrl();
-
 //const BROKER_URL =
   import.meta.env.PROD
     ? 'ws://200.16.7.179/ws'  // producción
@@ -524,26 +525,28 @@ export const useSimulacion = () => {
 
       if (!Number.isFinite(duracionVuelo) || duracionVuelo <= 0) return;
 
-      let progreso = 0;
-      let estadoVisual: VueloEnMovimiento['estadoVisual'] = 'en curso';
+      // Si backend envía lat/lon/progreso, los usamos; caso contrario calculamos.
+      let progreso = segmento.progressPct ?? 0;
+      let estadoVisual: VueloEnMovimiento['estadoVisual'] = segmento.retrasado ? 'retrasado' : 'en curso';
+      let latActual = segmento.latitude ?? null;
+      let lonActual = segmento.longitude ?? null;
 
-      if (tiempoActualMs >= horaLlegada) {
-        progreso = 100;
-        estadoVisual = 'completado';
-      } else {
-        const tiempoTranscurrido = Math.max(0, tiempoActualMs - horaSalida);
-        progreso = Math.min(100, (tiempoTranscurrido / duracionVuelo) * 100);
-        estadoVisual = segmento.retrasado ? 'retrasado' : 'en curso';
+      if (latActual == null || lonActual == null || progreso == null) {
+        if (tiempoActualMs >= horaLlegada) {
+          progreso = 100;
+          estadoVisual = 'completado';
+        } else {
+          const tiempoTranscurrido = Math.max(0, tiempoActualMs - horaSalida);
+          progreso = Math.min(100, (tiempoTranscurrido / duracionVuelo) * 100);
+          estadoVisual = segmento.retrasado ? 'retrasado' : 'en curso';
+        }
+        const ratio = Math.min((progreso ?? 0) / 100, 1);
+        // Offset para evitar superposición visual exacta de aviones en misma ruta
+        const offsetLat = ((index % 5) - 2) * 0.15;
+        const offsetLon = ((Math.floor(index / 5) % 5) - 2) * 0.15;
+        latActual = origen[0] + (destino[0] - origen[0]) * ratio + offsetLat;
+        lonActual = origen[1] + (destino[1] - origen[1]) * ratio + offsetLon;
       }
-
-      const ratio = Math.min(progreso / 100, 1);
-
-      // Offset para evitar superposición visual exacta de aviones en misma ruta
-      const offsetLat = ((index % 5) - 2) * 0.15;
-      const offsetLon = ((Math.floor(index / 5) % 5) - 2) * 0.15;
-
-      const latActual = origen[0] + (destino[0] - origen[0]) * ratio + offsetLat;
-      const lonActual = origen[1] + (destino[1] - origen[1]) * ratio + offsetLon;
 
       const orderIdReferencia = segmento.orderIds[0];
       const destinoRuta = obtenerDestinoActualOrden(orderIdReferencia, tiempoActualMs);
@@ -556,9 +559,9 @@ export const useSimulacion = () => {
         id: segmento.id,
         orderId: segmento.orderIds.join(', '),
         flightId: segmento.flightId,
-        latActual,
-        lonActual,
-        progreso,
+        latActual: latActual ?? origen[0],
+        lonActual: lonActual ?? origen[1],
+        progreso: progreso ?? 0,
         estadoVisual,
         origen: segmento.origin,
         destino: segmento.destination,

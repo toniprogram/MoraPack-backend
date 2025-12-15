@@ -7,7 +7,7 @@ import { operationService } from '../services/operationService';
 import { aeropuertoService } from '../services/aeropuertoService';
 import type { Airport } from '../types/airport';
 import type { CurrentPlanResponse } from '../types/plan';
-import type { SimulationMessage } from '../types/simulation';
+import type { ActiveAirportTick, SimulationMessage, SimulationTick, OrderStatusTick, ActiveSegment } from '../types/simulation';
 
 // --- TIPOS ---
 export interface SegmentoVuelo {
@@ -91,17 +91,14 @@ export const useOperacion = () => {
     const [isReplanning, setIsReplanning] = useState(false);
     const [isClearingPlan, setIsClearingPlan] = useState(false);
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-
-    // CORRECTION: Destructure the setter (second element), not the state value (first element)
-    const [, setPlanCache] = useState<Record<string, { quantity: number; slackMinutes?: number }>>({});
-    /*
-    const [, setOrdersPage] = useState<{ total: number; page: number; size: number; items: OrderStatusDetail[] }>({
+    const [planCache, setPlanCache] = useState<Record<string, { quantity: number; routesDetail: OrderStatusDetail['routesDetail']; slackMinutes?: number }>>({});
+    const [ordersPage, setOrdersPage] = useState<{ total: number; page: number; size: number; items: OrderStatusDetail[] }>({
         total: 0,
         page: 0,
         size: 10,
         items: [],
     });
-    */
+
     const { data: aeropuertos = [] } = useQuery<Airport[]>({
         queryKey: ['aeropuertos'],
         queryFn: aeropuertoService.getAll,
@@ -143,7 +140,7 @@ export const useOperacion = () => {
     const [activeSegments, setActiveSegments] = useState<SegmentoVuelo[]>([]);
     const [vuelosEnMovimiento, setVuelosEnMovimiento] = useState<VueloEnMovimiento[]>([]);
     const [orderStatusList, setOrderStatusList] = useState<OrderStatusDetail[]>([]);
-    const [airportStocks] = useState<Record<string, number>>({});
+    const [airportStocks, setAirportStocks] = useState<Record<string, number>>({});
     const stompClientRef = useRef<Client | null>(null);
 
     const [metrics, setMetrics] = useState<OperationMetrics>({
@@ -159,23 +156,21 @@ export const useOperacion = () => {
     const fetchPlanBase = async () => {
         try {
             const plan: CurrentPlanResponse = await planService.getCurrentPlan();
-            const map: Record<string, { quantity: number; slackMinutes?: number }> = {};
+            const map: Record<string, { quantity: number; routesDetail: OrderStatusDetail['routesDetail']; slackMinutes?: number }> = {};
             plan.orderPlans.forEach(op => {
                 const qty = (op.routes ?? []).reduce((sum, r) => sum + (r.quantity ?? 0), 0);
-                /*
                 const routesDetail = (op.routes ?? []).map((r, idx) => ({
                     routeIndex: idx + 1,
                     segments: (r.segments ?? []).map(s => ({
                         flightId: s.flightId,
-                        //origin: s.origin,
-                        //destination: s.destination,
-                        //departureUtc: s.departureUtc,
-                        //arrivalUtc: s.arrivalUtc,
-                        //quantity: s.quantity,
+                        origin: s.origin,
+                        destination: s.destination,
+                        departureUtc: s.departureUtc,
+                        arrivalUtc: s.arrivalUtc,
+                        quantity: s.quantity,
                     })),
                 })).filter(r => r.segments.length > 0);
-            */
-                map[op.orderId] = { quantity: qty, slackMinutes: op.slackMinutes };
+                map[op.orderId] = { quantity: qty, routesDetail, slackMinutes: op.slackMinutes };
             });
             setPlanCache(map);
             setLastUpdated(new Date());
@@ -211,16 +206,13 @@ export const useOperacion = () => {
                         quantity: s.quantity,
                     })),
                 })),
-            })); // CORRECTION: Removed extra '}' that was closing the try block early
-
-            /*
+            }));
             setOrdersPage({
                 total: res.total ?? items.length,
                 page: res.page ?? page,
                 size: res.size ?? 10,
                 items,
             });
-            */
             setOrderStatusList(items);
         } catch (e) {
             console.warn('No se pudo cargar pedidos paginados', e);
@@ -272,6 +264,7 @@ export const useOperacion = () => {
             setIsClearingPlan(true);
         },
         onSuccess: () => {
+            setDayPlan(null);
             setActiveSegments([]);
             setVuelosEnMovimiento([]);
             setOrderStatusList([]);
@@ -293,7 +286,6 @@ export const useOperacion = () => {
 
     // Suscribirse al tópico de operación y consumir ticks desde el backend
     useEffect(() => {
-
         const resolveWsUrl = () => {
             const envWs = import.meta.env.VITE_WS_URL as string | undefined;
             if (envWs) return envWs;
@@ -302,12 +294,7 @@ export const useOperacion = () => {
             const wsBase = base.replace(/^http/, 'ws').replace(/\/api\/?$/, '');
             return `${wsBase}/ws`;
         };
-        /*
-        const BROKER_URL =
-          import.meta.env.PROD
-            ? 'ws://200.16.7.179/ws'  // producción
-            : 'ws://localhost:8080/ws'; // desarrollo local
-            */
+
         const client = new Client({
             brokerURL: resolveWsUrl(),
             reconnectDelay: 5000,

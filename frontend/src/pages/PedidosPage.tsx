@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Package,
   Database,
+  Trash,
 } from "lucide-react";
 import { usePedidos, type PedidoScope } from "../hooks/usePedidos";
 import type { Order } from "../types/order";
@@ -25,7 +26,7 @@ const buildDefaultForm = (projected: boolean): OrderRequest => ({
   customerReference: "",
   destinationAirportCode: "",
   quantity: 1,
-  creationLocal: new Date().toISOString().slice(0, 16),
+  creationLocal: new Date().toISOString().slice(0, 16), // UTC
   projected,
 });
 
@@ -151,19 +152,42 @@ export default function PedidosPage() {
         if (parts.length < 7) throw new Error(`Línea inválida: "${line}"`);
 
         const id = parts[0].trim();
-        const datePart = parts[1].trim();
-        const hourPart = parts[2].trim();
-        const minutePart = parts[3].trim();
+        const datePartRaw = parts[1].trim();
+        const hourPartRaw = parts[2].trim();
+        const minutePartRaw = parts[3].trim();
         const dest = parts[4].trim();
         const qty = parts[5].trim();
         const ref = parts[6].trim();
 
-        const year = datePart.substring(0, 4);
-        const month = datePart.substring(4, 6);
-        const day = datePart.substring(6, 8);
+        const now = new Date();
+        const pad = (n: number) => n.toString().padStart(2, "0");
 
-        const isoDate = `${year}-${month}-${day}`;
-        const isoTime = `${hourPart.padStart(2, "0")}:${minutePart.padStart(2, "0")}:00`;
+        const datePart = datePartRaw.includes("##")
+          ? `${datePartRaw.replace("##", pad(now.getUTCDate()))}`
+          : datePartRaw;
+
+        const year = parseInt(datePart.substring(0, 4), 10);
+        const month = parseInt(datePart.substring(4, 6), 10);
+        const day = parseInt(datePart.substring(6, 8), 10);
+
+        let hourVal: number;
+        if (hourPartRaw.toLowerCase() === "hh") {
+          hourVal = now.getUTCHours();
+        } else {
+          const parsed = parseInt(hourPartRaw, 10);
+          hourVal = Number.isNaN(parsed) ? now.getUTCHours() : parsed;
+        }
+
+        let minuteVal: number;
+        if (minutePartRaw.toLowerCase() === "mm") {
+          minuteVal = now.getUTCMinutes();
+        } else {
+          const parsed = parseInt(minutePartRaw, 10);
+          minuteVal = parsed;
+        }
+
+        const isoDate = `${year}-${pad(month)}-${pad(day)}`;
+        const isoTime = `${pad(hourVal)}:${pad(minuteVal)}:00`;
         const creationLocal = `${isoDate}T${isoTime}`;
 
         const quantity = parseInt(qty, 10);
@@ -176,7 +200,7 @@ export default function PedidosPage() {
           quantity,
           creationLocal,
           fechaOriginal: creationLocal,
-          projected: true,
+          projected: scope === "PROJECTED",
         };
       });
       setOrdenesArchivo(ordenesParseadas);
@@ -193,22 +217,39 @@ export default function PedidosPage() {
     }
   };
 
-  const handleGuardarProyeccion = async () => {
+  const handleGuardarArchivo = async () => {
     if (ordenesArchivo.length === 0) {
-      window.alert("Carga un archivo con órdenes proyectadas antes de sincronizar.");
+      window.alert("Carga un archivo con órdenes antes de sincronizar.");
       return;
     }
     setEstaSincronizandoArchivo(true);
     try {
-      await orderService.createProjectedBatch(ordenesArchivo);
+      await orderService.createBatch(ordenesArchivo, scope === "PROJECTED");
       setOrdenesArchivo([]);
-      window.alert(`Se guardaron ${ordenesArchivo.length} órdenes proyectadas.`);
+      window.alert(`Se guardaron ${ordenesArchivo.length} órdenes ${scope === "PROJECTED" ? "proyectadas" : "operativas"}.`);
       list.refetch();
     } catch (error) {
-      console.error("Error guardando pedidos proyectados:", error);
-      window.alert("❌ No se pudieron guardar todos los pedidos proyectados. Revisa la consola para más detalles.");
+      console.error("Error guardando pedidos:", error);
+      window.alert("❌ No se pudieron guardar todos los pedidos. Revisa la consola para más detalles.");
     } finally {
       setEstaSincronizandoArchivo(false);
+    }
+  };
+
+  const handleEliminarOperativos = async () => {
+    if (scope !== "REAL") {
+      window.alert("Solo puedes borrar masivamente en el scope Operativos.");
+      return;
+    }
+    const ok = window.confirm("¿Eliminar TODOS los pedidos operativos? Esta acción no se puede deshacer.");
+    if (!ok) return;
+    try {
+      await orderService.deleteAllReal();
+      window.alert("Pedidos operativos eliminados.");
+      list.refetch();
+    } catch (error) {
+      console.error("Error al eliminar pedidos operativos:", error);
+      window.alert("❌ No se pudieron eliminar los pedidos operativos.");
     }
   };
 
@@ -256,41 +297,48 @@ export default function PedidosPage() {
               ))}
             </select>
           </div>
-          {scope === "PROJECTED" && (
-            <div className="flex flex-col gap-2">
-              <div className="flex flex-wrap gap-2 items-center">
-                <label className="flex items-center gap-2 text-sm font-semibold">
-                  <Package size={16} /> Cargar pedidos (.txt)
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".txt"
-                    className="file-input file-input-bordered file-input-sm w-full max-w-xs"
-                    onChange={handleArchivoCargado}
-                    disabled={estaSincronizandoArchivo}
-                  />
-                </label>
-                <button
-                  type="button"
-                  className="btn btn-sm btn-outline flex items-center gap-2"
-                  onClick={handleGuardarProyeccion}
-                  disabled={estaSincronizandoArchivo || ordenesArchivo.length === 0}
-                >
-                  <Database size={16} /> Guardar pedidos proyectados
-                </button>
-              </div>
-              {ordenesArchivo.length > 0 && (
-                <p className="text-xs text-success">
-                  {ordenesArchivo.length} pedidos listos para sincronizar.
-                </p>
-              )}
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-wrap gap-2 items-center">
+              <label className="flex items-center gap-2 text-sm font-semibold">
+                <Package size={16} /> Cargar pedidos {scope === "PROJECTED" ? "proyectados" : "operativos"} (.txt)
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".txt"
+                  className="file-input file-input-bordered file-input-sm w-full max-w-xs"
+                  onChange={handleArchivoCargado}
+                  disabled={estaSincronizandoArchivo}
+                />
+              </label>
+              <button
+                type="button"
+                className="btn btn-sm btn-outline flex items-center gap-2"
+                onClick={handleGuardarArchivo}
+                disabled={estaSincronizandoArchivo || ordenesArchivo.length === 0}
+              >
+                <Database size={16} /> Guardar pedidos {scope === "PROJECTED" ? "proyectados" : "operativos"}
+              </button>
             </div>
-          )}
+            {ordenesArchivo.length > 0 && (
+              <p className="text-xs text-success">
+                {ordenesArchivo.length} pedidos listos para sincronizar.
+              </p>
+            )}
+          </div>
         </div>
         <div className="flex gap-2">
           <button className="btn btn-outline btn-sm" onClick={() => list.refetch()}>
             <RefreshCw size={16} />
             Actualizar
+          </button>
+          <button
+            className="btn btn-outline btn-sm text-error border-error"
+            onClick={handleEliminarOperativos}
+            disabled={scope !== "REAL"}
+            title="Eliminar todos los pedidos operativos"
+          >
+            <Trash size={16} />
+            Borrar operativos
           </button>
           <button
             className="btn btn-primary btn-sm flex items-center gap-2"
@@ -311,24 +359,32 @@ export default function PedidosPage() {
         >
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <div className="form-control">
+              <label className="label">
+                <span className="label-text">ID (opcional)</span>
+              </label>
               <input
                 type="text"
-                placeholder="ID (dejar vacío para autogenerar)"
+                placeholder="Dejar vacío para autogenerar"
                 className="input input-bordered input-sm w-full"
                 value={form.id}
                 onChange={(e) => setForm({ ...form, id: e.target.value })}
               />
             </div>
-            <input
-              type="text"
-              placeholder="Referencia cliente"
-              className="input input-bordered input-sm w-full"
-              value={form.customerReference}
-              onChange={(e) =>
-                setForm({ ...form, customerReference: e.target.value })
-              }
-              required
-            />
+            <div className="form-control">
+              <label className="label">
+                <span className="label-text">Referencia cliente</span>
+              </label>
+              <input
+                type="text"
+                placeholder="Referencia cliente"
+                className="input input-bordered input-sm w-full"
+                value={form.customerReference}
+                onChange={(e) =>
+                  setForm({ ...form, customerReference: e.target.value })
+                }
+                required
+              />
+            </div>
             <div className="form-control">
               <label className="label">
                 <span className="label-text">Aeropuerto destino</span>
@@ -354,26 +410,37 @@ export default function PedidosPage() {
                 ))}
               </select>
             </div>
-            <input
-              type="number"
-              min={1}
-              placeholder="Cantidad"
-              className="input input-bordered input-sm w-full"
-              value={form.quantity}
-              onChange={(e) =>
-                setForm({ ...form, quantity: Number(e.target.value) })
-              }
-              required
-            />
-            <input
-              type="datetime-local"
-              className="input input-bordered input-sm w-full"
-              value={form.creationLocal}
-              onChange={(e) =>
-                setForm({ ...form, creationLocal: e.target.value })
-              }
-              required
-            />
+            <div className="form-control">
+              <label className="label">
+                <span className="label-text">Cantidad</span>
+              </label>
+              <input
+                type="number"
+                min={1}
+                placeholder="Cantidad"
+                className="input input-bordered input-sm w-full"
+                value={form.quantity}
+                onChange={(e) =>
+                  setForm({ ...form, quantity: Number(e.target.value) })
+                }
+                required
+              />
+            </div>
+            <div className="form-control">
+              <label className="label">
+                <span className="label-text">Fecha/Hora (UTC)</span>
+              </label>
+              <input
+                type="datetime-local"
+                min={new Date().toISOString().slice(0, 16)}
+                className="input input-bordered input-sm w-full"
+                value={form.creationLocal}
+                onChange={(e) =>
+                  setForm({ ...form, creationLocal: e.target.value })
+                }
+                required
+              />
+            </div>
             <label className="label cursor-pointer gap-2">
               <span className="label-text">Marcar como proyectado</span>
               <input
