@@ -16,7 +16,8 @@ import type {
   ActiveAirportTick,
   SimulationOrderPlan,
   OrderPlansDiff,
-  DeliveredPage
+  DeliveredPage,
+  DeliveredOrder
 } from '../types/simulation';
 import type { OrderStatusTick } from '../types/simulation';
 
@@ -49,9 +50,6 @@ export interface VueloEnMovimiento {
 }
 
 export interface SegmentoVuelo {
-  progressPct: number;
-  latitude: null;
-  longitude: null;
   id: string;
   flightId: string;
   origin: string;
@@ -396,9 +394,6 @@ export const useSimulacion = () => {
     setTiempoSimulado(new Date(currentMs)); // ✅ EL TICK YA DEFINE EL TIEMPO
     if (renderTick.activeSegments) {
       const mapped: SegmentoVuelo[] = renderTick.activeSegments.map((seg: ActiveSegmentTick) => ({
-        progressPct: 0,
-        latitude: null,
-        longitude: null,
         id: seg.id,
         flightId: seg.flightId,
         origin: seg.origin,
@@ -533,8 +528,8 @@ export const useSimulacion = () => {
       // Si backend envía lat/lon/progreso, los usamos; caso contrario calculamos.
       let progreso = segmento.progressPct ?? 0;
       let estadoVisual: VueloEnMovimiento['estadoVisual'] = segmento.retrasado ? 'retrasado' : 'en curso';
-      let latActual: number | null = segmento.latitude ?? null;
-      let lonActual: number | null = segmento.longitude ?? null;
+      let latActual = segmento.latitude ?? null;
+      let lonActual = segmento.longitude ?? null;
 
       if (latActual == null || lonActual == null || progreso == null) {
         if (tiempoActualMs >= horaLlegada) {

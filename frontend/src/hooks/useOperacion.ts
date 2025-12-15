@@ -7,13 +7,10 @@ import { operationService } from '../services/operationService';
 import { aeropuertoService } from '../services/aeropuertoService';
 import type { Airport } from '../types/airport';
 import type { CurrentPlanResponse } from '../types/plan';
-import type { SimulationMessage } from '../types/simulation';
+import type { ActiveAirportTick, SimulationMessage, SimulationTick, OrderStatusTick, ActiveSegment } from '../types/simulation';
 
 // --- TIPOS ---
 export interface SegmentoVuelo {
-    progressPct: number;
-    latitude: null;
-    longitude: null;
     id: string;
     flightId: string;
     origin: string;
@@ -23,9 +20,6 @@ export interface SegmentoVuelo {
     orderIds: string[];
     retrasado: boolean;
     routeQuantity?: number;
-    capacityUsed?: number;
-    capacityTotal?: number;
-    orderLoads?: { orderId: string; quantity: number }[];
 }
 
 export interface VueloEnMovimiento {
@@ -97,8 +91,8 @@ export const useOperacion = () => {
     const [isReplanning, setIsReplanning] = useState(false);
     const [isClearingPlan, setIsClearingPlan] = useState(false);
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-    const [, setPlanCache] = useState<Record<string, { quantity: number; routesDetail: OrderStatusDetail['routesDetail']; slackMinutes?: number }>>({});
-    const [, setOrdersPage] = useState<{ total: number; page: number; size: number; items: OrderStatusDetail[] }>({
+    const [planCache, setPlanCache] = useState<Record<string, { quantity: number; routesDetail: OrderStatusDetail['routesDetail']; slackMinutes?: number }>>({});
+    const [ordersPage, setOrdersPage] = useState<{ total: number; page: number; size: number; items: OrderStatusDetail[] }>({
         total: 0,
         page: 0,
         size: 10,
@@ -146,7 +140,7 @@ export const useOperacion = () => {
     const [activeSegments, setActiveSegments] = useState<SegmentoVuelo[]>([]);
     const [vuelosEnMovimiento, setVuelosEnMovimiento] = useState<VueloEnMovimiento[]>([]);
     const [orderStatusList, setOrderStatusList] = useState<OrderStatusDetail[]>([]);
-    const [airportStocks] = useState<Record<string, number>>({});
+    const [airportStocks, setAirportStocks] = useState<Record<string, number>>({});
     const stompClientRef = useRef<Client | null>(null);
 
     const [metrics, setMetrics] = useState<OperationMetrics>({
@@ -369,7 +363,7 @@ export const useOperacion = () => {
             setIsClearingPlan(true);
         },
         onSuccess: () => {
-            //setDayPlan(null);
+            setDayPlan(null);
             setActiveSegments([]);
             setVuelosEnMovimiento([]);
             setOrderStatusList([]);

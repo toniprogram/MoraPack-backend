@@ -1,5 +1,4 @@
 export interface Segment {
-  [x: string]: any;
   from: string;
   to: string;
   departure: string;

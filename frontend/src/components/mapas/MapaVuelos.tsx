@@ -382,7 +382,7 @@ export function MapaVuelos({
     return [
       [Math.min(...lats) - padding, Math.min(...lngs) - padding],
       [Math.max(...lats) + padding, Math.max(...lngs) + padding]
-    ] as [[number, number], [number, number]];
+    ] as const;
   }, [aeropuertos]);
 
   const northBound = maxBounds ? maxBounds[1][0] : 90;
@@ -432,7 +432,7 @@ export function MapaVuelos({
       touchZoom={false}
       boxZoom={false}
       dragging={false}
-      bounds={maxBounds || undefined}
+      maxBounds={maxBounds || undefined}
       maxBoundsViscosity={1}
       className="w-full h-full z-0"
       style={{ backgroundColor: mapTheme === 'dark' ? '#1f2937' : '#e5e7eb' }}
@@ -500,7 +500,7 @@ export function MapaVuelos({
             key={aeropuerto.id}
             position={[aeropuerto.latitude, aeropuerto.longitude]}
             icon={esSede
-              ? (getHubIcon(stockPct, getHubColor(aeropuerto.id || aeropuerto.code || '').hex, false, aeropuerto.latitude, northBound) as L.DivIcon)
+              ? getHubIcon(stockPct, getHubColor(aeropuerto.id || aeropuerto.code || '').hex, false, aeropuerto.latitude, northBound)
               : getAirportIcon(stockPct, false, aeropuerto.latitude, northBound)
             }
             opacity={(!filtroHubActivo || filtroHubActivo === aeropuerto.id)
@@ -582,6 +582,7 @@ export function MapaVuelos({
                           </div>
                           <FlightsList
                             vuelos={vuelosSalientes}
+                            selectedFlightId={selectedFlightId}
                             onSelectFlight={onSelectFlight}
                             onSelectOrders={onSelectOrders}
                           />

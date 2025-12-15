@@ -42,7 +42,13 @@ export default function OperacionPage() {
         setManualDateStr(val);
     };
 
+    const handleResetTime = () => {
+        setManualDateStr('');
+        actions.resetTime();
+    };
 
+    const formatTime = (date: Date) =>
+        date.toLocaleTimeString('es-PE', { timeZone: 'UTC', hour12: false });
 
     const formatShortTime = (isoDate: string) => {
         if(!isoDate) return '--:--';
@@ -138,13 +144,13 @@ export default function OperacionPage() {
                 </div>
 
                 <MapaVuelos
-                        aeropuertos={aeropuertos}
-                        activeSegments={activeSegments}
-                        vuelosEnMovimiento={vuelosEnMovimiento}
-                        activeAirports={activeAirports}
-                        isLoading={status === 'buffering'}
-                        filtroHubActivo=""
-                    />
+                    aeropuertos={aeropuertos}
+                    activeSegments={activeSegments}
+                    vuelosEnMovimiento={vuelosEnMovimiento}
+                    activeAirports={activeAirports}
+                    isLoading={status === 'buffering'}
+                    filtroHubActivo=""
+                />
                 {isReplanning && (
                     <div className="absolute inset-0 z-[100] bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center animate-in fade-in duration-300">
                         <div className="bg-neutral-800 p-8 rounded-2xl shadow-2xl border border-gray-700 text-center max-w-md">
