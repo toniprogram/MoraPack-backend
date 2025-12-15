@@ -1,4 +1,4 @@
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap, Tooltip, useMapEvents } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap, Tooltip, useMapEvents, ZoomControl } from 'react-leaflet';
 import L from 'leaflet';
 import { useEffect, useRef, useState, useMemo } from 'react';
 import type { LatLngExpression } from 'leaflet';
@@ -9,7 +9,6 @@ import type { ActiveAirportTick } from '../../types/simulation';
 import { OrdersList, type OrderLoadView } from '../simulacion/OrdersList';
 import type { SegmentoVuelo, VueloEnMovimiento } from '../../hooks/useSimulacion';
 import { Plane, Building } from 'lucide-react';
-import { OutgoingOrdersList } from '../simulacion/OutgoingOrdersList';
 
 const getStatusColor = (pct: number) => {
   if (pct === 0) return '#22c55e';
@@ -18,7 +17,7 @@ const getStatusColor = (pct: number) => {
   if (pct <= 30) return '#ef4444'; // Rojo (Crítico/Lleno)
   return '#22c55e';
 };
-const getAirportIcon = (pct: number, forPopup = false, lat?: number, _northBound?: number) => {
+const getAirportIcon = (pct: number, forPopup = false, lat?: number, northBound?: number) => {
   const color = getStatusColor(pct);
   const animId = `airport-${Math.random().toString(36).substr(2, 9)}`;
   const size = forPopup ? 20 : 20;
@@ -78,7 +77,7 @@ const getAirportIcon = (pct: number, forPopup = false, lat?: number, _northBound
   });
 };
 
-const getHubIcon = (pct: number, hubHex?: string, forPopup = false, lat?: number, _northBound?: number) => {
+const getHubIcon = (pct: number, hubHex?: string, forPopup = false, lat?: number, northBound?: number) => {
   const fallback = getStatusColor(pct);
   const colorHex = hubHex ?? fallback;
   const animId = `pulse-${Math.random().toString(36).substr(2, 9)}`;
@@ -513,35 +512,25 @@ export function MapaVuelos({
   }, [activeSegments]);
 
   const airportHighlights = useMemo(() => {
-      const set = new Set<string>();
-      // 1. Aeropuertos seleccionados explícitamente
-      if (selectedAirportIds && selectedAirportIds.length > 0) {
-        selectedAirportIds.forEach(a => a && set.add(a));
-      }
-      // 2. Aeropuertos que contienen los pedidos seleccionados (Origen actual)
-      if (selectedOrders && selectedOrders.length > 0) {
-        activeAirports.forEach(a => {
-          const has = a.orderLoads?.some(ol => selectedOrders.includes(ol.orderId));
-          if (has) set.add(a.airportCode);
-        });
-      }
-      // 3. Vuelo seleccionado (Resalta Origen y Destino de la ruta)
-      if (selectedFlightId) {
-        const seg = segmentsMap.get(selectedFlightId);
-        if (seg?.origin) set.add(seg.origin);
-        if (seg?.destination) set.add(seg.destination);
-      }
-
-      if (selectedAirportIds && selectedAirportIds.length > 0) {
-        activeSegments.forEach(seg => {
-          const isOriginSelected = selectedAirportIds.includes(seg.origin);
-          const isDestSelected = selectedAirportIds.includes(seg.destination);
-          if (isOriginSelected) set.add(seg.destination);
-          if (isDestSelected) set.add(seg.origin);
-        });
-        }
-
+    const set = new Set<string>();
+    if (selectedAirportIds && selectedAirportIds.length > 0) {
+      selectedAirportIds.forEach(a => a && set.add(a));
       return set;
+    }
+    if (selectedOrders && selectedOrders.length > 0) {
+      activeAirports.forEach(a => {
+        const has = a.orderLoads?.some(ol => selectedOrders.includes(ol.orderId));
+        if (has) set.add(a.airportCode);
+      });
+      return set;
+    }
+    if (selectedFlightId) {
+      const seg = segmentsMap.get(selectedFlightId);
+      if (seg?.origin) set.add(seg.origin);
+      if (seg?.destination) set.add(seg.destination);
+      return set;
+    }
+    return set;
   }, [selectedAirportIds, selectedOrders, selectedFlightId, activeAirports, segmentsMap]);
 
   return (
@@ -556,7 +545,7 @@ export function MapaVuelos({
       touchZoom={false}
       boxZoom={false}
       dragging={false}
-      bounds={maxBounds as [[number, number], [number, number]] | undefined}
+      maxBounds={maxBounds || undefined}
       maxBoundsViscosity={1}
       className="w-full h-full z-0"
       style={{ backgroundColor: mapTheme === 'dark' ? '#1f2937' : '#e5e7eb' }}
@@ -629,7 +618,6 @@ export function MapaVuelos({
             statusColorClass = 'text-success';
             progressClass = 'progress-success';
         }
-        const vuelosSalientes = activeSegments.filter(s => s.origin === (aeropuerto.id || aeropuerto.code));
         return (
           <Marker
             key={aeropuerto.id}
@@ -669,101 +657,61 @@ export function MapaVuelos({
               className="p-0 overflow-hidden rounded-xl thin-popup"
               minWidth={200}
               autoPan={false}
+              autoPanOnFocus={false}
             >
-              {/* Lógica para detectar si hay selección y aplicar transparencia */}
-              {(() => {
-                const hasSelection = (selectedOrders && selectedOrders.length > 0) || !!selectedFlightId;
-
-                return (
-                  <div
-                    className={`
-                      text-base-content text-xs w-60 overflow-hidden transition-all duration-300
-                      ${hasSelection
-                        ? 'bg-base-100/75 backdrop-blur-md border border-base-content/10 shadow-sm'
-                        : 'bg-base-100 shadow-xl'
-                      }
-                    `}
-                  >
-                    {/* HEADER: Ajusta su fondo según el estado de selección */}
-                    <div className={`p-2 border-b border-base-content/10 flex items-center gap-2 ${hasSelection ? 'bg-base-200/40' : 'bg-base-200'}`}>
-                        <Building size={14} className="text-primary"/>
-                        <div>
-                            <div className="font-bold text-sm leading-none">{aeropuerto.id}</div>
-                            <div className="text-[10px] opacity-60 truncate w-36">{aeropuerto.name}</div>
-                        </div>
+              <div className="bg-base-100 text-base-content text-xs w-52 shadow-xl overflow-hidden">
+                <div className="bg-base-200 p-2 border-b border-base-content/10 flex items-center gap-2">
+                    <Building size={14} className="text-primary"/>
+                    <div>
+                        <div className="font-bold text-sm leading-none">{aeropuerto.id}</div>
+                        <div className="text-[10px] opacity-60 truncate w-36">{aeropuerto.name}</div>
                     </div>
-
-                    <div className="p-3 space-y-2">
-                        {/* 1. SECCIÓN: ALMACÉN (Stock) */}
-                        {!isInfinite && (
-                            <>
-                                <div className="flex justify-between mb-1 text-[10px] font-semibold uppercase opacity-70">
-                                    <span>Almacén</span>
-                                    <span className={`font-mono ${statusColorClass}`}>
-                                        {stockActual} / {capacidadMax}
-                                    </span>
-                                </div>
-                                <progress
-                                    className={`progress w-full h-2 ${progressClass}`}
-                                    value={stockActual}
-                                    max={capacidadMax || 1}
-                                ></progress>
-
-                                <div className={`font-mono text-right mt-1 text-[10px] ${statusColorClass}`}>
-                                    {stockPct}% Ocupado
-                                </div>
-                            </>
-                        )}
-
-                        {/* 2. SECCIÓN: PEDIDOS EN ALMACÉN */}
-                        {!isInfinite && (
-                            <div className="border-t border-base-content/10 pt-2 mt-2">
-                              <div className="text-[10px] font-semibold uppercase opacity-70 mb-1">Pedidos en almacén</div>
-                              <OrdersList
-                                items={(live?.orderLoads ?? []).map(ol => ({ orderId: ol.orderId, cantidad: ol.quantity }))}
-                                selectedOrders={selectedOrders}
-                                onSelectOrder={(oid) => {
-                                  onSelectOrders?.([oid]);
-                                  onSelectAirport?.(aeropuerto.id || aeropuerto.code || null);
-                                }}
-                              />
+                </div>
+                <div className="p-3 space-y-2">
+                    {!isInfinite && (
+                        <>
+                            <div className="flex justify-between mb-1 text-[10px] font-semibold uppercase opacity-70">
+                                <span>Almacén</span>
+                                <span className={`font-mono ${statusColorClass}`}>
+                                    {stockActual} / {capacidadMax}
+                                </span>
                             </div>
-                        )}
+                            <progress
+                                className={`progress w-full h-2 ${progressClass}`}
+                                value={stockActual}
+                                max={capacidadMax || 1}
+                            ></progress>
 
-                        {/* 3. SECCIÓN: PEDIDOS SALIENTES (EN TRÁNSITO) */}
-                        {esSede && (
-                            <div className="border-t border-base-content/10 pt-2">
-                                <div className="text-[10px] font-semibold uppercase opacity-70">
-                                    <span>Pedidos Salientes</span>
-                                </div>
-                                <OutgoingOrdersList
-                                    outgoingFlights={vuelosSalientes}
-                                    selectedOrders={selectedOrders}
-                                    selectedFlightId={selectedFlightId}
-                                    onSelectOrder={(oid) => {
-                                        onSelectOrders?.([oid]);
-                                    }}
-                                    onSelectFlight={onSelectFlight}
-                                />
+                            <div className={`font-mono text-right mt-1 text-[10px] ${statusColorClass}`}>
+                                {stockPct}% Ocupado
                             </div>
-                        )}
-
-                        {/* 4. SECCIÓN: VUELOS SALIENTES */}
-                        <div className="border-t border-base-content/10 pt-2">
-                          <div className="flex justify-between items-center mb-1">
-                            <span className="text-[10px] font-semibold uppercase opacity-70">Vuelos Salientes</span>
-                          </div>
-                          <FlightsList
-                            vuelos={vuelosSalientes}
-                            selectedFlightId={selectedFlightId}
-                            onSelectFlight={onSelectFlight}
-                            onSelectOrders={onSelectOrders}
+                        </>
+                    )}
+                    {!isInfinite && (
+                        <div className="border-t border-base-300 pt-2 mt-2">
+                          <div className="text-[10px] font-semibold uppercase opacity-70 mb-1">Pedidos en almacén</div>
+                          <OrdersList
+                            items={(live?.orderLoads ?? []).map(ol => ({ orderId: ol.orderId, cantidad: ol.quantity }))}
+                            selectedOrders={selectedOrders}
+                            onSelectOrder={(oid) => {
+                              onSelectOrders?.([oid]);
+                              onSelectAirport?.(aeropuerto.id || aeropuerto.code || null);
+                            }}
                           />
                         </div>
+                    )}
+                    <div className="border-t border-base-300 pt-2">
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="text-[10px] font-semibold uppercase opacity-70">Vuelos Salientes</span>
+                      </div>
+                      <FlightsList
+                        vuelos={activeSegments.filter(s => s.origin === (aeropuerto.id || aeropuerto.code))}
+                        onSelectFlight={onSelectFlight}
+                        onSelectOrders={onSelectOrders}
+                      />
                     </div>
-                  </div>
-                );
-              })()}
+                </div>
+              </div>
             </Popup>
           </Marker>
         );
@@ -870,6 +818,7 @@ export function MapaVuelos({
               className="p-0 overflow-hidden rounded-xl thin-popup"
               maxWidth={320}
               autoPan={false}
+              autoPanOnFocus={false}
               offset={popupOffsetForLat(coord[0])}
             >
               <div className="bg-base-100 text-base-content text-xs w-72 shadow-xl overflow-hidden">
