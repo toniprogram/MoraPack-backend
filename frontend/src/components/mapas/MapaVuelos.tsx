@@ -598,9 +598,17 @@ export function MapaVuelos({
 
       {/* RUTAS Y AVIONES (Sin cambios mayores, solo integración) */}
       {activeSegments.map((segmento) => {
-        const origenCoords = coordsAeropuertos.get(segmento.origin);
-        const destinoCoords = coordsAeropuertos.get(segmento.destination);
-        if (!origenCoords || !destinoCoords) return null;
+          const origenCoords = coordsAeropuertos.get(segmento.origin);
+          const destinoCoords = coordsAeropuertos.get(segmento.destination);
+
+          // DEBUG: Ver por qué no renderiza
+          if (!origenCoords || !destinoCoords) {
+              console.warn(`No se puede renderizar vuelo ${segmento.flightId}. Faltan coords para:`,
+                  !origenCoords ? segmento.origin : '',
+                  !destinoCoords ? segmento.destination : ''
+              );
+              return null;
+          }
 
         const { hex: colorHex } = getHubColor(segmento.origin);
         const hasOrderMatch = selectedOrders?.length

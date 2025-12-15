@@ -11,7 +11,7 @@ import com.morapack.skyroute.simulation.dto.SimulationOrderPlan;
 import com.morapack.skyroute.simulation.dto.OrderStatusTick;
 import com.morapack.skyroute.simulation.dto.SimulationPlanSummary;
 import com.morapack.skyroute.simulation.dto.OrderLoadTick;
-import com.morapack.skyroute.simulation.live.LiveSimulationWorld;
+import com.morapack.skyroute.simulation.live.LiveOperationWorld;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
@@ -28,13 +28,14 @@ import java.util.*;
 public class OperationSimulationService {
 
     private static final String TOPIC = "/topic/ops/current";
-    private static final long TICK_PERIOD_MS = 60_000L; // 1 tick por minuto real
+    private static final long TICK_PERIOD_MS = 60_000L;
 
     private final OperationService operationService;
     private final PlanningService planningService;
     private final SimpMessagingTemplate messagingTemplate;
     private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
-    private volatile LiveSimulationWorld liveWorld;
+    private volatile LiveOperationWorld liveWorld;
+
     private volatile Instant lastStartInstant;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private volatile java.util.concurrent.ScheduledFuture<?> ticker;
@@ -72,7 +73,6 @@ public class OperationSimulationService {
     public void setSimTime(Instant simTime) {
         initialize(simTime);
     }
-
     private void start() {
         if (running.getAndSet(true)) {
             return;
@@ -86,13 +86,12 @@ public class OperationSimulationService {
                 if (liveWorld == null) return;
                 liveWorld.tick(60); // 60 segundos de simulación por tick
                 SimulationTick tick = buildTick(liveWorld);
-                messagingTemplate.convertAndSend(TOPIC, SimulationMessage.progress(liveWorld.getSimulationId(), null, tick));
+                messagingTemplate.convertAndSend(TOPIC, SimulationMessage.progress(liveWorld.getOperationId(), null, tick));
             } catch (Exception ex) {
                 log.warn("[OPS] Error on tick: {}", ex.getMessage());
             }
         }, 0, TICK_PERIOD_MS, TimeUnit.MILLISECONDS);
     }
-
     public void stop() {
         running.set(false);
         if (ticker != null) {
@@ -100,18 +99,16 @@ public class OperationSimulationService {
             ticker = null;
         }
     }
-
     private void sendTickNow() {
         if (liveWorld == null) return;
         try {
             SimulationTick tick = buildTick(liveWorld);
-            messagingTemplate.convertAndSend(TOPIC, SimulationMessage.progress(liveWorld.getSimulationId(), null, tick));
+            messagingTemplate.convertAndSend(TOPIC, SimulationMessage.progress(liveWorld.getOperationId(), null, tick));
         } catch (Exception ex) {
             log.warn("[OPS] No se pudo enviar tick inmediato: {}", ex.getMessage());
         }
     }
-
-    private SimulationTick buildTick(LiveSimulationWorld world) {
+    private SimulationTick buildTick(LiveOperationWorld world) {
         List<ActiveSegment> actives = world.toActiveSegments();
         Map<String, Integer> loads = world.getAirportLoads();
         Map<String, Map<String, Integer>> inventory = world.getAirportInventory();
@@ -121,8 +118,6 @@ public class OperationSimulationService {
 
         Map<String, String> statusMap = new HashMap<>();
         orderStatuses.forEach(os -> statusMap.put(os.orderId(), os.status()));
-
-        // ahora en tránsito respecto al tick previo
         List<String> nowInTransit = new ArrayList<>();
         statusMap.forEach((id, st) -> {
             String prev = lastStatuses.get(id);
@@ -165,13 +160,13 @@ public class OperationSimulationService {
         int inTransitOrders = world.countInTransitOrders();
 
         return new SimulationTick(
-                world.getSimulationId(),
+                world.getOperationId(),
                 world.getCurrentSimTime(),
                 TICK_PERIOD_MS,
                 1.0,
                 "running",
                 null,
-                List.of(), // orderPlans: vacío para no sobrecargar
+                List.of(),
                 new OrderPlansDiff(world.getCurrentSimTime(), List.of(), List.of(), List.of()),
                 actives,
                 airportTicks,

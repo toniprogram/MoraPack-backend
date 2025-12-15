@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { Plane } from 'lucide-react';
+import { Plane, CheckCircle, Clock, ArrowRight } from 'lucide-react';
 
 interface RouteSegmentView {
   flightId: string;
@@ -34,6 +34,7 @@ interface PedidoCardProps {
   isSelected: boolean;
   hasSelection: boolean;
   onSelect: (orderIds: string[] | null) => void;
+  currentTime?: Date;
 }
 
 const estadoBadgeClass = (estado: string) => {
@@ -44,16 +45,60 @@ const estadoBadgeClass = (estado: string) => {
   return 'badge-neutral';
 };
 
+// --- FUNCIONES DE FORMATO 100% UTC ---
+
 const formatDate = (ms?: number) => {
   if (!ms || Number.isNaN(ms)) return 'N/A';
-  return new Date(ms).toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' });
-};
-const formatTime = (ms?: number) => {
-  if (!ms || Number.isNaN(ms)) return 'N/A';
-  return new Date(ms).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+  return new Date(ms).toLocaleDateString('es-PE', {
+    timeZone: 'UTC', // <--- Forzado a UTC
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric'
+  });
 };
 
-export const PedidoCard = memo(({ data, isSelected, hasSelection, onSelect }: PedidoCardProps) => {
+const formatTime = (ms?: number) => {
+  if (!ms || Number.isNaN(ms)) return 'N/A';
+  return new Date(ms).toLocaleTimeString('es-PE', {
+    timeZone: 'UTC', // <--- Forzado a UTC
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false    // <--- Formato 24h
+  });
+};
+
+// Formateador para fecha completa (Fecha + Hora) desde ISO string
+const formatDateTimeUTC = (isoStr?: string) => {
+  if (!isoStr) return '--';
+  try {
+    const d = new Date(isoStr);
+    return d.toLocaleString('es-PE', {
+      timeZone: 'UTC', // <--- Forzado a UTC
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false    // <--- Formato 24h
+    });
+  } catch (e) {
+    return '--';
+  }
+};
+
+// Helper para estado
+const getSegmentStatus = (departure: string | undefined, arrival: string | undefined, now?: Date) => {
+  if (!departure || !arrival || !now) return 'PENDING';
+
+  const dep = new Date(departure).getTime();
+  const arr = new Date(arrival).getTime();
+  const current = now.getTime();
+
+  if (current < dep) return 'PENDING';
+  if (current >= dep && current <= arr) return 'FLYING';
+  return 'DONE';
+};
+
+export const PedidoCard = memo(({ data, isSelected, hasSelection, onSelect, currentTime }: PedidoCardProps) => {
   const {
     orderId,
     estado,
@@ -69,8 +114,11 @@ export const PedidoCard = memo(({ data, isSelected, hasSelection, onSelect }: Pe
   } = data;
 
   const dimmed = hasSelection && !isSelected;
-
   const handleClick = () => onSelect(isSelected ? null : [orderId]);
+
+  const displayFlightId = currentFlightId
+    ? currentFlightId
+    : (estado.toLowerCase().includes('vuelo') && rutas.length > 0 ? "VUELO DIVIDIDO" : "--");
 
   return (
     <div
@@ -86,6 +134,7 @@ export const PedidoCard = memo(({ data, isSelected, hasSelection, onSelect }: Pe
       onClick={handleClick}
     >
       <div className="card-body p-3">
+        {/* HEADER */}
         <div className="flex justify-between items-start">
           <div>
             <h3 className="font-bold text-sm text-primary">Pedido {orderId}</h3>
@@ -102,28 +151,28 @@ export const PedidoCard = memo(({ data, isSelected, hasSelection, onSelect }: Pe
           <span className={`badge badge-sm ${estadoBadgeClass(estado)}`}>{estado}</span>
         </div>
 
-        <div className="mt-2 pt-2 border-t border-base-300">
-          <p className="text-[10px] text-base-content/60 mb-1">Fecha de Registro:</p>
-          <div className="flex gap-3 text-xs">
-            <div>
-              <span className="text-base-content/70">📅</span> {formatDate(creationMs)}
+        {/* INFO FECHA DE REGISTRO (AHORA EN UTC) */}
+        {creationMs && creationMs > 0 && (
+            <div className="mt-2 pt-2 border-t border-base-300">
+            <p className="text-[10px] text-base-content/60 mb-1">Fecha de Registro (UTC):</p>
+            <div className="flex gap-3 text-xs">
+                <div><span className="text-base-content/70">📅</span> {formatDate(creationMs)}</div>
+                <div><span className="text-base-content/70">🕒</span> {formatTime(creationMs)}</div>
             </div>
-            <div>
-              <span className="text-base-content/70">🕒</span> {formatTime(creationMs)}
             </div>
-          </div>
-        </div>
+        )}
 
+        {/* VUELO ACTUAL */}
         <div className="flex justify-between items-start mt-2">
           <span className="text-base-content/70">Vuelo actual:</span>
           <div className="text-right">
-            {currentFlightId ? (
+            {displayFlightId !== "--" ? (
               <div className="flex flex-col gap-0.5 items-end">
-                <span className="font-bold text-secondary flex items-center gap-1">
-                  {currentFlightId}
+                <span className={`font-bold flex items-center gap-1 ${displayFlightId === 'VUELO DIVIDIDO' ? 'text-warning text-[10px]' : 'text-secondary'}`}>
+                  {displayFlightId}
                   <Plane size={12} className="rotate-45" />
                 </span>
-                {typeof progressPct === 'number' && (
+                {typeof progressPct === 'number' && displayFlightId !== 'VUELO DIVIDIDO' && (
                   <span className="text-[10px] text-base-content/60">{Math.round(progressPct)}%</span>
                 )}
               </div>
@@ -133,6 +182,7 @@ export const PedidoCard = memo(({ data, isSelected, hasSelection, onSelect }: Pe
           </div>
         </div>
 
+        {/* ORIGEN / DESTINO */}
         <div className="text-xs mt-2 space-y-1">
           <div className="flex justify-between items-start">
             <span className="text-base-content/70">Origen:</span>
@@ -144,39 +194,64 @@ export const PedidoCard = memo(({ data, isSelected, hasSelection, onSelect }: Pe
           </div>
           {arrivalMs && (
             <div className="flex justify-between items-start">
-              <span className="text-base-content/70">ETA:</span>
-              <span className="font-semibold">{formatTime(arrivalMs)}</span>
+              <span className="text-base-content/70">ETA (UTC):</span>
+              <span className="font-semibold">{formatDateTimeUTC(new Date(arrivalMs).toISOString())}</span>
             </div>
           )}
         </div>
 
+        {/* RUTAS Y VUELOS CON FECHAS EN UTC */}
         {rutas.length > 0 && (
           <div className="mt-2 pt-2 border-t border-base-300">
             <p className="text-xs font-semibold text-base-content/70 mb-1">Rutas y vuelos</p>
             {rutas.map((ruta) => (
               <div key={ruta.routeIndex} className="border border-base-300 rounded bg-base-100/70 p-2 space-y-1 mb-1 last:mb-0">
                 <div className="text-[10px] font-semibold text-base-content/70">Ruta {ruta.routeIndex}</div>
-                {ruta.segments.map((seg, idx) => (
-                  <div key={`${seg.flightId}-${idx}`} className="flex flex-col border border-base-300 rounded px-2 py-1 bg-base-100">
-                    <div className="flex items-center justify-between">
-                      <span className="badge badge-neutral badge-outline badge-xs font-mono">{seg.flightId}</span>
-                      {seg.quantity !== undefined && (
-                        <span className="text-[9px] text-base-content/70">Qty: {seg.quantity}</span>
-                      )}
-                    </div>
-                    <div className="flex justify-between text-[10px]">
-                      <div>
-                        <div className="font-bold">{seg.origin}</div>
-                        <div className="opacity-70">{seg.departureUtc ? new Date(seg.departureUtc).toLocaleString('es-PE', { timeZone: 'UTC', hour12: false, month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '--'}</div>
+                {ruta.segments.map((seg, idx) => {
+                  const status = getSegmentStatus(seg.departureUtc, seg.arrivalUtc, currentTime);
+
+                  let statusIcon = <Clock size={10} className="text-base-content/40"/>;
+                  let rowClass = "opacity-60 grayscale";
+
+                  if (status === 'FLYING') {
+                    statusIcon = <Plane size={10} className="text-info animate-pulse"/>;
+                    rowClass = "bg-info/10 border-info/30 ring-1 ring-info/20";
+                  } else if (status === 'DONE') {
+                    statusIcon = <CheckCircle size={10} className="text-success"/>;
+                    rowClass = "opacity-70 bg-base-200/50";
+                  }
+
+                  return (
+                    <div key={`${seg.flightId}-${idx}`} className={`flex flex-col border border-base-300 rounded px-2 py-1.5 transition-all ${rowClass}`}>
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-1.5">
+                            {statusIcon}
+                            <span className="badge badge-neutral badge-outline badge-xs font-mono">{seg.flightId}</span>
+                        </div>
+                        <span className="text-[9px] font-bold opacity-70">
+                            {status === 'FLYING' ? 'VOLANDO' : status === 'DONE' ? 'LLEGÓ' : 'ESPERA'}
+                        </span>
                       </div>
-                      <div className="text-center text-base-content/70">➔</div>
-                      <div className="text-right">
-                        <div className="font-bold">{seg.destination}</div>
-                        <div className="opacity-70">{seg.arrivalUtc ? new Date(seg.arrivalUtc).toLocaleString('es-PE', { timeZone: 'UTC', hour12: false, month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '--'}</div>
+
+                      <div className="flex justify-between text-[10px]">
+                        <div>
+                          <div className="font-bold">{seg.origin}</div>
+                          <div className="opacity-70">{formatDateTimeUTC(seg.departureUtc)}</div>
+                        </div>
+                        <div className="flex flex-col items-center justify-center w-8">
+                            <ArrowRight size={10} className="opacity-30" />
+                            {seg.quantity !== undefined && (
+                                <span className="text-[8px] opacity-60">{seg.quantity} un.</span>
+                            )}
+                        </div>
+                        <div className="text-right">
+                          <div className="font-bold">{seg.destination}</div>
+                          <div className="opacity-70">{formatDateTimeUTC(seg.arrivalUtc)}</div>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ))}
           </div>
