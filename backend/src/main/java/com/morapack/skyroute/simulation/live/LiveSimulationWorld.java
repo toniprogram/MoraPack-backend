@@ -187,20 +187,13 @@ public class LiveSimulationWorld {
                         boolean esDestinoFinal = order.getDestinationCode() != null && order.getDestinationCode().equals(flight.getDestination());
                         if (esDestinoFinal) {
                             order.decrementRemainingToDestination(qty);
-                            if (order.getRemainingToDestination() == 0) {
-                                int qtyTotal = airportInventory
-                                        .getOrDefault(flight.getDestination(), Map.of())
-                                        .getOrDefault(orderId, 0);
-                                if (qtyTotal > 0) {
-                                    order.markWaiting(flight.getArrivalTime());
-                                    releaseQueue.add(new ReleaseEvent(
-                                            flight.getArrivalTime().plus(Config.WAREHOUSE_DWELL),
-                                            flight.getDestination(),
-                                            orderId,
-                                            qtyTotal
-                                    ));
-                                }
-                            }
+                            order.markWaiting(flight.getArrivalTime());
+                            releaseQueue.add(new ReleaseEvent(
+                                    flight.getArrivalTime().plus(Config.WAREHOUSE_DWELL),
+                                    flight.getDestination(),
+                                    orderId,
+                                    qty
+                            ));
                         }
                     }
                 });

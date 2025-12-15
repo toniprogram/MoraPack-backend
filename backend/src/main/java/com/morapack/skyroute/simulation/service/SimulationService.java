@@ -63,6 +63,7 @@ public class SimulationService {
 
     private static final String TOPIC_PREFIX = "/topic/simulations/";
     private static final double DEFAULT_SIM_SPEED = 112.0;
+    private static final Set<String> PRODUCTION_HUBS = Set.of("SPIM", "EBCI", "UBBB");
     private final Random random = new Random();
     private final WorldBuilder worldBuilder;
     private final OrderRepository orderRepository;
@@ -91,7 +92,14 @@ public class SimulationService {
         TimeRange range = resolveRange(request);
         int windowMinutesResolved = 112;
         long fetchStart = System.nanoTime();
-        long totalCount = orderRepository.countByScopeAndCreationUtcBetween(OrderScope.PROJECTED, range.start(), range.end());
+        List<Order> allProjectedInRange = filterOperationalOrders(
+                orderRepository.findAllByScopeAndCreationUtcBetweenOrderByCreationUtcAsc(
+                        OrderScope.PROJECTED,
+                        range.start(),
+                        range.end()
+                )
+        );
+        long totalCount = allProjectedInRange.size();
         if (totalCount == 0) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
@@ -102,12 +110,13 @@ public class SimulationService {
                 ? range.start().plus(Duration.ofMinutes(windowMinutesResolved))
                 : range.end();
         long firstLoadStartMs = System.currentTimeMillis();
-        List<Order> projectedOrders = orderRepository
-                .findAllByScopeAndCreationUtcBetweenOrderByCreationUtcAsc(
+        List<Order> projectedOrders = filterOperationalOrders(
+                orderRepository.findAllByScopeAndCreationUtcBetweenOrderByCreationUtcAsc(
                         OrderScope.PROJECTED,
                         range.start(),
                         firstWindowEnd
-                );
+                )
+        );
         long firstLoadElapsedMs = System.currentTimeMillis() - firstLoadStartMs;
         log.info("[SIM] Loaded {} projected orders (first window) in {} ms (range {} - {})",
                 projectedOrders.size(),
@@ -343,7 +352,7 @@ public class SimulationService {
                             cursorStart,
                             windowEnd
                     );
-                    batch = fetched;
+                    batch = filterOperationalOrders(fetched);
                 }
                 if (batch == null || batch.isEmpty()) {
                     log.info("[SIM:{}] No more orders to process at window start {}", session.id, cursorStart);
@@ -370,11 +379,11 @@ public class SimulationService {
                     break;
                 }
                 batchIndex++;
-                batch = orderRepository.findAllByScopeAndCreationUtcBetweenOrderByCreationUtcAsc(
+                batch = filterOperationalOrders(orderRepository.findAllByScopeAndCreationUtcBetweenOrderByCreationUtcAsc(
                         OrderScope.PROJECTED,
                         cursorStart,
                         cursorStart.plus(windowDuration)
-                );
+                ));
             }
 
             log.info("[SIM:{}] Batch loop completed: processed {} batches", session.id, batchesProcessed);
@@ -1110,6 +1119,15 @@ public class SimulationService {
     }
 
     private record OrderWindow(Instant windowStart, List<Order> orders) {}
+    private List<Order> filterOperationalOrders(List<Order> orders) {
+        if (orders == null || orders.isEmpty()) return List.of();
+        return orders.stream()
+                .filter(o -> {
+                    String dest = o.getDestinationCode();
+                    return dest != null && !PRODUCTION_HUBS.contains(dest.toUpperCase());
+                })
+                .collect(Collectors.toList());
+    }
 
     /**
      * Entrada compacta para dejar trazabilidad incremental en disco.

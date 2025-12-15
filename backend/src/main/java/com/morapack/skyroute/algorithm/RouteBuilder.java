@@ -265,7 +265,9 @@ class RouteBuilder {
         RouteSegment segment = new RouteSegment(flight, date, quantity, finalLeg);
         if (finalLeg) {
             Instant arrivalInstant = flight.getArrivalInstant(date);
-            Duration slack = Duration.between(arrivalInstant, dueInstant);
+            // Consideramos el dwell de almacén para la entrega final (cada tramo libera tras WAREHOUSE_DWELL)
+            Instant releaseInstant = arrivalInstant.plus(Config.WAREHOUSE_DWELL);
+            Duration slack = Duration.between(releaseInstant, dueInstant);
             segment.setSlack(slack);
             route.setSlack(slack);
         }

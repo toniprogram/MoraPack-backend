@@ -40,10 +40,6 @@ export default function OperacionPage() {
     const handleTimeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const val = e.target.value;
         setManualDateStr(val);
-        if (val) {
-            const utcDate = new Date(`${val}:00Z`);
-            actions.setManualTime(utcDate);
-        }
     };
 
     const handleResetTime = () => {

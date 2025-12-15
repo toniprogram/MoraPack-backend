@@ -124,29 +124,27 @@ export function SidebarFilters({
           )}
 
           <div className="p-3 bg-base-200 border-b border-base-300 space-y-3">
-            <div>
-              <div className="relative">
-                <input
-                  type="text"
-                  placeholder={getPlaceholder()}
-                  className="input input-sm w-full pr-8 bg-base-100"
-                  value={draftFiltroTexto}
-                  onChange={(e) => setDraftFiltroTexto(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      setFiltroTexto(draftFiltroTexto);
-                    }
-                  }}
-                />
-                <button
-                  type="button"
-                  className="absolute right-1.5 top-1.5 btn btn-ghost btn-xs px-1"
-                  onClick={() => setFiltroTexto(draftFiltroTexto)}
-                  aria-label="Aplicar búsqueda"
-                >
-                  <Search size={16} />
-                </button>
-              </div>
+            <div className="flex gap-1 items-center">
+              <input
+                type="text"
+                placeholder={getPlaceholder()}
+                className="input input-sm w-full bg-base-100"
+                value={draftFiltroTexto}
+                onChange={(e) => setDraftFiltroTexto(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    setFiltroTexto(draftFiltroTexto);
+                  }
+                }}
+              />
+              <button
+                type="button"
+                className="btn btn-sm px-3 bg-base-200 border border-base-300 text-base-content/80 hover:bg-base-300"
+                onClick={() => setFiltroTexto(draftFiltroTexto)}
+                aria-label="Aplicar búsqueda"
+              >
+                <Search size={16} />
+              </button>
             </div>
 
             <div className="flex items-center justify-between">

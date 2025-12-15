@@ -6,6 +6,7 @@ import { planService } from '../services/planService';
 import { operationService } from '../services/operationService';
 import { aeropuertoService } from '../services/aeropuertoService';
 import type { Airport } from '../types/airport';
+import type { CurrentPlanResponse } from '../types/plan';
 import type { ActiveAirportTick, SimulationMessage, SimulationTick, OrderStatusTick, ActiveSegment } from '../types/simulation';
 
 // --- TIPOS ---
@@ -90,6 +91,13 @@ export const useOperacion = () => {
     const [isReplanning, setIsReplanning] = useState(false);
     const [isClearingPlan, setIsClearingPlan] = useState(false);
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+    const [planCache, setPlanCache] = useState<Record<string, { quantity: number; routesDetail: OrderStatusDetail['routesDetail']; slackMinutes?: number }>>({});
+    const [ordersPage, setOrdersPage] = useState<{ total: number; page: number; size: number; items: OrderStatusDetail[] }>({
+        total: 0,
+        page: 0,
+        size: 10,
+        items: [],
+    });
 
     const { data: aeropuertos = [] } = useQuery<Airport[]>({
         queryKey: ['aeropuertos'],
@@ -120,6 +128,7 @@ export const useOperacion = () => {
         simClockRef.current = newDate;
         // Notificamos al backend para reposicionar el mundo
         operationService.setTime(newDate.toISOString()).catch(() => {/* ignore */});
+        loadOrders(newDate, 0);
     };
     const simClockRef = useRef<Date>(new Date());
 
@@ -143,9 +152,78 @@ export const useOperacion = () => {
         delayedOrders: 0
     });
 
-    // Inicializa el mundo de operación en backend (sincroniza hora actual)
+    // Normaliza tiempos y cachea el plan base (rutas/segmentos) para no depender del tick
+    const fetchPlanBase = async () => {
+        try {
+            const plan: CurrentPlanResponse = await planService.getCurrentPlan();
+            const map: Record<string, { quantity: number; routesDetail: OrderStatusDetail['routesDetail']; slackMinutes?: number }> = {};
+            plan.orderPlans.forEach(op => {
+                const qty = (op.routes ?? []).reduce((sum, r) => sum + (r.quantity ?? 0), 0);
+                const routesDetail = (op.routes ?? []).map((r, idx) => ({
+                    routeIndex: idx + 1,
+                    segments: (r.segments ?? []).map(s => ({
+                        flightId: s.flightId,
+                        origin: s.origin,
+                        destination: s.destination,
+                        departureUtc: s.departureUtc,
+                        arrivalUtc: s.arrivalUtc,
+                        quantity: s.quantity,
+                    })),
+                })).filter(r => r.segments.length > 0);
+                map[op.orderId] = { quantity: qty, routesDetail, slackMinutes: op.slackMinutes };
+            });
+            setPlanCache(map);
+            setLastUpdated(new Date());
+        } catch (e) {
+            console.warn('No se pudo obtener plan base', e);
+        }
+    };
+
+    const loadOrders = async (targetDate: Date, page = 0) => {
+        try {
+            const res = await operationService.getOrders(targetDate.toISOString(), page);
+            // eslint-disable-next-line no-console
+            console.log('[OPS] Orders page response:', res);
+            const items: OrderStatusDetail[] = (res.items ?? []).map((o: any) => ({
+                orderId: o.orderId,
+                status: (o.status === 'DELIVERED' ? 'COMPLETED' : o.status === 'IN_TRANSIT' ? 'IN_FLIGHT' : 'WAITING'),
+                finalDestination: o.destination ?? '',
+                originAirport: o.origin ?? '',
+                quantity: o.quantity ?? 0,
+                slackMinutes: o.slackMinutes ?? undefined,
+                progress: 0,
+                isDelayed: false,
+                departureTime: '',
+                arrivalTime: '',
+                routesDetail: (o.routes ?? []).map((r: any, idx: number) => ({
+                    routeIndex: idx + 1,
+                    segments: (r.segments ?? []).map((s: any) => ({
+                        flightId: s.flightId,
+                        origin: s.origin,
+                        destination: s.destination,
+                        departureUtc: s.departureUtc,
+                        arrivalUtc: s.arrivalUtc,
+                        quantity: s.quantity,
+                    })),
+                })),
+            }));
+            setOrdersPage({
+                total: res.total ?? items.length,
+                page: res.page ?? page,
+                size: res.size ?? 10,
+                items,
+            });
+            setOrderStatusList(items);
+        } catch (e) {
+            console.warn('No se pudo cargar pedidos paginados', e);
+        }
+    };
+
+    // Inicializa el mundo de operación en backend (sincroniza hora actual) y carga plan base
     useEffect(() => {
         operationService.initWorld(simClockRef.current.toISOString()).catch(() => {});
+        fetchPlanBase();
+        loadOrders(simClockRef.current, 0);
     }, []);
 
     useEffect(() => {
@@ -170,6 +248,7 @@ export const useOperacion = () => {
             } catch {
                 // ignore
             }
+            loadOrders(simClockRef.current, 0);
             setIsReplanning(false);
             setStatus('running');
         },
@@ -223,78 +302,10 @@ export const useOperacion = () => {
                 client.subscribe('/topic/ops/current', (message) => {
                     try {
                         const parsed: SimulationMessage = JSON.parse(message.body);
-                        // Depuración: ver payload de tick recibido
+                        // Ignoramos temporalmente la info de pedidos del tick; se mantiene lo cargado por HTTP
+                        // (Seguimos usando el WS solo para saber que el backend está activo)
                         // eslint-disable-next-line no-console
-                        console.log('[OPS] Tick recibido:', parsed);
-                        const tick: SimulationTick | null = parsed.tick ?? null;
-                        if (!tick) return;
-                        const simTime = tick.simTime ? new Date(tick.simTime) : new Date();
-                        setSimClock(simTime);
-                        simClockRef.current = simTime;
-
-                        const actives: ActiveSegment[] = tick.activeSegments ?? [];
-                        setActiveSegments(actives.map(seg => ({
-                            id: seg.id,
-                            flightId: seg.flightId,
-                            origin: seg.origin,
-                            destination: seg.destination,
-                            departureUtc: seg.departureUtc ?? '',
-                            arrivalUtc: seg.arrivalUtc ?? '',
-                            orderIds: seg.orderIds ?? [],
-                            retrasado: false,
-                            routeQuantity: seg.capacityUsed ?? seg.capacityTotal ?? 0,
-                        })));
-
-                        const airportTicks: ActiveAirportTick[] = tick.activeAirports ?? [];
-                        setAirportStocks(
-                            airportTicks.reduce((acc, a) => {
-                                acc[a.airportCode] = a.currentLoad ?? 0;
-                                return acc;
-                            }, {} as Record<string, number>)
-                        );
-                        const combinedStatuses: Record<string, OrderStatusDetail> = {};
-                        // plannedStatuses se consideran WAITING
-                        (tick.plannedStatuses ?? []).forEach((os: OrderStatusTick) => {
-                            combinedStatuses[os.orderId] = {
-                                orderId: os.orderId,
-                                status: 'WAITING',
-                                finalDestination: os.location ?? '',
-                                originAirport: '',
-                                quantity: os.quantity ?? 0,
-                                progress: 0,
-                                isDelayed: false,
-                                departureTime: '',
-                                arrivalTime: '',
-                            };
-                        });
-                        (tick.orderStatuses ?? []).forEach((os: OrderStatusTick) => {
-                            const stRaw = (os.status ?? '').toUpperCase();
-                            const st: OrderStatusDetail['status'] =
-                                stRaw === 'COMPLETED' ? 'COMPLETED'
-                                : stRaw === 'IN_FLIGHT' ? 'IN_FLIGHT'
-                                : stRaw === 'LAYOVER' ? 'LAYOVER'
-                                : 'WAITING';
-                            combinedStatuses[os.orderId] = {
-                                orderId: os.orderId,
-                                status: st,
-                                finalDestination: os.location ?? '',
-                                originAirport: '',
-                                quantity: os.quantity ?? 0,
-                                progress: 0,
-                                isDelayed: false,
-                                departureTime: '',
-                                arrivalTime: '',
-                            };
-                        });
-                        setOrderStatusList(Object.values(combinedStatuses));
-                        setMetrics((prev) => ({
-                            ...prev,
-                            totalOrders: tick.orderStatuses?.length ?? prev.totalOrders,
-                            ordersInTransit: tick.inTransitOrders ?? prev.ordersInTransit,
-                            activeFlights: tick.activeSegments?.length ?? prev.activeFlights,
-                            totalFlights: tick.activeSegments?.length ?? prev.totalFlights,
-                        }));
-                        setStatus('running');
+                        console.log('[OPS] Tick recibido (ignorado pedidos):', parsed);
                     } catch (err) {
                         console.warn('No se pudo parsear tick de operación', err);
                     }

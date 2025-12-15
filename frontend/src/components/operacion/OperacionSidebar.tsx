@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { Radio, Server, Package, Plane, RefreshCw, ChevronLeft, ChevronRight, ChevronDown } from 'lucide-react';
+import { Radio, Server, Package, Plane, RefreshCw, ChevronLeft, ChevronRight, ChevronDown, Clock3 } from 'lucide-react';
 import type { Airport } from '../../types/airport';
 import type { ActiveAirportTick } from '../../types/simulation';
 import type { FlightGroup } from '../../types/simulacionUI';
@@ -54,6 +54,13 @@ export function OperacionSidebar({
   getInputValue,
   handleTimeChange,
 }: OperacionSidebarProps) {
+  const inputValue = getInputValue();
+  const canApplyTime = useMemo(() => {
+    const parsed = new Date(inputValue);
+    if (Number.isNaN(parsed.getTime())) return false;
+    const simStr = simClock.toISOString().slice(0, 16);
+    return inputValue !== simStr;
+  }, [inputValue, simClock]);
   const [collapsed, setCollapsed] = useState(false);
   const [vistaPanel, setVistaPanel] = useState<'pedidos' | 'vuelos' | 'aeropuertos'>('pedidos');
   const [selectedFlightId, setSelectedFlightId] = useState<string | null>(null);
@@ -192,12 +199,20 @@ export function OperacionSidebar({
               <input
                 type="datetime-local"
                 className="input input-xs input-bordered w-full font-mono"
-                value={getInputValue()}
+                value={inputValue}
                 onChange={handleTimeChange}
               />
               <button
+                onClick={() => actions.setManualTime(new Date(`${getInputValue()}:00Z`))}
+                className="btn btn-xs btn-outline btn-square"
+                disabled={!canApplyTime}
+                title="Aplicar hora"
+              >
+                <Clock3 size={14} />
+              </button>
+              <button
                 onClick={() => actions.resetTime()}
-                className="btn btn-xs btn-ghost"
+                className="btn btn-xs btn-outline"
                 title="Volver al presente"
               >
                 <RefreshCw size={14} />
