@@ -345,6 +345,7 @@ export function OperacionSidebar({
                       data={cardData}
                       isSelected={false}
                       hasSelection={false}
+                      currentTime={simClock}
                       onSelect={() => {}}
                     />
                   );

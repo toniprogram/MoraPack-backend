@@ -3,6 +3,7 @@ import type { ActiveAirportTick } from '../../types/simulation';
 import { useEffect, useMemo, useState } from 'react';
 import { OrdersList } from './OrdersList';
 import { FlightsList } from './FlightsList';
+import { OutgoingOrdersList } from './OutgoingOrdersList';
 
 interface SidebarAeropuertosPanelProps {
   aeropuertos: Airport[];
@@ -11,6 +12,7 @@ interface SidebarAeropuertosPanelProps {
   selectedAirportIds: string[] | null;
   onSelectAirport: (airportId: string | null) => void;
   selectedOrders?: string[] | null;
+  selectedFlightId?: string | null; // Nuevo prop añadido
   scrollParent?: HTMLDivElement | null;
   onSelectOrders?: (orderIds: string[] | null) => void;
   onSelectFlight?: (flightId: string | null) => void;
@@ -21,8 +23,6 @@ const BUFFER_ITEMS = 8;
 const INFINITE_CODES = new Set(['SPIM', 'LIM', 'EBCI', 'BRU', 'UBBB', 'GYD']);
 
 const isInfiniteHub = (a: Airport) => {
-  //const id = (a.id || '').toUpperCase().trim();
-  //const code = (a.code || '').toUpperCase().trim();
   return INFINITE_CODES.has(a.id) || INFINITE_CODES.has(a.code);
 };
 
@@ -33,10 +33,13 @@ export function SidebarAeropuertosPanel({
   selectedAirportIds,
   onSelectAirport,
   selectedOrders,
+  selectedFlightId,
   scrollParent,
   onSelectOrders,
   onSelectFlight,
 }: SidebarAeropuertosPanelProps) {
+
+  // Lógica de ordenamiento: Seleccionados primero
   const orderedAirports = useMemo(() => {
     if (!selectedAirportIds || selectedAirportIds.length === 0) return aeropuertos;
     const set = new Set(selectedAirportIds);
@@ -45,6 +48,7 @@ export function SidebarAeropuertosPanel({
     return [...selected, ...rest];
   }, [aeropuertos, selectedAirportIds]);
 
+  // Lógica de Virtualización (Scroll infinito)
   const [windowStart, setWindowStart] = useState(0);
   const [windowEnd, setWindowEnd] = useState(Math.min(orderedAirports.length, 20));
 
@@ -90,6 +94,7 @@ export function SidebarAeropuertosPanel({
           No hay aeropuertos disponibles
         </div>
       )}
+
       {visible.length > 0 && (
         <>
           <div style={{ height: windowStart * ITEM_HEIGHT }} />
@@ -98,73 +103,102 @@ export function SidebarAeropuertosPanel({
             const current = live?.currentLoad ?? 0;
             const max = live?.maxThroughputPerHour ?? aeropuerto.storageCapacity ?? 0;
             const isInfinite = isInfiniteHub(aeropuerto);
+
+            // Cálculo de porcentajes y colores
             const pct = (isInfinite || max === 0)
               ? 0
               : Math.min(100, Math.round((current / max) * 100));
+
             const flightOrders = live?.orderLoads ?? [];
             const isSelected = !!selectedAirportIds?.includes((aeropuerto.id || aeropuerto.code || ''));
             const dimmed = !!(selectedAirportIds && selectedAirportIds.length > 0 && !isSelected);
             const vuelosSalientes = (activeSegments ?? []).filter(s => s.origin === (aeropuerto.id || aeropuerto.code));
-            let progressColorClass = 'progress-success'; // Verde (< 70%)
+
+            let progressColorClass = 'progress-success';
             let textColorClass = 'text-success';
             if (pct > 90) {
-              progressColorClass = 'progress-error'; // Rojo (> 90%)
+              progressColorClass = 'progress-error';
               textColorClass = 'text-error';
             } else if (pct > 70) {
-              progressColorClass = 'progress-warning'; // Amarillo (70% - 90%)
+              progressColorClass = 'progress-warning';
               textColorClass = 'text-warning';
             }
-            return (
-        <div
-          key={(aeropuerto.id || aeropuerto.code || idx.toString())}
-          style={{ minHeight: ITEM_HEIGHT }}
-          className={`card bg-base-200 shadow-sm hover:shadow-md transition-shadow ${dimmed ? 'opacity-40' : ''} ${isSelected ? 'ring-2 ring-primary' : ''}`}
-          onClick={() => onSelectAirport(isSelected ? null : (aeropuerto.id || aeropuerto.code || null))}
-        >
-          <div className="card-body p-3">
-            <h3 className="font-bold text-sm text-primary">{aeropuerto.id}</h3>
-            <p className="text-xs text-base-content/80">{aeropuerto.name}</p>
-            {!isInfinite && (
-                <div className="text-xs text-base-content/70 mt-1 space-y-1">
-                  <div className="flex justify-between">
-                    <span>Almacén</span>
-                    <span className={`font-mono ${textColorClass}`}>
-                        {current} / {max}
-                    </span>
-                  </div>
-                    <progress
-                        className={`progress ${progressColorClass} w-full h-2`}
-                        value={current}
-                        max={max || 1}
-                      ></progress>
 
+            return (
+              <div
+                key={(aeropuerto.id || aeropuerto.code || idx.toString())}
+                style={{ minHeight: ITEM_HEIGHT }}
+                className={`card bg-base-200 shadow-sm hover:shadow-md transition-shadow ${dimmed ? 'opacity-40' : ''} ${isSelected ? 'ring-2 ring-primary' : ''}`}
+                onClick={() => onSelectAirport(isSelected ? null : (aeropuerto.id || aeropuerto.code || null))}
+              >
+                <div className="card-body p-3">
+                  <h3 className="font-bold text-sm text-primary">{aeropuerto.id}</h3>
+                  <p className="text-xs text-base-content/80">{aeropuerto.name}</p>
+
+                  {/* 1. SECCIÓN ALMACÉN (Solo si NO es infinito) */}
+                  {!isInfinite && (
+                    <div className="text-xs text-base-content/70 mt-1 space-y-1">
+                      <div className="flex justify-between">
+                        <span>Almacén</span>
+                        <span className={`font-mono ${textColorClass}`}>
+                            {current} / {max}
+                        </span>
+                      </div>
+                      <progress
+                          className={`progress ${progressColorClass} w-full h-2`}
+                          value={current}
+                          max={max || 1}
+                      ></progress>
                       <div className={`font-mono text-right text-[10px] ${textColorClass}`}>
                         {pct}% Ocupado
                       </div>
+                    </div>
+                  )}
+
+                  {/* 2. SECCIÓN PEDIDOS EN ALMACÉN (Solo si NO es infinito) */}
+                  {!isInfinite && (
+                    <div className="border-t border-base-300 pt-2 mt-2">
+                      <div className="text-[10px] font-semibold uppercase opacity-70 mb-1">Pedidos en almacén</div>
+                      <OrdersList
+                        items={flightOrders.map(ol => ({ orderId: ol.orderId, cantidad: ol.quantity }))}
+                        selectedOrders={selectedOrders}
+                        onSelectOrder={(orderId) => {
+                          onSelectOrders?.([orderId]);
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  {/* 3. SECCIÓN PEDIDOS SALIENTES (Solo si ES infinito - NUEVO) */}
+                  {isInfinite && (
+                    <div className="border-t border-base-300 pt-2 mt-2">
+                      <div className="text-[10px] font-semibold uppercase opacity-70 mb-1">
+                          <span>Pedidos Salientes</span>
+                      </div>
+                      <OutgoingOrdersList
+                          outgoingFlights={vuelosSalientes}
+                          selectedOrders={selectedOrders}
+                          selectedFlightId={selectedFlightId}
+                          onSelectOrder={(oid) => {
+                              onSelectOrders?.([oid]);
+                          }}
+                          onSelectFlight={onSelectFlight}
+                      />
+                    </div>
+                  )}
+
+                  {/* 4. SECCIÓN VUELOS SALIENTES (Siempre visible) */}
+                  <div className="border-t border-base-300 pt-2 mt-2">
+                      <div className="text-[10px] font-semibold uppercase opacity-70 mb-1">Vuelos Salientes</div>
+                      <FlightsList
+                          vuelos={vuelosSalientes}
+                          selectedFlightId={selectedFlightId}
+                          onSelectFlight={onSelectFlight}
+                          onSelectOrders={onSelectOrders}
+                      />
+                  </div>
                 </div>
-            )}
-            {!isInfinite && (
-                <div className="border-t border-base-300 pt-2 mt-2">
-                  <div className="text-[10px] font-semibold uppercase opacity-70 mb-1">Pedidos en almacén</div>
-                  <OrdersList
-                    items={flightOrders.map(ol => ({ orderId: ol.orderId, cantidad: ol.quantity }))}
-                    selectedOrders={selectedOrders}
-                    onSelectOrder={(orderId) => {
-                      onSelectOrders?.([orderId]);
-                    }}
-                  />
-                </div>
-            )}
-            <div className="border-t border-base-300 pt-2 mt-2">
-                <div className="text-[10px] font-semibold uppercase opacity-70 mb-1">Vuelos Salientes</div>
-                <FlightsList
-                    vuelos={vuelosSalientes}
-                    onSelectFlight={onSelectFlight}
-                    onSelectOrders={onSelectOrders}
-                />
-            </div>
-          </div>
-        </div>
+              </div>
             );
           })}
           <div style={{ height: Math.max(0, (orderedAirports.length - windowEnd) * ITEM_HEIGHT) }} />
