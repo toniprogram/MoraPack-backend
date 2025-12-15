@@ -32,24 +32,30 @@ export function SimTopBar({
   capacidadTotalFlota = 0,
   startDateString = '',
 }: SimTopBarProps) {
+
+  // --- LÓGICA DE BADGES Y FORMATO ---
+
   const badgesTiempo = useMemo(() => {
     if (!tiempoSimulado) return null;
     return (
       <>
-        <div className="badge badge-neutral text-base-content text-[11px] leading-tight">
-          📅 Fecha Simulación: {tiempoSimulado.toLocaleDateString('es-PE', {
-            day: '2-digit',
-            month: 'short',
-            year: 'numeric',
-            timeZone: 'UTC'
-          })}
+        {/* Etiqueta descriptiva */}
+        <span className="text-[10px] font-bold text-base-content/70 uppercase tracking-wide mr-1">
+          Simulación:
+        </span>
+
+        {/* Badge Fecha */}
+        <div className="tooltip tooltip-bottom pointer-events-auto" data-tip="Fecha de la simulación">
+          <div className="badge badge-neutral text-base-content text-[11px] font-mono shadow-sm border-base-content/10 whitespace-nowrap">
+            📅 {tiempoSimulado.toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })}
+          </div>
         </div>
-        <div className="badge badge-neutral text-base-content text-[11px] leading-tight">
-           🕒Hora Simulación {tiempoSimulado.toLocaleTimeString('es-PE', {
-              hour: '2-digit',
-              minute: '2-digit',
-              timeZone: 'UTC'
-          })}
+
+        {/* Badge Hora */}
+        <div className="tooltip tooltip-bottom pointer-events-auto" data-tip="Hora de la simulación">
+          <div className="badge badge-neutral text-base-content text-[11px] font-mono shadow-sm border-base-content/10 whitespace-nowrap">
+            🕒 {tiempoSimulado.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })}
+          </div>
         </div>
       </>
     );
@@ -60,76 +66,109 @@ export function SimTopBar({
     return Math.round((capacidadUsadaFlota / capacidadTotalFlota) * 100);
   }, [capacidadUsadaFlota, capacidadTotalFlota]);
 
+  // Color dinámico según el porcentaje de uso (Nuevo feature del merge)
+  const capacidadColorClass = useMemo(() => {
+    if (capacidadFlotaPct > 90) return 'text-error';
+    if (capacidadFlotaPct > 70) return 'text-warning';
+    return 'text-success';
+  }, [capacidadFlotaPct]);
+
   const tiempoEjecucionSim = useMemo(() => {
     if (!tiempoSimulado || !startDateString) return null;
     try {
-      // Asegurar que startDate tenga segundos
       const startStr = startDateString.length === 16 ? `${startDateString}:00` : startDateString;
-      // Interpretar ambas como UTC (sin conversión de zona)
       const startDate = new Date(startStr + 'Z');
       const simDate = new Date(tiempoSimulado.toISOString());
       const diffMs = simDate.getTime() - startDate.getTime();
+
       if (diffMs < 0) return null;
+
       const days = Math.floor(diffMs / 86_400_000);
       const hours = Math.floor((diffMs % 86_400_000) / 3_600_000);
       const minutes = Math.floor((diffMs % 3_600_000) / 60_000);
       const pad = (n: number) => n.toString().padStart(2, '0');
-      return `Tiempo simulado: ${pad(days)} - ${pad(hours)}:${pad(minutes)}`;
+
+      // Formato compacto: 00d 00h 00m
+      return `${pad(days)}d ${pad(hours)}h ${pad(minutes)}m`;
     } catch {
       return null;
     }
   }, [tiempoSimulado, startDateString]);
 
+  // --- RENDERIZADO ---
+
   return (
-    <div className="bg-transparent shadow-none border-none px-3 py-2 flex justify-between items-start z-20">
-      <div className="flex gap-4 text-xs flex-col">
-        <div className="flex gap-4">
-          <div className="flex items-center gap-1.5 tooltip tooltip-bottom" data-tip="Entregados">
-            <Check size={16} className="text-success" />
-            <span className="font-mono font-semibold">{entregados}</span>
+    // CONTENEDOR PRINCIPAL: Absolute + pointer-events-none para que no bloquee clicks en el mapa debajo
+    <div className="absolute top-0 left-0 w-full p-2 z-[1000] pointer-events-none flex justify-between items-start">
+
+      {/* === IZQUIERDA: KPIs (Entregados, Tránsito, Vuelos, Capacidad) === */}
+      <div className="flex flex-col gap-2 pointer-events-auto">
+        {/* Fila de Iconos */}
+        <div className="flex gap-3 bg-base-100/90 backdrop-blur px-3 py-1.5 rounded-lg shadow-sm border border-base-content/10 w-fit">
+          <div className="flex items-center gap-1.5 tooltip tooltip-right" data-tip="Pedidos Entregados">
+            <Check size={14} className="text-success" />
+            <span className="font-mono font-bold text-xs">{entregados}</span>
           </div>
-          <div className="flex items-center gap-1.5 tooltip tooltip-bottom" data-tip="En tránsito">
-            <Box size={16} className="text-info" />
-            <span className="font-mono font-semibold">{enTransito}</span>
+          <div className="flex items-center gap-1.5 tooltip tooltip-right" data-tip="Pedidos En Tránsito">
+            <Box size={14} className="text-info" />
+            <span className="font-mono font-bold text-xs">{enTransito}</span>
           </div>
-          <div className="flex items-center gap-1.5 tooltip tooltip-bottom" data-tip="Vuelos en uso">
-            <Plane size={16} className="text-warning" />
-            <span className="font-mono font-semibold">{vuelosActivos}</span>
+          <div className="flex items-center gap-1.5 tooltip tooltip-right" data-tip="Vuelos Activos">
+            {/* Corregido: 'blue text-300' a 'text-blue-400' */}
+            <Plane size={14} className="text-blue-400" />
+            <span className="font-mono font-bold text-xs">{vuelosActivos}</span>
           </div>
-        </div>
-        <div className="bg-base-300/80 px-2 py-1 rounded text-[10px] w-fit">
-          <div className="text-base-content/70 font-semibold uppercase tracking-wide">Capacidad Total Flota</div>
-          <div className="font-mono font-bold text-success text-sm">{capacidadFlotaPct}%</div>
-        </div>
-      </div>
-      <div className="flex items-start gap-3">
-        <div className="text-xs tooltip tooltip-bottom" data-tip="Pedidos procesados por el backend">
-          <span className="font-mono font-semibold">{reloj}</span>
         </div>
 
-        <div className="flex items-center gap-2 text-xs">
-          <label className="text-base-content/70 text-[10px] uppercase tracking-wide">Velocidad</label>
-          <span className="badge badge-outline font-mono">{engineSpeed}x</span>
-        </div>
-
-        <div className="flex gap-2 items-center">
-          {badgesTiempo}
-          {tiempoEjecucionSim && (
-            <div className="tooltip tooltip-bottom" data-tip="Tiempo de ejecución simulado">
-              <div className="badge badge-neutral text-base-content text-[11px] leading-tight">
-                ⏳ {tiempoEjecucionSim}
-              </div>
-            </div>
-          )}
-          {estaActivo && startRealMs !== null && (
-            <div className="tooltip tooltip-bottom" data-tip="Tiempo real desde inicio">
-              <div className="badge badge-warning badge-outline text-[11px]">
-                ⏱️ {formatElapsed(elapsedRealMs)}
-              </div>
-            </div>
-          )}
+        {/* Barra de Capacidad */}
+        <div className="bg-base-300/90 px-2 py-1 rounded-lg text-[10px] shadow-sm backdrop-blur flex items-center gap-2 w-fit border border-base-content/5">
+          <span className="text-base-content/70 font-semibold uppercase">Capacidad Flota</span>
+          <span className={`font-mono font-bold ${capacidadColorClass} text-sm`}>
+            {capacidadFlotaPct}%
+          </span>
         </div>
       </div>
+
+      {/* === CENTRO: TIEMPOS (Posicionado absolutamente al 40%) === */}
+      <div className="absolute left-[40%] -translate-x-1/2 top-2 flex items-center gap-2 pointer-events-auto">
+
+        {/* Fecha y Hora */}
+        <div className="flex items-center gap-2 bg-base-100/40 backdrop-blur-md px-2 py-1 rounded-xl border border-base-content/5 shadow-sm">
+           {badgesTiempo}
+        </div>
+
+        {/* Cronómetros adicionales */}
+        <div className="flex items-center gap-2">
+           {tiempoEjecucionSim && (
+             <div className="tooltip tooltip-bottom pointer-events-auto" data-tip="Tiempo transcurrido simulado">
+               <div className="badge badge-ghost bg-base-100/60 backdrop-blur-sm text-[10px] font-mono whitespace-nowrap border-base-content/10">
+                 ⏳ Sim: {tiempoEjecucionSim}
+               </div>
+             </div>
+           )}
+
+           {estaActivo && startRealMs !== null && (
+             <div className="tooltip tooltip-bottom pointer-events-auto" data-tip="Tiempo real transcurrido">
+               <div className="badge badge-warning badge-outline bg-base-100/90 text-[10px] font-mono whitespace-nowrap shadow-sm">
+                 ⏱️ Real: {formatElapsed(elapsedRealMs)}
+               </div>
+             </div>
+           )}
+        </div>
+      </div>
+
+      {/* === DERECHA: Velocidad y Debug Backend === */}
+      <div className="flex items-center gap-2 pointer-events-auto">
+        <div className="flex items-center gap-2 text-xs bg-base-100/90 backdrop-blur px-2 py-1.5 rounded-lg shadow-sm border border-base-content/10">
+          <span className="text-base-content/70 text-[10px] uppercase font-bold">Velocidad</span>
+          <span className="badge badge-sm badge-outline font-mono">{engineSpeed}x</span>
+        </div>
+
+        <div className="text-[10px] bg-base-100/50 px-2 py-1 rounded text-base-content/40 font-mono tooltip tooltip-left cursor-help" data-tip="Pedidos procesados por el Backend">
+          {reloj}
+        </div>
+      </div>
+
     </div>
   );
 }
