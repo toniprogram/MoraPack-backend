@@ -300,15 +300,8 @@ export const useOperacion = () => {
             reconnectDelay: 5000,
             onConnect: () => {
                 client.subscribe('/topic/ops/current', (message) => {
-                    try {
-                        const parsed: SimulationMessage = JSON.parse(message.body);
-                        // Ignoramos temporalmente la info de pedidos del tick; se mantiene lo cargado por HTTP
-                        // (Seguimos usando el WS solo para saber que el backend está activo)
-                        // eslint-disable-next-line no-console
-                        console.log('[OPS] Tick recibido (ignorado pedidos):', parsed);
-                    } catch (err) {
-                        console.warn('No se pudo parsear tick de operación', err);
-                    }
+                    // Ignoramos la carga de pedidos que pueda venir en ticks; los pedidos se obtienen vía HTTP paginado.
+                    void message;
                 });
             },
             onStompError: (frame) => console.warn('WS OPS error', frame),

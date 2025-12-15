@@ -14,6 +14,8 @@ import com.morapack.skyroute.plan.service.WorldBuilder;
 import com.morapack.skyroute.orders.repository.OrderRepository;
 import com.morapack.skyroute.simulation.dto.*;
 import com.morapack.skyroute.simulation.live.*;
+import com.morapack.skyroute.simulation.repository.SimulationPlanRepository;
+import com.morapack.skyroute.simulation.service.SimulationPlanMapper;
 import com.morapack.skyroute.simulation.dto.SimulationRoute;
 import com.morapack.skyroute.simulation.dto.OrderStatusTick;
 import com.morapack.skyroute.simulation.dto.SimulationPlanSummary;
@@ -70,6 +72,8 @@ public class SimulationService {
     private final SimpMessagingTemplate messagingTemplate;
     private final ObjectMapper objectMapper;
     private final SimulationDeliveryRepository deliveryRepository;
+    private final SimulationPlanRepository simulationPlanRepository;
+    private final SimulationPlanMapper simulationPlanMapper;
     private final Path snapshotsDir = Paths.get("snapshots");
     private final ExecutorService executorService = Executors.newCachedThreadPool();
     private final ScheduledExecutorService tickerExecutor = Executors.newSingleThreadScheduledExecutor();
@@ -80,12 +84,16 @@ public class SimulationService {
                              OrderRepository orderRepository,
                              SimpMessagingTemplate messagingTemplate,
                              ObjectMapper objectMapper,
-                             SimulationDeliveryRepository deliveryRepository) {
+                             SimulationDeliveryRepository deliveryRepository,
+                             SimulationPlanRepository simulationPlanRepository,
+                             SimulationPlanMapper simulationPlanMapper) {
         this.worldBuilder = worldBuilder;
         this.orderRepository = orderRepository;
         this.messagingTemplate = messagingTemplate;
         this.objectMapper = objectMapper;
         this.deliveryRepository = deliveryRepository;
+        this.simulationPlanRepository = simulationPlanRepository;
+        this.simulationPlanMapper = simulationPlanMapper;
     }
 
     public SimulationStartResponse startSimulation(SimulationStartRequest request) {
@@ -269,6 +277,7 @@ public class SimulationService {
         }
         session.cancel();
         stopTicker(session);
+        cleanupSimulationAsync(session);
     }
 
     private void runSimulationLegacy(SimulationSession session, List<Order> orders, World world, boolean useHeuristicSeed) {
@@ -501,6 +510,7 @@ public class SimulationService {
         session.update(snapshot);
         persistDiff(session, snapshot);
         persistSnapshot(session, snapshot);
+        persistSimulationPlan(session.id, best);
         // Build detailed updates for frontend cache (nuevos/actualizados)
         Map<String, Instant> creationMap = demand.stream()
                 .collect(Collectors.toMap(Order::getId, Order::getCreationUtc, (a, b) -> a));
@@ -589,6 +599,7 @@ public class SimulationService {
                         SimulationMessage.completed(session.id.toString(), finalSnapshot)
                 );
                 stopTicker(session);
+                cleanupSimulationAsync(session);
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
             } catch (Exception ex) {
@@ -634,6 +645,46 @@ public class SimulationService {
                 currentSimTime,
                 orderPlans
         );
+    }
+
+    private void persistSimulationPlan(UUID simulationId, Individual best) {
+        try {
+            simulationPlanRepository.deleteBySimulationId(simulationId.toString());
+            var entity = simulationPlanMapper.toEntity(simulationId.toString(), best);
+            simulationPlanRepository.save(entity);
+            log.debug("[SIM:{}] Persisted simulation plan with {} orders", simulationId, entity.getOrderPlans() != null ? entity.getOrderPlans().size() : 0);
+        } catch (Exception ex) {
+            log.warn("[SIM:{}] Could not persist simulation plan: {}", simulationId, ex.getMessage());
+        }
+    }
+
+    private void cleanupSimulationAsync(SimulationSession session) {
+        executorService.submit(() -> {
+            UUID simId = session.id;
+            try {
+                simulationPlanRepository.deleteBySimulationId(simId.toString());
+            } catch (Exception ex) {
+                log.warn("[SIM:{}] Could not delete simulation plan: {}", simId, ex.getMessage());
+            }
+            try {
+                deliveryRepository.deleteBySimulationId(simId);
+            } catch (Exception ex) {
+                log.warn("[SIM:{}] Could not delete deliveries: {}", simId, ex.getMessage());
+            }
+            try {
+                if (session.snapshotFile != null) {
+                    Files.deleteIfExists(session.snapshotFile);
+                }
+                if (session.diffFile != null) {
+                    Files.deleteIfExists(session.diffFile);
+                }
+            } catch (IOException io) {
+                log.warn("[SIM:{}] Could not delete snapshot files: {}", simId, io.getMessage());
+            }
+            sessions.remove(simId);
+            stopTicker(session);
+            log.info("[SIM:{}] Cleanup completed", simId);
+        });
     }
 
     private SimulationOrderPlan toOrderPlanDto(com.morapack.skyroute.models.OrderPlan plan) {
