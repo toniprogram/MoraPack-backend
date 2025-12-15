@@ -11,9 +11,9 @@ import type { SimulationMessage } from '../types/simulation';
 
 // --- TIPOS ---
 export interface SegmentoVuelo {
-    longitude: number;
-    latitude: number;
     progressPct: number;
+    latitude: null;
+    longitude: null;
     id: string;
     flightId: string;
     origin: string;
@@ -23,6 +23,9 @@ export interface SegmentoVuelo {
     orderIds: string[];
     retrasado: boolean;
     routeQuantity?: number;
+    capacityUsed?: number;
+    capacityTotal?: number;
+    orderLoads?: { orderId: string; quantity: number }[];
 }
 
 export interface VueloEnMovimiento {
