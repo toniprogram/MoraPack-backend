@@ -12,4 +12,7 @@ export const planService = {
 
   // Limpia el plan (Opcional)
   resetPlan: () => API.delete('/plan/current'),
+
+  // Limpia toda la información de planificación (plan + capacidades)
+  resetAllPlans: () => API.delete('/plan/all'),
 };

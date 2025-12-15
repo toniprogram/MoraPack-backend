@@ -61,7 +61,7 @@ export interface SegmentoVuelo {
   capacityTotal?: number;
   orderLoads?: { orderId: string; quantity: number }[];
 }
-/*
+
 // URL de WebSocket nativo
 const resolveWsUrl = () => {
   const envWs = import.meta.env.VITE_WS_URL as string | undefined;
@@ -72,8 +72,8 @@ const resolveWsUrl = () => {
   return `${wsBase}/ws`;
 };
 const BROKER_URL = resolveWsUrl();
-*/
-const BROKER_URL =
+
+//const BROKER_URL =
   import.meta.env.PROD
     ? 'ws://200.16.7.179/ws'  // producción
     : 'ws://localhost:8080/ws'; // desarrollo local
