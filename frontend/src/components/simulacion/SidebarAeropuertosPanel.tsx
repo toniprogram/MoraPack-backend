@@ -192,7 +192,7 @@ export function SidebarAeropuertosPanel({
                       <div className="text-[10px] font-semibold uppercase opacity-70 mb-1">Vuelos Salientes</div>
                       <FlightsList
                           vuelos={vuelosSalientes}
-                          selectedFlightId={selectedFlightId}
+                          //selectedFlightId={selectedFlightId}
                           onSelectFlight={onSelectFlight}
                           onSelectOrders={onSelectOrders}
                       />
