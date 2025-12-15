@@ -5,6 +5,7 @@ import com.morapack.skyroute.simulation.dto.SimulationStartRequest;
 import com.morapack.skyroute.simulation.dto.SimulationStartResponse;
 import com.morapack.skyroute.simulation.dto.SimulationStatus;
 import com.morapack.skyroute.simulation.live.SimulationFinalReport;
+import com.morapack.skyroute.simulation.dto.SimulationOrderPlanPage;
 import com.morapack.skyroute.simulation.service.SimulationService;
 import com.morapack.skyroute.simulation.dto.DeliveredPage;
 import org.springframework.http.HttpStatus;
@@ -74,5 +75,14 @@ public class SimulationController {
                                    @RequestParam(defaultValue = "20") int size,
                                    @RequestParam(required = false) String search) {
         return simulationService.getDelivered(simulationId, page, size, search);
+    }
+
+    @GetMapping("/{simulationId}/plans")
+    public SimulationOrderPlanPage plans(@PathVariable UUID simulationId,
+                                         @RequestParam(defaultValue = "0") int page,
+                                         @RequestParam(defaultValue = "10") int size,
+                                         @RequestParam(required = false) String search,
+                                         @RequestParam(required = false) String statuses) {
+        return simulationService.getOrderPlans(simulationId, page, size, search, statuses);
     }
 }

@@ -7,7 +7,7 @@ import { operationService } from '../services/operationService';
 import { aeropuertoService } from '../services/aeropuertoService';
 import type { Airport } from '../types/airport';
 import type { CurrentPlanResponse } from '../types/plan';
-import type { ActiveAirportTick, SimulationMessage, SimulationTick, OrderStatusTick, ActiveSegment } from '../types/simulation';
+import type { ActiveAirportTick } from '../types/simulation';
 
 // --- TIPOS ---
 export interface SegmentoVuelo {
@@ -98,6 +98,8 @@ export const useOperacion = () => {
         size: 10,
         items: [],
     });
+    const ordersPageRef = useRef(0);
+    const visibleOrderIdsRef = useRef<Set<string>>(new Set());
 
     const { data: aeropuertos = [] } = useQuery<Airport[]>({
         queryKey: ['aeropuertos'],
@@ -213,6 +215,7 @@ export const useOperacion = () => {
                 size: res.size ?? 10,
                 items,
             });
+            ordersPageRef.current = res.page ?? page ?? 0;
             setOrderStatusList(items);
         } catch (e) {
             console.warn('No se pudo cargar pedidos paginados', e);
@@ -284,6 +287,11 @@ export const useOperacion = () => {
         }
     });
 
+    // Mantener un ref con los pedidos visibles en el panel para detectar cambios enviados por el tick
+    useEffect(() => {
+        visibleOrderIdsRef.current = new Set(orderStatusList.map(o => o.orderId));
+    }, [orderStatusList]);
+
     // Suscribirse al tópico de operación y consumir ticks desde el backend
     useEffect(() => {
         const resolveWsUrl = () => {
@@ -300,8 +308,17 @@ export const useOperacion = () => {
             reconnectDelay: 5000,
             onConnect: () => {
                 client.subscribe('/topic/ops/current', (message) => {
-                    // Ignoramos la carga de pedidos que pueda venir en ticks; los pedidos se obtienen vía HTTP paginado.
-                    void message;
+                    try {
+                        const tick = JSON.parse(message.body) as { changedOrderIds?: string[] };
+                        if (tick?.changedOrderIds?.length) {
+                            const hasVisibleChange = tick.changedOrderIds.some(id => visibleOrderIdsRef.current.has(id));
+                            if (hasVisibleChange) {
+                                loadOrders(simClockRef.current, ordersPageRef.current);
+                            }
+                        }
+                    } catch (err) {
+                        console.warn('No se pudo parsear tick de operación', err);
+                    }
                 });
             },
             onStompError: (frame) => console.warn('WS OPS error', frame),

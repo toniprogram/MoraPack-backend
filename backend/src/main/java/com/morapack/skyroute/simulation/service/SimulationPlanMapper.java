@@ -42,6 +42,7 @@ public class SimulationPlanMapper {
         SimulationOrderPlan copy = new SimulationOrderPlan();
         copy.setOrderId(original.getOrderId());
         copy.setSlack(original.getSlack());
+        copy.setStatus("WAITING");
         copy.setPlan(parentPlan);
 
         List<SimulationRoute> routes = original.getRoutes() == null
@@ -53,7 +54,7 @@ public class SimulationPlanMapper {
         return copy;
     }
 
-    private SimulationRoute mapRoute(Route original) {
+    public SimulationRoute mapRoute(Route original) {
         SimulationRoute copy = new SimulationRoute();
         copy.setQuantity(original.getQuantity());
         copy.setSlack(original.getSlack());

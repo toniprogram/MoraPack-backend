@@ -33,6 +33,7 @@ export default function SimulacionPage() {
       inTransitOrders,
       orderStatuses,
       orderPlans,
+      orderPlansDb,
       simulationId,
       startRealMs,
       elapsedRealMs,
@@ -164,6 +165,16 @@ export default function SimulacionPage() {
     const term = (filtroTexto || '').toLowerCase();
     const next = new Map<string, EnvioInfo>();
     const planMap = new Map<string, SimulationOrderPlan>();
+    // Primero planes con estado desde BD (sin rutas)
+    (orderPlansDb ?? []).forEach(p => {
+      planMap.set(p.orderId, {
+        orderId: p.orderId,
+        creationUtc: null,
+        slackMinutes: p.slackMinutes,
+        routes: []
+      });
+    });
+    // Luego los planes completos con rutas desde snapshots/ticks
     (orderPlans ?? []).forEach(p => planMap.set(p.orderId, p));
 
     const merged = new Map<string, { status: string; simTime?: string; quantity?: number }>();

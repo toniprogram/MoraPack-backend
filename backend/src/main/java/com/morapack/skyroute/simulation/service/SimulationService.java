@@ -22,6 +22,8 @@ import com.morapack.skyroute.simulation.dto.OrderStatusTick;
 import com.morapack.skyroute.simulation.dto.PrewarmResponse;
 import com.morapack.skyroute.simulation.dto.SimulationMessage;
 import com.morapack.skyroute.simulation.dto.SimulationOrderPlan;
+import com.morapack.skyroute.simulation.dto.SimulationOrderPlanItem;
+import com.morapack.skyroute.simulation.dto.SimulationOrderPlanPage;
 import com.morapack.skyroute.simulation.dto.SimulationPlanSummary;
 import com.morapack.skyroute.simulation.dto.SimulationSegment;
 import com.morapack.skyroute.simulation.dto.SimulationSnapshot;
@@ -31,6 +33,7 @@ import com.morapack.skyroute.simulation.dto.SimulationStartResponse;
 import com.morapack.skyroute.simulation.dto.SimulationTick;
 import com.morapack.skyroute.simulation.live.*;
 import com.morapack.skyroute.simulation.repository.SimulationPlanRepository;
+import com.morapack.skyroute.simulation.repository.SimulationOrderPlanRepository;
 import com.morapack.skyroute.simulation.repository.SimulationDeliveryRepository;
 import com.morapack.skyroute.simulation.service.SimulationPlanMapper;
 import com.morapack.skyroute.simulation.model.SimulationDelivery;
@@ -69,8 +72,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 
 @Slf4j
 @Service
@@ -86,6 +91,7 @@ public class SimulationService {
     private final ObjectMapper objectMapper;
     private final SimulationDeliveryRepository deliveryRepository;
     private final SimulationPlanRepository simulationPlanRepository;
+    private final SimulationOrderPlanRepository orderPlanRepository;
     private final SimulationPlanMapper simulationPlanMapper;
     private final Path snapshotsDir = Paths.get("snapshots");
     private final ExecutorService executorService = Executors.newCachedThreadPool();
@@ -99,6 +105,7 @@ public class SimulationService {
                              ObjectMapper objectMapper,
                              SimulationDeliveryRepository deliveryRepository,
                              SimulationPlanRepository simulationPlanRepository,
+                             SimulationOrderPlanRepository orderPlanRepository,
                              SimulationPlanMapper simulationPlanMapper) {
         this.worldBuilder = worldBuilder;
         this.orderRepository = orderRepository;
@@ -106,6 +113,7 @@ public class SimulationService {
         this.objectMapper = objectMapper;
         this.deliveryRepository = deliveryRepository;
         this.simulationPlanRepository = simulationPlanRepository;
+        this.orderPlanRepository = orderPlanRepository;
         this.simulationPlanMapper = simulationPlanMapper;
     }
 
@@ -627,21 +635,12 @@ public class SimulationService {
         }
         executorService.submit(() -> {
             try {
-                simulationPlanRepository.findBySimulationId(simulationId.toString()).ifPresent(plan -> {
-                    Map<String, com.morapack.skyroute.simulation.model.SimulationOrderPlan> byOrder = plan.getOrderPlans() == null
-                            ? new HashMap<>()
-                            : plan.getOrderPlans().stream()
-                            .collect(Collectors.toMap(com.morapack.skyroute.simulation.model.SimulationOrderPlan::getOrderId, p -> p, (a, b) -> a, HashMap::new));
-                    boolean dirty = false;
-                    for (Map.Entry<String, String> entry : statusChanges.entrySet()) {
-                        com.morapack.skyroute.simulation.model.SimulationOrderPlan sop = byOrder.get(entry.getKey());
-                        if (sop != null && !Objects.equals(sop.getStatus(), entry.getValue())) {
-                            sop.setStatus(entry.getValue());
-                            dirty = true;
-                        }
-                    }
-                    if (dirty) {
-                        simulationPlanRepository.save(plan);
+                String simId = simulationId.toString();
+                statusChanges.forEach((orderId, status) -> {
+                    try {
+                        orderPlanRepository.updateStatus(simId, orderId, status);
+                    } catch (Exception inner) {
+                        log.warn("[SIM:{}] Could not update status for order {}: {}", simId, orderId, inner.getMessage());
                     }
                 });
             } catch (Exception ex) {
@@ -909,6 +908,38 @@ public class SimulationService {
         );
     }
 
+    private SimulationSegment toSegmentDto(com.morapack.skyroute.simulation.model.SimulationRouteSegment segment) {
+        var flight = segment.getFlight();
+        LocalDate date = segment.getDate();
+        Instant departureUtc = flight.getDepartureInstant(date);
+        Instant arrivalUtc = flight.getArrivalInstant(date);
+        return new SimulationSegment(
+                flight.getId(),
+                flight.getOriginCode(),
+                flight.getDestinationCode(),
+                date,
+                segment.getRouteQuantity(),
+                departureUtc,
+                arrivalUtc
+        );
+    }
+
+    private com.morapack.skyroute.simulation.dto.SimulationRoute toRouteDto(com.morapack.skyroute.simulation.model.SimulationRoute route) {
+        long slackMinutes = optionalDurationMinutes(route.getSlack());
+        List<SimulationSegment> segments = route.getSegments() == null
+                ? List.of()
+                : route.getSegments().stream().map(this::toSegmentDto).toList();
+        return new com.morapack.skyroute.simulation.dto.SimulationRoute(route.getQuantity(), slackMinutes, segments);
+    }
+
+    private SimulationOrderPlanItem toOrderPlanItem(com.morapack.skyroute.simulation.model.SimulationOrderPlan plan) {
+        List<com.morapack.skyroute.simulation.dto.SimulationRoute> routes = plan.getRoutes() == null
+                ? List.of()
+                : plan.getRoutes().stream().map(this::toRouteDto).toList();
+        long slackMinutes = plan.getSlack() != null ? plan.getSlack().toMinutes() : 0L;
+        return new SimulationOrderPlanItem(plan.getOrderId(), plan.getStatus(), slackMinutes, routes);
+    }
+
     private long optionalDurationMinutes(Duration duration) {
         return duration == null ? 0 : duration.toMinutes();
     }
@@ -1128,6 +1159,44 @@ public class SimulationService {
                 ))
                 .toList();
         return new DeliveredPage(deliveries.getTotalElements(), deliveries.getNumber(), deliveries.getSize(), items);
+    }
+
+    public SimulationOrderPlanPage getOrderPlans(UUID simulationId, int page, int size, String search, String statuses) {
+        int sanitizedPage = Math.max(0, page);
+        int sanitizedSize = Math.min(Math.max(1, size), 200);
+        Pageable pageable = PageRequest.of(sanitizedPage, sanitizedSize);
+        Page<com.morapack.skyroute.simulation.model.SimulationOrderPlan> plansPage;
+        String simId = simulationId.toString();
+        List<String> statusFilter = normalizeStatuses(statuses);
+
+        if (search != null && !search.isBlank()) {
+            plansPage = statusFilter == null
+                    ? orderPlanRepository.findByPlanSimulationIdAndOrderIdContainingIgnoreCase(simId, search, pageable)
+                    : orderPlanRepository.findByPlanSimulationIdAndStatusInAndOrderIdContainingIgnoreCase(simId, statusFilter, search, pageable);
+        } else {
+            plansPage = statusFilter == null
+                    ? orderPlanRepository.findByPlanSimulationId(simId, pageable)
+                    : orderPlanRepository.findByPlanSimulationIdAndStatusIn(simId, statusFilter, pageable);
+        }
+        List<SimulationOrderPlanItem> items = plansPage.getContent().stream()
+                .map(this::toOrderPlanItem)
+                .toList();
+        return new SimulationOrderPlanPage(plansPage.getTotalElements(), plansPage.getNumber(), plansPage.getSize(), items);
+    }
+
+    private List<String> normalizeStatuses(String statuses) {
+        if (statuses == null || statuses.isBlank()) {
+            return null;
+        }
+        List<String> allowed = List.of("WAITING", "IN_TRANSIT", "DELIVERED");
+        List<String> parsed = Stream.of(statuses.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .map(String::toUpperCase)
+                .filter(allowed::contains)
+                .distinct()
+                .toList();
+        return parsed.isEmpty() ? null : parsed;
     }
 
     private String topic(UUID simulationId) {

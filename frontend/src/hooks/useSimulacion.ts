@@ -15,9 +15,9 @@ import type {
   ActiveSegmentTick,
   ActiveAirportTick,
   SimulationOrderPlan,
+  SimulationOrderPlanItem,
   OrderPlansDiff,
   DeliveredPage,
-  DeliveredOrder
 } from '../types/simulation';
 import type { OrderStatusTick } from '../types/simulation';
 
@@ -103,6 +103,8 @@ export const useSimulacion = () => {
   const [deliveredPage, setDeliveredPage] = useState<DeliveredPage | null>(null);
   const [deliveredLoading, setDeliveredLoading] = useState(false);
   const [orderPlansLive, setOrderPlansLive] = useState<SimulationOrderPlan[]>([]);
+  const [orderPlansDb, setOrderPlansDb] = useState<SimulationOrderPlanItem[]>([]);
+  const [orderStatusesDb, setOrderStatusesDb] = useState<OrderStatusTick[]>([]);
   const [animPaused, setAnimPaused] = useState(false);
   const firstSimTickMsRef = useRef<number | null>(null);
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -179,18 +181,23 @@ export const useSimulacion = () => {
     return map;
   }, [baseFlights]);
 
-  const snapshotConRutas = useMemo(
-    () => visibleSnapshot ?? finalSnapshot ?? latestProgress,
-    [visibleSnapshot, finalSnapshot, latestProgress]
-  );
   useEffect(() => {
     engineSpeedRef.current = engineSpeed;
   }, [engineSpeed]);
   const planSource: SimulationOrderPlan[] = useMemo(() => {
-    return orderPlansLive.length > 0
-      ? orderPlansLive
-      : (snapshotConRutas?.orderPlans ?? []);
-  }, [orderPlansLive, snapshotConRutas]);
+    if (orderPlansDb.length > 0) {
+      return orderPlansDb.map(p => ({
+        orderId: p.orderId,
+        creationUtc: null,
+        slackMinutes: p.slackMinutes,
+        routes: p.routes ?? [],
+      }));
+    }
+    if (orderPlansLive.length > 0) {
+      return orderPlansLive;
+    }
+    return [];
+  }, [orderPlansDb, orderPlansLive]);
 
   const segmentosPorOrden = useMemo(() => {
     const mapa = new Map<string, SimulationSegment[]>();
@@ -373,6 +380,40 @@ export const useSimulacion = () => {
         clearInterval(heartbeatRef.current);
         heartbeatRef.current = null;
       }
+    };
+  }, [simulationId]);
+
+  // Poll de planes en BD para estados persistidos
+  useEffect(() => {
+    if (!simulationId) return;
+    let cancelled = false;
+    let interval: ReturnType<typeof setInterval> | null = null;
+
+    const fetchPlans = async () => {
+      try {
+        const page = await simulacionService.getOrderPlans(simulationId, 0, 500, undefined, undefined);
+        if (cancelled) return;
+        setOrderPlansDb(page.items);
+        const statusTicks: OrderStatusTick[] = page.items.map(p => ({
+          orderId: p.orderId,
+          status: p.status,
+          location: '',
+          quantity: 0,
+        }));
+        setOrderStatusesDb(statusTicks);
+      } catch (err) {
+        if (!cancelled) {
+          console.warn('[SIM] No se pudieron obtener planes desde BD:', err);
+        }
+      }
+    };
+
+    fetchPlans();
+    interval = setInterval(fetchPlans, 5000);
+
+    return () => {
+      cancelled = true;
+      if (interval) clearInterval(interval);
     };
   }, [simulationId]);
 
@@ -780,7 +821,7 @@ export const useSimulacion = () => {
     status,
     deliveredOrders,
     inTransitOrders,
-    orderStatuses,
+    orderStatuses: [...orderStatusesDb, ...orderStatuses],
     startRealMs,
     elapsedRealMs,
     conectarSimulacion,
@@ -790,5 +831,6 @@ export const useSimulacion = () => {
     deliveredPage,
     deliveredLoading,
     fetchDeliveries,
+    orderPlansDb,
   };
 };

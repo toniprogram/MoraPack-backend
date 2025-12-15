@@ -20,6 +20,9 @@ public class SimulationOrderPlan {
     private String orderId;
 
     @Column(nullable = false)
+    private String status = "WAITING"; // WAITING/IN_TRANSIT/DELIVERED
+
+    @Column(nullable = false)
     private Duration slack;
 
     @ManyToOne(optional = false)

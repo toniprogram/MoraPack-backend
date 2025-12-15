@@ -177,11 +177,12 @@ public class OperationSimulationService {
                 airportTicks,
                 deliveredOrders,
                 inTransitOrders,
-                orderStatuses,
-                deliveredStatuses,
-                plannedStatuses,
-                nowInTransit,
-                planSummaries
+                List.of(), // orderStatuses
+                List.of(), // deliveredStatuses
+                List.of(), // plannedStatuses
+                List.of(), // nowInTransit
+                List.of(),  // planSummaries
+                List.of()   // changedOrderIds
         );
     }
 }

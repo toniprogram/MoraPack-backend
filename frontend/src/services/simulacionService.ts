@@ -1,5 +1,11 @@
 import { API } from "../api/api";
-import type { SimulationStartResponse, SimulationStartRequest, SimulationStatus, DeliveredPage } from "../types/simulation";
+import type {
+  SimulationStartResponse,
+  SimulationStartRequest,
+  SimulationStatus,
+  DeliveredPage,
+  SimulationOrderPlanPage,
+} from "../types/simulation";
 import type { SimulationFinalReport } from "../types/simulation";
 
 const startSimulation = async (request: SimulationStartRequest): Promise<SimulationStartResponse> => {
@@ -47,6 +53,20 @@ const getDeliveries = async (simulationId: string, page = 0, size = 20, search?:
   return res.data;
 };
 
+const getOrderPlans = async (
+  simulationId: string,
+  page = 0,
+  size = 10,
+  search?: string,
+  statuses?: string
+): Promise<SimulationOrderPlanPage> => {
+  const params: Record<string, string | number> = { page, size };
+  if (search) params.search = search;
+  if (statuses) params.statuses = statuses;
+  const res = await API.get<SimulationOrderPlanPage>(`/simulations/${simulationId}/plans`, { params });
+  return res.data;
+};
+
 export const simulacionService = {
   startSimulation,
   prewarmWorld,
@@ -57,4 +77,5 @@ export const simulacionService = {
   getStatus,
   getReport,
   getDeliveries,
+  getOrderPlans,
 };
