@@ -189,7 +189,9 @@ export default function SimulacionPage() {
 
     (orderStatuses ?? []).forEach(os => {
       if (!os) return;
-      merged.set(os.orderId, { status: os.status || '', simTime: undefined, quantity: os.quantity });
+      const statusUpper = (os.status || '').toUpperCase();
+      const normalizedStatus = statusUpper === 'WAITING' ? 'PLANNED' : statusUpper;
+      merged.set(os.orderId, { status: normalizedStatus, simTime: undefined, quantity: os.quantity });
     });
     deliveredSource.forEach(entry => {
       merged.set(entry.orderId, { status: 'DELIVERED', simTime: entry.simTime, quantity: entry.quantity });
@@ -216,12 +218,13 @@ export default function SimulacionPage() {
 
     merged.forEach((info, orderId) => {
       const statusUpper = (info.status || '').toUpperCase();
+      const statusNorm = statusUpper === 'WAITING' ? 'PLANNED' : statusUpper;
       const includeEstado =
         filtroEstado === 'planificados'
-          ? statusUpper === 'PLANNED'
+          ? statusNorm === 'PLANNED'
           : filtroEstado === 'entregados'
-            ? statusUpper === 'DELIVERED'
-            : statusUpper !== 'PLANNED' && statusUpper !== 'DELIVERED';
+            ? statusNorm === 'DELIVERED'
+            : statusNorm !== 'PLANNED' && statusNorm !== 'DELIVERED';
       if (!includeEstado) return;
 
       const matchSearch = term === '' || orderId.toLowerCase().includes(term);
@@ -229,9 +232,9 @@ export default function SimulacionPage() {
       if (selectedOrderIds && !selectedOrderIds.includes(orderId)) return;
 
       let estado: EnvioInfo['estado'] = 'Planificado';
-      if (statusUpper === 'READY_PICKUP' || statusUpper === 'IN_TRANSIT') {
+      if (statusNorm === 'READY_PICKUP' || statusNorm === 'IN_TRANSIT') {
           estado = 'En tránsito';
-      } else if (statusUpper === 'DELIVERED') {
+      } else if (statusNorm === 'DELIVERED') {
           estado = 'Entregado';
       }
 
