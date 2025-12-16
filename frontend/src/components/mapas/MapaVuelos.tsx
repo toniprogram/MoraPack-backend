@@ -1,4 +1,4 @@
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap, Tooltip, useMapEvents } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap, Tooltip, useMapEvents, ZoomControl } from 'react-leaflet';
 import L from 'leaflet';
 import { useEffect, useRef, useState, useMemo } from 'react';
 import type { LatLngExpression } from 'leaflet';
@@ -11,11 +11,12 @@ import type { SegmentoVuelo, VueloEnMovimiento } from '../../hooks/useSimulacion
 import { Plane, Building } from 'lucide-react';
 import { OutgoingOrdersList } from '../simulacion/OutgoingOrdersList';
 
-// --- FUNCIONES DE ESTILO E ICONOS ---
+// --- FUNCIONES DE ESTILO E ICONOS (MEZCLA DE A Y B) ---
 
 const getStatusColor = (pct: number) => {
-  if (pct < 10) return '#22c55e';      // Verde (Ok)
-  if (pct < 20) return '#eab308';      // Amarillo (Advertencia)
+  if (pct === 0) return '#22c55e';      // Verde (Vacio)
+  if (pct < 10) return '#22c55e';       // Verde (Ok)
+  if (pct < 20) return '#eab308';       // Amarillo (Advertencia)
   return '#ef4444';                     // Rojo (Crítico/Lleno)
 };
 
@@ -24,8 +25,9 @@ const getAirportIcon = (pct: number, forPopup = false, lat?: number, _northBound
   const animId = `airport-${Math.random().toString(36).substr(2, 9)}`;
   const size = forPopup ? 20 : 20;
   const iconSize = forPopup ? 12 : 12;
-  // Lógica para evitar que el popup se salga por arriba si el aeropuerto está muy al norte
-  const nearTop = lat !== undefined ? lat > 10 : false;
+
+  // LOGICA MEJORADA DE CODIGO B: Mejor detección de bordes
+  const nearTop = lat !== undefined ? lat > -10 : false;
   const anchorY = size;
   const popupY = nearTop ? 295 : -30;
 
@@ -87,6 +89,8 @@ const getHubIcon = (pct: number, hubHex?: string, forPopup = false, lat?: number
   const innerSize = forPopup ? 18 : 34;
   const iconSize = forPopup ? 18 : 22;
   const borderWidth = forPopup ? 2 : 3;
+
+  // LOGICA MEJORADA DE CODIGO B
   const nearTop = lat !== undefined ? lat > -10 : false;
   const anchorY = 10;
   const popupY = nearTop ? 170 : -25;
@@ -275,7 +279,10 @@ function MapClickReset({ onClear }: { onClear?: () => void }) {
 
 // --- LOGICA DE NEGOCIO Y RENDERIZADO ---
 
-const isMainHub = (code: string) => ['SPIM','UBBB','EBCI'].includes(code?.toUpperCase());
+const isMainHub = (code: string) => {
+    const c = code ? code.toUpperCase() : '';
+    return ['SPIM','UBBB','EBCI','LIM','GYD','BRU','CRL'].includes(c);
+};
 
 const getHubColor = (originCode: string) => {
   const code = originCode ? originCode.toUpperCase() : '';
@@ -386,6 +393,7 @@ export function MapaVuelos({
   const northBound = maxBounds ? maxBounds[1][0] : 90;
 
   const popupOffsetForLat = (lat: number): [number, number] => {
+    // LOGICA DE CODIGO B (MAS PRECISA PARA LATAM)
     return (lat > -10) ? [0, 260] : [0, 32];
   };
 
@@ -408,7 +416,7 @@ export function MapaVuelos({
       const seg = segmentsMap.get(selectedFlightId);
       if (seg) { set.add(seg.origin); set.add(seg.destination); }
     }
-    // Lógica extendida del archivo nuevo: Resaltar destinos conectados a aeropuertos seleccionados
+    // FEATURE IMPORTANTE DE CODIGO A: Resaltar destinos conectados
     if (selectedAirportIds?.length) {
       activeSegments.forEach(seg => {
         if (selectedAirportIds.includes(seg.origin)) set.add(seg.destination);
@@ -444,7 +452,7 @@ export function MapaVuelos({
 
       <MapResizer isLoading={isLoading} />
 
-      {/* LEYENDA (VERSION NUEVA MEJORADA) */}
+      {/* LEYENDA (VERSION A: MAS DETALLADA) */}
       <div className="leaflet-bottom leaflet-left m-2 z-[1000]">
         <div className="card compact bg-base-100/90 shadow-xl border border-base-content/10 text-[10px] p-2 backdrop-blur-sm w-36">
           <h4 className="font-bold mb-1 text-base-content uppercase tracking-wider border-b border-base-content/10 pb-1">
@@ -479,7 +487,8 @@ export function MapaVuelos({
         const live = activeAirports.find(a => a.airportCode === (aeropuerto.id || aeropuerto.code));
         const stockActual = live?.currentLoad ?? 0;
         const capacidadMax = live?.maxThroughputPerHour ?? aeropuerto.storageCapacity ?? 0;
-        const isInfinite = ['SPIM', 'LIM', 'EBCI', 'BRU', 'UBBB', 'GYD'].includes(aeropuerto.id || aeropuerto.code || '');
+        const targetInfinite = ['SPIM', 'LIM', 'EBCI', 'BRU', 'UBBB', 'GYD'];
+        const isInfinite = targetInfinite.includes(aeropuerto.id) || targetInfinite.includes(aeropuerto.code);
 
         let stockPct = 0;
         let statusColorClass = 'text-success';
@@ -521,7 +530,7 @@ export function MapaVuelos({
               </Tooltip>
             )}
 
-            {/* POPUP DETALLADO CON SOPORTE PARA OUTGOING ORDERS */}
+            {/* POPUP DETALLADO CON SOPORTE PARA OUTGOING ORDERS (MANTENIDO DE CODIGO A) */}
             <Popup className="p-0 overflow-hidden rounded-xl thin-popup" minWidth={200} autoPan={false}>
               {(() => {
                 const hasSelection = (selectedOrders && selectedOrders.length > 0) || !!selectedFlightId;
@@ -559,7 +568,7 @@ export function MapaVuelos({
                             </>
                         )}
 
-                        {/* Pedidos Salientes (Solo Hubs) - FEATURE NUEVO DEL MERGE */}
+                        {/* Pedidos Salientes (Solo Hubs) - FEATURE CLAVE DE CODIGO A */}
                         {esSede && (
                             <div className="border-t border-base-content/10 pt-2">
                                 <div className="text-[10px] font-semibold uppercase opacity-70"><span>Pedidos Salientes</span></div>
@@ -594,17 +603,12 @@ export function MapaVuelos({
         );
       })}
 
-      {/* RUTAS Y AVIONES (Sin cambios mayores, solo integración) */}
+      {/* RUTAS Y AVIONES (MANTENIDO DE CODIGO A PARA COMPATIBILIDAD DE SELECCION) */}
       {activeSegments.map((segmento) => {
           const origenCoords = coordsAeropuertos.get(segmento.origin);
           const destinoCoords = coordsAeropuertos.get(segmento.destination);
 
-          // DEBUG: Ver por qué no renderiza
           if (!origenCoords || !destinoCoords) {
-              console.warn(`No se puede renderizar vuelo ${segmento.flightId}. Faltan coords para:`,
-                  !origenCoords ? segmento.origin : '',
-                  !destinoCoords ? segmento.destination : ''
-              );
               return null;
           }
 

@@ -107,10 +107,10 @@ export function SidebarAeropuertosPanel({
             const vuelosSalientes = (activeSegments ?? []).filter(s => s.origin === (aeropuerto.id || aeropuerto.code));
             let progressColorClass = 'progress-success'; // Verde (< 70%)
             let textColorClass = 'text-success';
-            if (pct > 90) {
+            if (pct >= 20) {
               progressColorClass = 'progress-error'; // Rojo (> 90%)
               textColorClass = 'text-error';
-            } else if (pct > 70) {
+            } else if (pct >= 10) {
               progressColorClass = 'progress-warning'; // Amarillo (70% - 90%)
               textColorClass = 'text-warning';
             }
