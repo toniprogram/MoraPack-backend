@@ -11,7 +11,7 @@ import com.morapack.skyroute.base.repository.FlightRepository;
 import com.morapack.skyroute.plan.service.WorldBuilder;
 import com.morapack.skyroute.simulation.live.LiveAirport;
 import com.morapack.skyroute.simulation.live.LiveFlight;
-import com.morapack.skyroute.simulation.live.LiveOperationWorld;
+import com.morapack.skyroute.operation.live.LiveOperationWorld;
 import com.morapack.skyroute.simulation.dto.OrderStatusTick;
 import org.springframework.stereotype.Service;
 import lombok.extern.slf4j.Slf4j;

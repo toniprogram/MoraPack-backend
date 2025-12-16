@@ -1,7 +1,11 @@
-package com.morapack.skyroute.simulation.live;
+package com.morapack.skyroute.operation.live;
 
 import com.morapack.skyroute.config.Config;
 import com.morapack.skyroute.simulation.dto.ActiveSegment;
+import com.morapack.skyroute.simulation.live.LiveFlight;
+import com.morapack.skyroute.simulation.live.LiveAirport;
+import com.morapack.skyroute.simulation.live.LiveOrder;
+import com.morapack.skyroute.simulation.live.OrderFlightLeg;
 import com.morapack.skyroute.simulation.dto.OrderLoadTick;
 import com.morapack.skyroute.simulation.dto.OrderStatusTick;
 import com.morapack.skyroute.simulation.dto.SimulationOrderPlan;

@@ -11,7 +11,7 @@ import com.morapack.skyroute.simulation.dto.SimulationOrderPlan;
 import com.morapack.skyroute.simulation.dto.OrderStatusTick;
 import com.morapack.skyroute.simulation.dto.SimulationPlanSummary;
 import com.morapack.skyroute.simulation.dto.OrderLoadTick;
-import com.morapack.skyroute.simulation.live.LiveOperationWorld;
+import com.morapack.skyroute.operation.live.LiveOperationWorld;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
