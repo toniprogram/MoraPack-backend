@@ -40,6 +40,9 @@ public class LiveSimulationWorld {
     private final Map<String, OrderStatusTick> deliveredOnce = new HashMap<>();
     // Para emitir planificados una sola vez cuando se agrega plan
     private final Map<String, OrderStatusTick> plannedOnce = new HashMap<>();
+    // Seguimiento de cambios de estado por pedido
+    private final Map<String, String> lastStatusByOrder = new HashMap<>();
+    private final Set<String> changedStatusIds = new HashSet<>();
 
     public LiveSimulationWorld(String simulationId,
                                Instant startTime,
@@ -405,6 +408,16 @@ public class LiveSimulationWorld {
         return new ArrayList<>(deliveredOnce.values());
     }
 
+    /**
+     * Devuelve las entregas pendientes y las limpia para evitar duplicados
+     * al persistir en BD. No se usa para el payload del tick.
+     */
+    public List<OrderStatusTick> drainDeliveredOnce() {
+        List<OrderStatusTick> list = new ArrayList<>(deliveredOnce.values());
+        deliveredOnce.clear();
+        return list;
+    }
+
     public List<OrderStatusTick> buildPlannedStatuses() {
         List<OrderStatusTick> planned = new ArrayList<>();
         plannedOnce.forEach((id, tick) -> {
@@ -423,6 +436,38 @@ public class LiveSimulationWorld {
         }
         plannedOnce.put(planned.orderId(), planned);
         System.out.println("[SIM] Planned registered for order " + planned.orderId());
+    }
+
+    /**
+     * Registra los cambios de estado desde el último tick y devuelve
+     * un mapa orderId -> status actual (WAITING/IN_TRANSIT/DELIVERED).
+     */
+    public Map<String, String> captureStatusChanges() {
+        for (LiveOrder order : orders.values()) {
+            String current = mapStatus(order.getStatus());
+            String prev = lastStatusByOrder.get(order.getOrderId());
+            if (!Objects.equals(current, prev)) {
+                lastStatusByOrder.put(order.getOrderId(), current);
+                changedStatusIds.add(order.getOrderId());
+            }
+        }
+        Map<String, String> diff = new HashMap<>();
+        for (String id : changedStatusIds) {
+            String status = lastStatusByOrder.get(id);
+            if (status != null) {
+                diff.put(id, status);
+            }
+        }
+        changedStatusIds.clear();
+        return diff;
+    }
+
+    private String mapStatus(LiveOrder.Status status) {
+        return switch (status) {
+            case PLANNED, WAITING_PICKUP -> "WAITING";
+            case IN_TRANSIT -> "IN_TRANSIT";
+            case DELIVERED -> "DELIVERED";
+        };
     }
 
     private void recomputeAirportLoad(String airportCode) {

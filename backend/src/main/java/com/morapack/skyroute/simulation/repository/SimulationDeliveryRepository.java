@@ -14,4 +14,6 @@ public interface SimulationDeliveryRepository extends JpaRepository<SimulationDe
     Page<SimulationDelivery> findBySimulationId(UUID simulationId, Pageable pageable);
 
     Page<SimulationDelivery> findBySimulationIdAndOrderIdContainingIgnoreCase(UUID simulationId, String orderId, Pageable pageable);
+
+    void deleteBySimulationId(UUID simulationId);
 }
