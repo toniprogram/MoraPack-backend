@@ -41,7 +41,12 @@ export default function OperacionPage() {
         const segs = activeSegments.filter(s => {
             const dep = Date.parse(s.departureUtc);
             return dep <= nowMs;
-        });
+        }).map(s => ({
+            ...s,
+            longitude: null,
+            latitude: null,
+            progressPct: s.progressPct || 0
+        }));
         // 2. Aviones: Solo si ya pasó su hora de salida
         const vuelos = vuelosEnMovimiento.filter(v => {
              const dep = Date.parse(v.salidaProgramada);

@@ -50,6 +50,9 @@ export interface VueloEnMovimiento {
 }
 
 export interface SegmentoVuelo {
+  longitude: null;
+  latitude: null;
+  progressPct: number;
   id: string;
   flightId: string;
   origin: string;
@@ -98,7 +101,7 @@ export const useSimulacion = () => {
   const [activeAirports, setActiveAirports] = useState<ActiveAirportTick[]>([]);
   const [deliveredOrders, setDeliveredOrders] = useState(0);
   const [inTransitOrders, setInTransitOrders] = useState(0);
-  const [orderStatuses, setOrderStatuses] = useState<OrderStatusTick[]>([]);
+  const [, setOrderStatuses] = useState<OrderStatusTick[]>([]);
   const [plannedLog, setPlannedLog] = useState<{ orderId: string; simTime: string }[]>([]);
   const [deliveredPage, setDeliveredPage] = useState<DeliveredPage | null>(null);
   const [deliveredLoading, setDeliveredLoading] = useState(false);
@@ -441,6 +444,9 @@ export const useSimulacion = () => {
         capacityUsed: seg.capacityUsed,
         capacityTotal: seg.capacityTotal,
         orderLoads: seg.orderLoads ?? seg.orderIds?.map(id => ({ orderId: id, quantity: seg.capacityUsed })) ?? [],
+        longitude: null,
+        latitude: null,
+        progressPct: 0,
       }));
       setSegmentosTick(mapped);
     }
@@ -563,8 +569,8 @@ export const useSimulacion = () => {
       // Si backend envía lat/lon/progreso, los usamos; caso contrario calculamos.
       let progreso = segmento.progressPct ?? 0;
       let estadoVisual: VueloEnMovimiento['estadoVisual'] = segmento.retrasado ? 'retrasado' : 'en curso';
-      let latActual = segmento.latitude ?? null;
-      let lonActual = segmento.longitude ?? null;
+      let latActual = segmento.latitude ?? 0;
+      let lonActual = segmento.longitude ?? 0;
 
       if (latActual == null || lonActual == null || progreso == null) {
         if (tiempoActualMs >= horaLlegada) {

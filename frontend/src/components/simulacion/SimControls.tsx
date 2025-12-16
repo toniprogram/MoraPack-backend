@@ -24,7 +24,7 @@ export function SimControls({
   const controlIsDisabled = estaSincronizando || isStarting;
   const terminarDisabled = isStarting ? true : (!estaActivo && !estaVisualizando);
   const isPaused = animPaused || (!estaActivo && !estaVisualizando);
-  const playPauseIcon = isPaused ? <Play size={16} /> : <Pause size={16} />;
+  //const playPauseIcon = isPaused ? <Play size={16} /> : <Pause size={16} />;
   const playPauseClass = isPaused ? 'btn-success' : (estaActivo ? 'btn-warning' : 'btn-success');
 
   return (

@@ -13,13 +13,13 @@ interface OperacionTopBarProps {
 export function OperacionTopBar({
   metrics,
   simClock,
-  status,
+  //status,
   activeSegments,
-  lastUpdated
+  //lastUpdated
 }: OperacionTopBarProps) {
 
   // Lógica de porcentaje de carga de flota
-  const { capacidadUsada, capacidadTotal, capacidadPct } = useMemo(() => {
+  const { capacidadPct } = useMemo(() => {
       let used = 0;
       let total = 0;
 

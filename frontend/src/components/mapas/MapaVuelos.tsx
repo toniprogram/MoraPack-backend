@@ -91,8 +91,8 @@ const getHubIcon = (pct: number, hubHex?: string, forPopup = false, lat?: number
   const anchorY = 10;
   const popupY = nearTop ? 170 : -25;
 
-  if (forPopup) {
-    return `
+  const html = forPopup
+    ? `
       <div style="position: relative; width: ${outerSize}px; height: ${outerSize}px; display: inline-block;">
         <div style="position: absolute; top: 0; left: 0; width: ${outerSize}px; height: ${outerSize}px; border-radius: 50%; border: 2px dashed ${colorHex}; opacity: 0.5;"></div>
         <div style="position: absolute; top: ${(outerSize - innerSize) / 2}px; left: ${(outerSize - innerSize) / 2}px; background: ${colorHex}; width: ${innerSize}px; height: ${innerSize}px; border-radius: 50%; border: ${borderWidth}px solid ${colorHex}; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 12px ${colorHex}99;">
@@ -103,12 +103,8 @@ const getHubIcon = (pct: number, hubHex?: string, forPopup = false, lat?: number
           </svg>
         </div>
       </div>
-    `;
-  }
-
-  return L.divIcon({
-    className: 'bg-transparent border-none',
-    html: `
+    `
+    : `
       <style>
         @keyframes ${animId} {
           0%, 100% { transform: scale(1); box-shadow: 0 0 16px ${colorHex}cc, 0 0 32px ${colorHex}66, inset 0 0 12px rgba(0,0,0,0.2); }
@@ -126,7 +122,11 @@ const getHubIcon = (pct: number, hubHex?: string, forPopup = false, lat?: number
           </svg>
         </div>
       </div>
-    `,
+    `;
+
+  return L.divIcon({
+    className: 'bg-transparent border-none',
+    html,
     iconSize: [outerSize, outerSize],
     iconAnchor: [outerSize / 2, anchorY],
     popupAnchor: [0, popupY],
@@ -580,7 +580,7 @@ export function MapaVuelos({
                           </div>
                           <FlightsList
                             vuelos={vuelosSalientes}
-                            onSelectFlight={selectedFlightId}
+                            selectedFlightId={selectedFlightId}
                             onSelectFlight={onSelectFlight}
                             onSelectOrders={onSelectOrders}
                           />

@@ -7,10 +7,14 @@ import { operationService } from '../services/operationService';
 import { aeropuertoService } from '../services/aeropuertoService';
 import type { Airport } from '../types/airport';
 import type { CurrentPlanResponse } from '../types/plan';
-import type { ActiveAirportTick, SimulationMessage, SimulationTick, OrderStatusTick, ActiveSegment } from '../types/simulation';
+//import type { ActiveAirportTick, SimulationMessage, SimulationTick, OrderStatusTick, ActiveSegmentTick } from '../types/simulation';
+import type {  SimulationMessage } from '../types/simulation';
 
 // --- TIPOS ---
 export interface SegmentoVuelo {
+    progressPct: number;
+    latitude: number;
+    longitude: number;
     id: string;
     flightId: string;
     origin: string;
@@ -32,7 +36,7 @@ export interface VueloEnMovimiento {
     latActual: number;
     lonActual: number;
     progreso: number;
-    estadoVisual: 'en curso' | 'retrasado' | 'completado';
+    estadoVisual: 'en curso' | 'completado';
 
     // Campos detallados
     origenCode: string;
@@ -101,8 +105,8 @@ export const useOperacion = () => {
     const [isReplanning, setIsReplanning] = useState(false);
     const [isClearingPlan, setIsClearingPlan] = useState(false);
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-    const [planCache, setPlanCache] = useState<Record<string, { quantity: number; routesDetail: OrderStatusDetail['routesDetail']; slackMinutes?: number }>>({});
-    const [ordersPage, setOrdersPage] = useState<{ total: number; page: number; size: number; items: OrderStatusDetail[] }>({
+    const [, setPlanCache] = useState<Record<string, { quantity: number; routesDetail: OrderStatusDetail['routesDetail']; slackMinutes?: number }>>({});
+    const [, setOrdersPage] = useState<{ total: number; page: number; size: number; items: OrderStatusDetail[] }>({
         total: 0,
         page: 0,
         size: 10,
@@ -164,8 +168,8 @@ export const useOperacion = () => {
                         flightId: s.flightId,
                         origin: s.origin,
                         destination: s.destination,
-                        departureUtc: s.departureUtc,
-                        arrivalUtc: s.arrivalUtc,
+                        departureUtc: s.departure,
+                        arrivalUtc: s.arrival,
                         quantity: s.quantity,
                     })),
                 })).filter(r => r.segments.length > 0);
@@ -263,7 +267,7 @@ export const useOperacion = () => {
             let progreso = 0;
             let lat = origen[0];
             let lon = origen[1];
-            let estado: 'en curso' | 'retrasado' | 'completado' = 'en curso';
+            let estado: 'en curso' | 'completado' = 'en curso';
 
             // Lógica de posición
             if (nowMs >= horaLlegada) {
@@ -344,6 +348,7 @@ export const useOperacion = () => {
             setPlanCache({});
             setMetrics({
                 totalOrders: 0,
+                deliveredOrders: 0,
                 ordersInTransit: 0,
                 totalFlights: 0,
                 activeFlights: 0,
@@ -417,6 +422,9 @@ export const useOperacion = () => {
                                     arrivalUtc: s.arrivalUtc,
                                     orderIds: s.orderIds ?? [],
                                     retrasado: false,
+                                    progressPct: s.progressPct ?? 0,
+                                    latitude: s.latitude ?? 0,
+                                    longitude: s.longitude ?? 0,
                                     routeQuantity: s.capacityUsed,
                                     capacityUsed: s.capacityUsed,
                                     capacityTotal: s.capacityTotal,

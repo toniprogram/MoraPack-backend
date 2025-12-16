@@ -15,7 +15,7 @@ export function SidebarEnviosPanel({
   ordenesParaSimular,
   selectedOrders,
   onSelectOrders,
-  scrollParent,
+  //scrollParent,
 }: SidebarEnviosPanelProps) {
   const PAGE_SIZE = 10;
   const sorted = useMemo(() => {
