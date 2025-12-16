@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Plane, Box, Check, Wifi, WifiOff } from 'lucide-react';
+import { Plane, Box, Check } from 'lucide-react';
 import type { OperationMetrics, SegmentoVuelo } from '../../hooks/useOperacion';
 
 interface OperacionTopBarProps {
