@@ -103,7 +103,14 @@ export default function OperacionPage() {
                     planificar: () => actions.planificar(),
                     clearPlan: () => actions.clearPlan(),
                     setManualTime: (d) => actions.setManualTime(d),
-                    resetTime: () => actions.resetTime(),
+                    resetTime: () => {
+                        // Se limpia el input visual para que deje de mostrar la hora antigua
+                        setManualDateStr('');
+                        // Se fuerza la sincronización con el servidor al presente
+                        actions.setManualTime(new Date());
+                        // Se resetea el offset local del hook
+                        actions.resetTime();
+                    },
                 }}
                 formatDateTime={formatDateTime}
                 formatShortTime={formatShortTime}
