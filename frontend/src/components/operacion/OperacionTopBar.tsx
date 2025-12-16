@@ -62,7 +62,7 @@ export function OperacionTopBar({
           </div>
 
           {/* 2. EN TRÁNSITO (Box - Azul Info) */}
-          <div className="flex items-center gap-1.5 tooltip tooltip-right" data-tip="Pedidos En Tránsito">
+          <div className="flex items-center gap-1.5 tooltip tooltip-right" data-tip="Productos En Tránsito">
             <Box size={14} className="text-info" />
             <span className="font-mono font-bold text-xs">{metrics.ordersInTransit}</span>
           </div>
@@ -84,7 +84,7 @@ export function OperacionTopBar({
       </div>
 
       {/* === CENTRO: RELOJ === */}
-      <div className="absolute right-[-12%] -translate-x-1/2 top-2 flex items-center gap-2 pointer-events-auto">
+      <div className="absolute right-[-5%] -translate-x-1/2 top-2 flex items-center gap-2 pointer-events-auto">
         <div className="flex items-center gap-2 bg-base-100/40 backdrop-blur-md px-2 py-1 rounded-xl border border-base-content/5 shadow-sm">
             <span className="text-[10px] font-bold text-base-content/70 uppercase tracking-wide mr-1">
              Operación:

@@ -17,7 +17,10 @@ import java.util.function.Consumer;
 
 /**
  * Clase dedicada EXCLUSIVAMENTE a la Operación en Vivo.
- * CORREGIDA: Procesa llegadas antes que salidas y usa pasos discretos para evitar duplicación de inventario.
+ * CORREGIDA:
+ * 1. Arrivals: Esperan si no hay espacio (Hold pattern).
+ * 2. Departures: Siempre salen (para liberar espacio) y no se borran si el aeropuerto está lleno.
+ * 3. Inventario: Refleja stock real (Snapshot) en lugar de flujo acumulado.
  */
 public class LiveOperationWorld {
     private final String operationId;
@@ -102,9 +105,6 @@ public class LiveOperationWorld {
 
     /**
      * Avanza la simulación.
-     * CORRECCIÓN: Usa un bucle interno con pasos de 60 segundos para asegurar
-     * que la secuencia Llegada -> Salida se respete cronológicamente, incluso
-     * si 'simSeconds' es muy grande (Fast Forward).
      */
     public void tick(long simSeconds) {
         if (simSeconds <= 0) return;
@@ -124,11 +124,19 @@ public class LiveOperationWorld {
 
     private void processTickLogic() {
         // 1. PRIMERO: Procesar llegadas (Arrivals)
-        // Esto asegura que la carga entre al inventario ANTES de que un vuelo intente sacarla.
         List<String> toRemove = new ArrayList<>();
         for (Map.Entry<String, LiveFlight> entry : activeFlights.entrySet()) {
             LiveFlight flight = entry.getValue();
-            if (flight.hasArrived(currentSimTime)) {
+            boolean hasArrived = flight.hasArrived(currentSimTime);
+            LiveAirport destAirport = airports.get(flight.getDestination());
+
+            // Lógica de espera (Holding): Si llegó pero no hay espacio, no aterriza (se queda en activeFlights)
+            if (hasArrived && destAirport != null && !destAirport.canProcess(flight.getCapacityUsed())) {
+                continue;
+            }
+
+            if (hasArrived) {
+                // Aterrizaje exitoso
                 flight.markCompleted();
                 completedFlights.add(flight);
 
@@ -162,26 +170,12 @@ public class LiveOperationWorld {
         toRemove.forEach(activeFlights::remove);
 
         // 2. SEGUNDO: Procesar vuelos programados (Departures)
-        // Ahora el inventario ya está actualizado con las llegadas de este minuto.
+        // Eliminamos el bloqueo aquí para que los aviones puedan SALIR y liberar espacio.
         while (!scheduledFlights.isEmpty() && !scheduledFlights.peek().getDepartureTime().isAfter(currentSimTime)) {
             LiveFlight flight = scheduledFlights.poll();
             scheduledByKey.remove(flight.getFlightId() + "|" + flight.getDepartureTime());
 
-            LiveAirport origin = airports.get(flight.getOrigin());
-            if (origin != null) {
-                Instant flightHour = flight.getDepartureTime().truncatedTo(ChronoUnit.HOURS);
-                Instant lastReset = airportResetMap.getOrDefault(flight.getOrigin(), Instant.MIN);
-
-                if (!flightHour.equals(lastReset)) {
-                    origin.resetHour();
-                    airportResetMap.put(flight.getOrigin(), flightHour);
-                }
-            }
-            if (origin == null || !origin.canProcess(flight.getCapacityUsed())) {
-                continue;
-            }
-
-            // Gestión de inventario en origen (Salida)
+            // Gestión de inventario en origen (Salida) -> Libera espacio
             if (flight.getCapacityUsed() > 0) {
                 Map<String, Integer> inv = airportInventory.computeIfAbsent(flight.getOrigin(), k -> new HashMap<>());
                 flight.getOrderLoads().forEach((orderId, qty) -> {
@@ -193,7 +187,9 @@ public class LiveOperationWorld {
                 recomputeAirportLoad(flight.getOrigin());
             }
 
-            origin.process(flight.getCapacityUsed());
+            // Ya no llamamos a origin.process() ni chequeamos canProcess() en la salida.
+            // La salida reduce inventario (gestionado arriba), no lo aumenta.
+
             flight.tryDepart();
             activeFlights.put(flight.getFlightId() + "|" + flight.getDepartureTime(), flight);
 
@@ -361,7 +357,11 @@ public class LiveOperationWorld {
         maxObservedLoad.merge(airportCode, total, Math::max);
 
         LiveAirport airport = airports.get(airportCode);
-        if (airport != null && total > 0) airport.process(total);
+        if (airport != null) {
+            // Reiniciar a 0 antes de poner el total para que sea "Foto del momento"
+            airport.resetHour();
+            airport.process(total);
+        }
     }
 
     public List<OrderStatusTick> buildDeliveredStatuses() { return new ArrayList<>(deliveredOnce.values()); }
