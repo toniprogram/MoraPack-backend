@@ -30,6 +30,21 @@ export interface SimulationOrderPlan {
   routes: SimulationRoute[];
 }
 
+// API paginada de planes en BD
+export interface SimulationOrderPlanItem {
+  orderId: string;
+  status: string;
+  slackMinutes: number;
+  routes: SimulationRoute[];
+}
+
+export interface SimulationOrderPlanPage {
+  total: number;
+  page: number;
+  size: number;
+  items: SimulationOrderPlanItem[];
+}
+
 export interface DeliveredOrder {
   orderId: string;
   deliveredQty: number;
@@ -116,6 +131,7 @@ export interface SimulationTick {
   plannedStatuses?: OrderStatusTick[];
   nowInTransitIds?: string[];
   planSummaries?: SimulationPlanSummary[];
+  changedOrderIds?: string[];
 }
 
 export interface OrderStatusTick {
