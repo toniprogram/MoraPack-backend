@@ -43,7 +43,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.nio.charset.StandardCharsets;
@@ -94,6 +94,7 @@ public class SimulationService {
     private final SimulationPlanRepository simulationPlanRepository;
     private final SimulationOrderPlanRepository orderPlanRepository;
     private final SimulationPlanMapper simulationPlanMapper;
+    private final TransactionTemplate txTemplate;
     private final Path snapshotsDir = Paths.get("snapshots");
     private final ExecutorService executorService = Executors.newCachedThreadPool();
     private final ScheduledExecutorService tickerExecutor = Executors.newSingleThreadScheduledExecutor();
@@ -107,7 +108,8 @@ public class SimulationService {
                              SimulationDeliveryRepository deliveryRepository,
                              SimulationPlanRepository simulationPlanRepository,
                              SimulationOrderPlanRepository orderPlanRepository,
-                             SimulationPlanMapper simulationPlanMapper) {
+                             SimulationPlanMapper simulationPlanMapper,
+                             TransactionTemplate txTemplate) {
         this.worldBuilder = worldBuilder;
         this.orderRepository = orderRepository;
         this.messagingTemplate = messagingTemplate;
@@ -116,6 +118,7 @@ public class SimulationService {
         this.simulationPlanRepository = simulationPlanRepository;
         this.orderPlanRepository = orderPlanRepository;
         this.simulationPlanMapper = simulationPlanMapper;
+        this.txTemplate = txTemplate;
     }
 
     public SimulationStartResponse startSimulation(SimulationStartRequest request) {
@@ -690,44 +693,43 @@ public class SimulationService {
     }
 
     private void persistSimulationPlan(UUID simulationId, Individual best) {
-        // Ejecutamos con transacción para evitar LazyInitializationException al tocar orderPlans
-        persistSimulationPlanTx(simulationId, best);
-    }
+        txTemplate.executeWithoutResult(status -> {
+            try {
+                String simId = simulationId.toString();
+                com.morapack.skyroute.simulation.model.SimulationPlan plan = simulationPlanRepository.findBySimulationId(simId).orElse(null);
+                if (plan == null) {
+                    plan = new com.morapack.skyroute.simulation.model.SimulationPlan();
+                    plan.setSimulationId(simId);
+                    plan.setOrderPlans(new ArrayList<>());
+                } else if (plan.getOrderPlans() == null) {
+                    plan.setOrderPlans(new ArrayList<>());
+                }
+                plan.setGeneratedAt(LocalDateTime.now());
+                plan.setFitness(best.getFitness());
+                plan.setSlaCompliant(best.isSlaCompliant());
+                plan.setSlaViolations(best.getSlaViolations());
 
-    @Transactional
-    protected void persistSimulationPlanTx(UUID simulationId, Individual best) {
-        try {
-            String simId = simulationId.toString();
-            com.morapack.skyroute.simulation.model.SimulationPlan plan = simulationPlanRepository.findBySimulationId(simId).orElse(null);
-            if (plan == null) {
-                plan = new com.morapack.skyroute.simulation.model.SimulationPlan();
-                plan.setSimulationId(simId);
-                plan.setOrderPlans(new ArrayList<>());
-            } else if (plan.getOrderPlans() == null) {
-                plan.setOrderPlans(new ArrayList<>());
-            }
-            plan.setGeneratedAt(LocalDateTime.now());
-            plan.setFitness(best.getFitness());
-            plan.setSlaCompliant(best.isSlaCompliant());
-            plan.setSlaViolations(best.getSlaViolations());
+                // Upsert incremental sin reemplazar la colección completa para no disparar orphanRemoval
+                Map<String, com.morapack.skyroute.simulation.model.SimulationOrderPlan> existingByOrder = plan.getOrderPlans().stream()
+                        .collect(Collectors.toMap(com.morapack.skyroute.simulation.model.SimulationOrderPlan::getOrderId, p -> p, (a, b) -> a, HashMap::new));
 
-            // Upsert incremental sin reemplazar la colección completa para no disparar orphanRemoval
-            Map<String, com.morapack.skyroute.simulation.model.SimulationOrderPlan> existingByOrder = plan.getOrderPlans().stream()
-                    .collect(Collectors.toMap(com.morapack.skyroute.simulation.model.SimulationOrderPlan::getOrderId, p -> p, (a, b) -> a, HashMap::new));
-
-            for (var original : best.getPlans()) {
+                for (var original : best.getPlans()) {
                 com.morapack.skyroute.simulation.model.SimulationOrderPlan target = existingByOrder.get(original.getOrderId());
                 if (target == null) {
                     target = new com.morapack.skyroute.simulation.model.SimulationOrderPlan();
                     target.setOrderId(original.getOrderId());
                     target.setPlan(plan);
                     plan.getOrderPlans().add(target);
-                } else if (target.getRoutes() != null) {
-                    target.getRoutes().clear();
                 }
                 target.setSlack(original.getSlack());
                 if (target.getStatus() == null) {
                     target.setStatus("WAITING"); // solo nuevas inserciones arrancan en WAITING
+                }
+
+                if (target.getRoutes() == null) {
+                    target.setRoutes(new ArrayList<>());
+                } else {
+                    target.getRoutes().clear();
                 }
 
                 List<com.morapack.skyroute.simulation.model.SimulationRoute> routes = original.getRoutes() == null
@@ -737,16 +739,18 @@ public class SimulationService {
                             .collect(Collectors.toCollection(ArrayList::new));
                 final com.morapack.skyroute.simulation.model.SimulationOrderPlan planTarget = target;
                 routes.forEach(r -> r.setOrderPlan(planTarget));
-                target.setRoutes(routes);
+                target.getRoutes().addAll(routes);
             }
 
-            List<String> planIds = plan.getOrderPlans().stream().map(com.morapack.skyroute.simulation.model.SimulationOrderPlan::getOrderId).sorted().toList();
-            log.warn("[SIM:{}] Persisting {} plans. OrderIds={}", simulationId, planIds.size(), planIds);
-            simulationPlanRepository.save(plan);
-            log.debug("[SIM:{}] Persisted simulation plan with {} orders", simulationId, plan.getOrderPlans().size());
-        } catch (Exception ex) {
-            log.warn("[SIM:{}] Could not persist simulation plan: {}", simulationId, ex.getMessage());
-        }
+                List<String> planIds = plan.getOrderPlans().stream().map(com.morapack.skyroute.simulation.model.SimulationOrderPlan::getOrderId).sorted().toList();
+                log.warn("[SIM:{}] Persisting {} plans. OrderIds={}", simulationId, planIds.size(), planIds);
+                simulationPlanRepository.save(plan);
+                log.debug("[SIM:{}] Persisted simulation plan with {} orders", simulationId, plan.getOrderPlans().size());
+            } catch (Exception ex) {
+                log.warn("[SIM:{}] Could not persist simulation plan: {}", simulationId, ex.getMessage());
+                status.setRollbackOnly();
+            }
+        });
     }
 
     private void cleanupSimulationAsync(SimulationSession session) {

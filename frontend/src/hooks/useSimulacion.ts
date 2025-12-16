@@ -185,19 +185,13 @@ export const useSimulacion = () => {
     engineSpeedRef.current = engineSpeed;
   }, [engineSpeed]);
   const planSource: SimulationOrderPlan[] = useMemo(() => {
-    if (orderPlansDb.length > 0) {
-      return orderPlansDb.map(p => ({
-        orderId: p.orderId,
-        creationUtc: null,
-        slackMinutes: p.slackMinutes,
-        routes: p.routes ?? [],
-      }));
-    }
-    if (orderPlansLive.length > 0) {
-      return orderPlansLive;
-    }
-    return [];
-  }, [orderPlansDb, orderPlansLive]);
+    return orderPlansDb.map(p => ({
+      orderId: p.orderId,
+      creationUtc: null,
+      slackMinutes: p.slackMinutes,
+      routes: p.routes ?? [],
+    }));
+  }, [orderPlansDb]);
 
   const segmentosPorOrden = useMemo(() => {
     const mapa = new Map<string, SimulationSegment[]>();
@@ -821,7 +815,7 @@ export const useSimulacion = () => {
     status,
     deliveredOrders,
     inTransitOrders,
-    orderStatuses: [...orderStatusesDb, ...orderStatuses],
+    orderStatuses: orderStatusesDb,
     startRealMs,
     elapsedRealMs,
     conectarSimulacion,
