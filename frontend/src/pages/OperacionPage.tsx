@@ -35,6 +35,21 @@ export default function OperacionPage() {
          return result;
      }, [aeropuertos, airportStocks]);
 
+    const { mapSegments, mapVuelos } = useMemo(() => {
+        const nowMs = simClock.getTime();
+        // 1. Líneas de ruta (tramos): Solo si ya pasó su hora de salida
+        const segs = activeSegments.filter(s => {
+            const dep = Date.parse(s.departureUtc);
+            return dep <= nowMs;
+        });
+        // 2. Aviones: Solo si ya pasó su hora de salida
+        const vuelos = vuelosEnMovimiento.filter(v => {
+             const dep = Date.parse(v.salidaProgramada);
+             return dep <= nowMs;
+        });
+        return { mapSegments: segs, mapVuelos: vuelos };
+    }, [activeSegments, vuelosEnMovimiento, simClock]);
+
     const [manualDateStr, setManualDateStr] = useState('');
 
     const handleTimeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -109,8 +124,8 @@ export default function OperacionPage() {
 
                 <MapaVuelos
                     aeropuertos={aeropuertos}
-                    activeSegments={activeSegments}
-                    vuelosEnMovimiento={vuelosEnMovimiento}
+                    activeSegments={mapSegments}
+                    vuelosEnMovimiento={mapVuelos}
                     activeAirports={activeAirports}
                     isLoading={status === 'buffering'}
                     filtroHubActivo=""

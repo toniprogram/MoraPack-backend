@@ -253,7 +253,6 @@ export const useOperacion = () => {
         const calculated = activeSegments.map((seg, index) => {
             const origen = coordsMap.get(seg.origin);
             const destino = coordsMap.get(seg.destination);
-
             const horaSalida = Date.parse(seg.departureUtc);
             const horaLlegada = Date.parse(seg.arrivalUtc);
             const duracion = horaLlegada - horaSalida;
@@ -276,9 +275,6 @@ export const useOperacion = () => {
                 const offsetLat = ((index % 5) - 2) * 0.15;
                 lat = origen[0] + (destino[0] - origen[0]) * ratio + offsetLat;
                 lon = origen[1] + (destino[1] - origen[1]) * ratio;
-            } else {
-                // Aún no sale
-                progreso = 0;
             }
 
             return {
@@ -337,10 +333,12 @@ export const useOperacion = () => {
             setIsClearingPlan(true);
         },
         onSuccess: () => {
-            setDayPlan(null);
+            //setDayPlan(null)
             setActiveSegments([]);
             setVuelosEnMovimiento([]);
             setOrderStatusList([]);
+            setAirportStocks({});
+            setPlanCache({});
             setMetrics({
                 totalOrders: 0,
                 ordersInTransit: 0,
