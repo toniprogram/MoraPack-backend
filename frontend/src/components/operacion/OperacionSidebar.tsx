@@ -219,7 +219,6 @@ export function OperacionSidebar({
         <div className="flex items-center justify-between">
           <label className="text-[11px] font-semibold uppercase text-base-content/70 flex items-center gap-2">
             <span>Hora de operación (UTC)</span>
-            <span className="badge badge-ghost badge-xs font-mono">UTC</span>
           </label>
           <button
             className="btn btn-ghost btn-xs btn-square"
