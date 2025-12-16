@@ -97,7 +97,9 @@ public class OperationController {
                     sdto.setDestination(seg.getFlight() != null ? seg.getFlight().getDestinationCode() : null);
                     sdto.setDepartureUtc(seg.getFlight() != null ? seg.getFlight().getDepartureInstant(seg.getDate()) : null);
                     sdto.setArrivalUtc(seg.getFlight() != null ? seg.getFlight().getArrivalInstant(seg.getDate()) : null);
-                    sdto.setQuantity(seg.getRouteQuantity());
+                    // MODIFICADO: Usamos r.getQuantity() (cantidad de la ruta padre)
+                    // en lugar de seg.getRouteQuantity() para visualización coherente.
+                    sdto.setQuantity(r.getQuantity());
                     return sdto;
                 }).collect(Collectors.toList());
                 dto.setSegments(segDtos);
