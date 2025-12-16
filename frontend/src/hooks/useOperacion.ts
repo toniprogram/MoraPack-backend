@@ -168,8 +168,8 @@ export const useOperacion = () => {
                         flightId: s.flightId,
                         origin: s.origin,
                         destination: s.destination,
-                        departureUtc: s.departure,
-                        arrivalUtc: s.arrival,
+                        departureUtc: s.departureUtc,
+                        arrivalUtc: s.arrivalUtc,
                         quantity: s.quantity,
                     })),
                 })).filter(r => r.segments.length > 0);

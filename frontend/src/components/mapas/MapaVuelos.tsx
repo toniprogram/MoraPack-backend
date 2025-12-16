@@ -580,7 +580,7 @@ export function MapaVuelos({
                           </div>
                           <FlightsList
                             vuelos={vuelosSalientes}
-                            selectedFlightId={selectedFlightId}
+                            //onSelectFlight={selectedFlightId}
                             onSelectFlight={onSelectFlight}
                             onSelectOrders={onSelectOrders}
                           />
