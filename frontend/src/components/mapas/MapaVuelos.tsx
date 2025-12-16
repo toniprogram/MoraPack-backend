@@ -487,8 +487,8 @@ export function MapaVuelos({
 
         if (!isInfinite && capacidadMax > 0) {
            stockPct = Math.min(100, Math.round((stockActual / capacidadMax) * 100));
-           if (stockPct >= 90) { statusColorClass = 'text-error'; progressClass = 'progress-error'; }
-           else if (stockPct >= 70) { statusColorClass = 'text-warning'; progressClass = 'progress-warning'; }
+           if (stockPct >= 20) { statusColorClass = 'text-error'; progressClass = 'progress-error'; }
+           else if (stockPct >= 10) { statusColorClass = 'text-warning'; progressClass = 'progress-warning'; }
         }
 
         const vuelosSalientes = activeSegments.filter(s => s.origin === (aeropuerto.id || aeropuerto.code));

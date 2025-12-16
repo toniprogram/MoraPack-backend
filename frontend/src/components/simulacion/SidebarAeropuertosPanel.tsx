@@ -116,10 +116,10 @@ export function SidebarAeropuertosPanel({
 
             let progressColorClass = 'progress-success';
             let textColorClass = 'text-success';
-            if (pct > 90) {
+            if (pct >= 20) {
               progressColorClass = 'progress-error';
               textColorClass = 'text-error';
-            } else if (pct > 70) {
+            } else if (pct >= 10) {
               progressColorClass = 'progress-warning';
               textColorClass = 'text-warning';
             }
