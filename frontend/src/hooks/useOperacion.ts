@@ -357,6 +357,16 @@ export const useOperacion = () => {
             setIsClearingPlan(false);
         }
     });
+
+    // Refetch de pedidos cada minuto para mostrar nuevos planes
+    useEffect(() => {
+        const interval = setInterval(() => {
+            fetchPlanBase();
+            loadOrders(simClockRef.current, 0);
+        }, 60000); // 60 segundos = 1 minuto
+        return () => clearInterval(interval);
+    }, []);
+
     useEffect(() => {
         // Si no hay datos, no calculamos
         if (!activeSegments.length && !orderStatusList.length) return;

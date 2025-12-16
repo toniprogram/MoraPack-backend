@@ -7,16 +7,19 @@ import com.morapack.skyroute.io.Airports;
 import com.morapack.skyroute.io.Flights;
 import com.morapack.skyroute.models.Airport;
 import com.morapack.skyroute.models.AirportSchedule;
+import com.morapack.skyroute.models.CurrentPlan;
 import com.morapack.skyroute.models.FlightCancellation;
 import com.morapack.skyroute.models.Order;
 import com.morapack.skyroute.models.OrderScope;
 import com.morapack.skyroute.orders.repository.OrderRepository;
+import com.morapack.skyroute.plan.repository.CurrentPlanRepository;
 import com.morapack.skyroute.config.World;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Map;
@@ -31,15 +34,18 @@ public class WorldBuilder {
     private final FlightRepository flightRepository;
     private final FlightCancellationRepository cancellationRepository;
     private final OrderRepository orderRepository;
+    private final CurrentPlanRepository currentPlanRepository;
 
     public WorldBuilder(AirportRepository airportRepository,
                         FlightRepository flightRepository,
                         FlightCancellationRepository cancellationRepository,
-                        OrderRepository orderRepository) {
+                        OrderRepository orderRepository,
+                        CurrentPlanRepository currentPlanRepository) {
         this.airportRepository = airportRepository;
         this.flightRepository = flightRepository;
         this.cancellationRepository = cancellationRepository;
         this.orderRepository = orderRepository;
+        this.currentPlanRepository = currentPlanRepository;
     }
 
     public record Snapshot(World world, List<Order> demand) {}
@@ -53,7 +59,23 @@ public class WorldBuilder {
         AirportSchedule airportSchedule = new AirportSchedule(airports.asMap());
         World world = World.fromData(airports, flights, airportSchedule, Instant.now());
 
+        // Obtener IDs de pedidos ya planificados en el plan actual
+        Set<String> plannedOrderIds = new HashSet<>();
+        try {
+            CurrentPlan currentPlan = currentPlanRepository.findById(1L).orElse(null);
+            if (currentPlan != null && currentPlan.getOrderPlans() != null) {
+                plannedOrderIds = currentPlan.getOrderPlans().stream()
+                        .map(op -> op.getOrderId())
+                        .collect(Collectors.toSet());
+            }
+        } catch (Exception e) {
+            // Si hay error al obtener el plan, continuamos sin filtrar
+        }
+
+        // Cargar solo pedidos NO planificados anteriormente
+        Set<String> finalPlannedOrderIds = plannedOrderIds;
         List<Order> clonedOrders = orderRepository.findAllByScope(OrderScope.REAL).stream()
+                .filter(order -> !finalPlannedOrderIds.contains(order.getId()))
                 .map(order -> cloneOrder(order, airports))
                 .filter(Objects::nonNull)
                 .toList();
