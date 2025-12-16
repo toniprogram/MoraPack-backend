@@ -20,19 +20,31 @@ export function OperacionTopBar({
 
   // Lógica de porcentaje de carga de flota
   const { capacidadUsada, capacidadTotal, capacidadPct } = useMemo(() => {
-    let used = 0;
-    let total = 0;
-    activeSegments.forEach(seg => {
-      used += seg.capacityUsed || (seg.routeQuantity || 0);
-      total += seg.capacityTotal || 0;
-    });
-    const pct = total > 0 ? Math.round((used / total) * 100) : 0;
-    return { capacidadUsada: used, capacidadTotal: total, capacidadPct: pct };
-  }, [activeSegments]);
+      let used = 0;
+      let total = 0;
+
+      const nowMs = simClock.getTime();
+
+      activeSegments.forEach(seg => {
+        // 1. Validamos fechas
+        if (!seg.departureUtc || !seg.arrivalUtc) return;
+        const dep = Date.parse(seg.departureUtc);
+        const arr = Date.parse(seg.arrivalUtc);
+        // 2. Solo contamos si el avión está volando AHORA
+        const isFlying = nowMs >= dep && nowMs < arr;
+        if (isFlying) {
+          used += seg.capacityUsed || (seg.routeQuantity || 0);
+          total += seg.capacityTotal || 0;
+        }
+      });
+      // Si no hay vuelos activos, el porcentaje es 0 (no 100 ni NaN)
+      const pct = total > 0 ? Math.round((used / total) * 100) : 0;
+      return { capacidadUsada: used, capacidadTotal: total, capacidadPct: pct };
+    }, [activeSegments, simClock]);
 
   const capacidadColorClass = useMemo(() => {
-    if (capacidadPct > 80) return 'text-error';
-    if (capacidadPct > 50) return 'text-warning';
+    if (capacidadPct > 70) return 'text-error';
+    if (capacidadPct > 40) return 'text-warning';
     return 'text-success';
   }, [capacidadPct]);
 
@@ -46,7 +58,7 @@ export function OperacionTopBar({
           {/* 1. ENTREGADOS (Check - Verde) */}
           <div className="flex items-center gap-1.5 tooltip tooltip-right" data-tip="Pedidos Entregados">
             <Check size={14} className="text-success" />
-            <span className="font-mono font-bold text-xs">{metrics.totalOrders}</span>
+            <span className="font-mono font-bold text-xs">{metrics.deliveredOrders}</span>
           </div>
 
           {/* 2. EN TRÁNSITO (Box - Azul Info) */}
@@ -72,7 +84,7 @@ export function OperacionTopBar({
       </div>
 
       {/* === CENTRO: RELOJ === */}
-      <div className="absolute left-[50%] -translate-x-1/2 top-2 flex items-center gap-2 pointer-events-auto">
+      <div className="absolute right-[-12%] -translate-x-1/2 top-2 flex items-center gap-2 pointer-events-auto">
         <div className="flex items-center gap-2 bg-base-100/40 backdrop-blur-md px-2 py-1 rounded-xl border border-base-content/5 shadow-sm">
             <span className="text-[10px] font-bold text-base-content/70 uppercase tracking-wide mr-1">
              Operación:

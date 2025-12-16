@@ -75,23 +75,31 @@ export function OperacionSidebar({
   const panelScrollRef = useRef<HTMLDivElement | null>(null);
 
   const flightGroups: FlightGroup[] = useMemo(() => {
-    return activeSegments.map(seg => {
-      const dep = seg.departureUtc ? new Date(seg.departureUtc) : null;
-      const arr = seg.arrivalUtc ? new Date(seg.arrivalUtc) : null;
-      return {
-        segmentId: seg.id,
-        flightId: seg.flightId || seg.id,
-        origen: seg.origin,
-        destino: seg.destination,
-        pedidos: seg.orderIds || [],
-        hora: dep ? dep.toLocaleTimeString('es-PE', { timeZone: 'UTC', hour12: false, hour: '2-digit', minute: '2-digit' }) : '--:--',
-        horaLlegada: arr ? arr.toLocaleTimeString('es-PE', { timeZone: 'UTC', hour12: false, hour: '2-digit', minute: '2-digit' }) : '--:--',
-        fecha: dep ? dep.toLocaleDateString('es-PE', { timeZone: 'UTC', day: '2-digit', month: 'short' }) : '--/--',
-        departureUtc: seg.departureUtc,
-        arrivalUtc: seg.arrivalUtc,
-      };
-    });
-  }, [activeSegments]);
+      const nowMs = simClock.getTime(); // Obtenemos el tiempo actual de simulación
+
+      // Filtramos primero para quedarnos solo con los que ya salieron (o están saliendo)
+      const activeNow = activeSegments.filter(seg => {
+          const dep = Date.parse(seg.departureUtc);
+          return dep <= nowMs;
+      });
+
+      return activeNow.map(seg => {
+        const dep = seg.departureUtc ? new Date(seg.departureUtc) : null;
+        const arr = seg.arrivalUtc ? new Date(seg.arrivalUtc) : null;
+        return {
+          segmentId: seg.id,
+          flightId: seg.flightId || seg.id,
+          origen: seg.origin,
+          destino: seg.destination,
+          pedidos: seg.orderIds || [],
+          hora: dep ? dep.toLocaleTimeString('es-PE', { timeZone: 'UTC', hour12: false, hour: '2-digit', minute: '2-digit' }) : '--:--',
+          horaLlegada: arr ? arr.toLocaleTimeString('es-PE', { timeZone: 'UTC', hour12: false, hour: '2-digit', minute: '2-digit' }) : '--:--',
+          fecha: dep ? dep.toLocaleDateString('es-PE', { timeZone: 'UTC', day: '2-digit', month: 'short' }) : '--/--',
+          departureUtc: seg.departureUtc,
+          arrivalUtc: seg.arrivalUtc,
+        };
+      });
+    }, [activeSegments, simClock]);
 
   const handleSelectAirport = (airportId: string | null) => {
     if (!airportId) {

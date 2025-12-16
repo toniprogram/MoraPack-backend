@@ -82,6 +82,7 @@ export interface OrderStatusDetail {
 
 export interface OperationMetrics {
     totalOrders: number;
+    deliveredOrders: number;
     ordersInTransit: number;
     totalFlights: number;
     activeFlights: number;
@@ -142,6 +143,7 @@ export const useOperacion = () => {
 
     const [metrics, setMetrics] = useState<OperationMetrics>({
         totalOrders: 0,
+        deliveredOrders: 0,
         ordersInTransit: 0,
         totalFlights: 0,
         activeFlights: 0,
@@ -233,14 +235,11 @@ export const useOperacion = () => {
     useEffect(() => {
         // 1. Verificamos si tenemos datos
         if (!aeropuertos.length) return;
-
         if (!activeSegments.length) {
             setVuelosEnMovimiento([]);
             return;
         }
-
         const nowMs = simClock.getTime();
-
         // Mapa de coordenadas
         const coordsMap = new Map<string, [number, number]>();
         aeropuertos.forEach(a => {
@@ -253,10 +252,14 @@ export const useOperacion = () => {
         const calculated = activeSegments.map((seg, index) => {
             const origen = coordsMap.get(seg.origin);
             const destino = coordsMap.get(seg.destination);
+            // Validación por si faltan coordenadas
+            if (!origen || !destino) return null;
             const horaSalida = Date.parse(seg.departureUtc);
             const horaLlegada = Date.parse(seg.arrivalUtc);
             const duracion = horaLlegada - horaSalida;
-
+            if (nowMs < horaSalida) {
+                return null;
+            }
             let progreso = 0;
             let lat = origen[0];
             let lon = origen[1];
@@ -268,7 +271,7 @@ export const useOperacion = () => {
                 estado = 'completado';
                 lat = destino[0];
                 lon = destino[1];
-            } else if (nowMs > horaSalida && duracion > 0) {
+            } else if (duracion > 0) {
                 progreso = ((nowMs - horaSalida) / duracion) * 100;
                 const ratio = progreso / 100;
                 // Offset visual para evitar superposición
@@ -354,6 +357,36 @@ export const useOperacion = () => {
             setIsClearingPlan(false);
         }
     });
+    useEffect(() => {
+        // Si no hay datos, no calculamos
+        if (!activeSegments.length && !orderStatusList.length) return;
+        const nowMs = simClock.getTime();
+        // 1. Calcular Vuelos Activos Reales
+        const vuelosActivos = activeSegments.filter(s => {
+            const dep = Date.parse(s.departureUtc);
+            const arr = Date.parse(s.arrivalUtc);
+            return nowMs >= dep && nowMs < arr;
+        });
+        // 2. Calcular Pedidos en Tránsito (suma de la carga de los vuelos activos)
+        const pedidosEnVuelo = vuelosActivos.reduce((acc, v) => acc + (v.capacityUsed || 0), 0);
+        // 3. Entregados (Simplemente contamos los completados)
+        const pedidosEntregados = orderStatusList.filter(o => {
+            if (o.status === 'COMPLETED') return true;
+            if (o.arrivalTime) {
+                const arr = Date.parse(o.arrivalTime);
+                return arr <= nowMs;
+            }
+            return false;
+        }).length;
+        setMetrics(prev => ({
+            ...prev,
+            totalOrders: orderStatusList.length,
+            deliveredOrders: pedidosEntregados,
+            activeFlights: vuelosActivos.length,
+            ordersInTransit: pedidosEnVuelo,
+        }));
+
+    }, [simClock, activeSegments, orderStatusList]);
 
     // Suscribirse al tópico de operación y consumir ticks desde el backend
     useEffect(() => {
