@@ -180,7 +180,7 @@ export const useOperacion = () => {
 
     const loadOrders = async (targetDate: Date, page = 0) => {
         try {
-            const res = await operationService.getOrders(targetDate.toISOString(), page);
+            const res = await operationService.getOrders(targetDate.toISOString(), page, 50);
             const items: OrderStatusDetail[] = (res.items ?? []).map((o: any) => ({
                 orderId: o.orderId,
                 status: (o.status === 'DELIVERED' ? 'COMPLETED' : o.status === 'IN_TRANSIT' ? 'IN_FLIGHT' : 'WAITING'),
