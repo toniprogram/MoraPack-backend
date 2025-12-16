@@ -1,6 +1,5 @@
 package com.morapack.skyroute.simulation.live;
 
-import com.morapack.skyroute.models.Order;
 import com.morapack.skyroute.config.Config;
 import com.morapack.skyroute.simulation.dto.ActiveSegment;
 import com.morapack.skyroute.simulation.dto.OrderLoadTick;
@@ -18,7 +17,7 @@ import java.util.function.Consumer;
 
 /**
  * Clase dedicada EXCLUSIVAMENTE a la Operación en Vivo.
- * Contiene la lógica corregida para Fast Forward y manejo de vuelos reales.
+ * CORREGIDA: Procesa llegadas antes que salidas y usa pasos discretos para evitar duplicación de inventario.
  */
 public class LiveOperationWorld {
     private final String operationId;
@@ -51,7 +50,7 @@ public class LiveOperationWorld {
 
         if (baseAirports != null) {
             this.airports.putAll(baseAirports);
-            // Inicializar mapa de reseteo para el fix de Fast Forward
+            // Inicializar mapa de reseteo
             Instant startHour = startTime.truncatedTo(ChronoUnit.HOURS);
             this.airports.keySet().forEach(code -> airportResetMap.put(code, startHour));
         }
@@ -101,53 +100,31 @@ public class LiveOperationWorld {
         plannedOnce.put(planned.orderId(), planned);
     }
 
+    /**
+     * Avanza la simulación.
+     * CORRECCIÓN: Usa un bucle interno con pasos de 60 segundos para asegurar
+     * que la secuencia Llegada -> Salida se respete cronológicamente, incluso
+     * si 'simSeconds' es muy grande (Fast Forward).
+     */
     public void tick(long simSeconds) {
         if (simSeconds <= 0) return;
-        currentSimTime = currentSimTime.plusSeconds(simSeconds);
 
-        // Procesar vuelos programados
-        while (!scheduledFlights.isEmpty() && !scheduledFlights.peek().getDepartureTime().isAfter(currentSimTime)) {
-            LiveFlight flight = scheduledFlights.poll();
-            scheduledByKey.remove(flight.getFlightId() + "|" + flight.getDepartureTime());
+        long stepSize = 60; // 1 minuto por paso interno para estabilidad
+        long remaining = simSeconds;
 
-            LiveAirport origin = airports.get(flight.getOrigin());
-            if (origin != null) {
-                Instant flightHour = flight.getDepartureTime().truncatedTo(ChronoUnit.HOURS);
-                Instant lastReset = airportResetMap.getOrDefault(flight.getOrigin(), Instant.MIN);
+        while (remaining > 0) {
+            long currentStep = Math.min(remaining, stepSize);
+            currentSimTime = currentSimTime.plusSeconds(currentStep);
 
-                // Si la hora del vuelo es nueva para este aeropuerto, reseteamos su capacidad
-                if (!flightHour.equals(lastReset)) {
-                    origin.resetHour();
-                    airportResetMap.put(flight.getOrigin(), flightHour);
-                }
-            }
-            if (origin == null || !origin.canProcess(flight.getCapacityUsed())) {
-                continue;
-            }
-            // Gestión de inventario en origen (Salida)
-            if (flight.getCapacityUsed() > 0) {
-                Map<String, Integer> inv = airportInventory.computeIfAbsent(flight.getOrigin(), k -> new HashMap<>());
-                flight.getOrderLoads().forEach((orderId, qty) -> {
-                    int current = inv.getOrDefault(orderId, 0);
-                    int remaining = Math.max(0, current - qty);
-                    if (remaining > 0) inv.put(orderId, remaining);
-                    else inv.remove(orderId);
-                });
-                recomputeAirportLoad(flight.getOrigin());
-            }
+            processTickLogic();
 
-            origin.process(flight.getCapacityUsed());
-            flight.tryDepart();
-            activeFlights.put(flight.getFlightId() + "|" + flight.getDepartureTime(), flight);
-            // Actualizar estado de órdenes a IN_TRANSIT
-            flight.getOrderLoads().forEach((orderId, qty) -> {
-                LiveOrder order = orders.get(orderId);
-                if (order != null) {
-                    order.markInTransit(flight.getDepartureTime(), flight.getOrigin(), flight.getFlightId(), qty);
-                }
-            });
+            remaining -= currentStep;
         }
-        // Procesar llegadas (Arrivals)
+    }
+
+    private void processTickLogic() {
+        // 1. PRIMERO: Procesar llegadas (Arrivals)
+        // Esto asegura que la carga entre al inventario ANTES de que un vuelo intente sacarla.
         List<String> toRemove = new ArrayList<>();
         for (Map.Entry<String, LiveFlight> entry : activeFlights.entrySet()) {
             LiveFlight flight = entry.getValue();
@@ -184,7 +161,51 @@ public class LiveOperationWorld {
         }
         toRemove.forEach(activeFlights::remove);
 
-        // Procesar liberaciones (Deliveries)
+        // 2. SEGUNDO: Procesar vuelos programados (Departures)
+        // Ahora el inventario ya está actualizado con las llegadas de este minuto.
+        while (!scheduledFlights.isEmpty() && !scheduledFlights.peek().getDepartureTime().isAfter(currentSimTime)) {
+            LiveFlight flight = scheduledFlights.poll();
+            scheduledByKey.remove(flight.getFlightId() + "|" + flight.getDepartureTime());
+
+            LiveAirport origin = airports.get(flight.getOrigin());
+            if (origin != null) {
+                Instant flightHour = flight.getDepartureTime().truncatedTo(ChronoUnit.HOURS);
+                Instant lastReset = airportResetMap.getOrDefault(flight.getOrigin(), Instant.MIN);
+
+                if (!flightHour.equals(lastReset)) {
+                    origin.resetHour();
+                    airportResetMap.put(flight.getOrigin(), flightHour);
+                }
+            }
+            if (origin == null || !origin.canProcess(flight.getCapacityUsed())) {
+                continue;
+            }
+
+            // Gestión de inventario en origen (Salida)
+            if (flight.getCapacityUsed() > 0) {
+                Map<String, Integer> inv = airportInventory.computeIfAbsent(flight.getOrigin(), k -> new HashMap<>());
+                flight.getOrderLoads().forEach((orderId, qty) -> {
+                    int current = inv.getOrDefault(orderId, 0);
+                    int remaining = Math.max(0, current - qty);
+                    if (remaining > 0) inv.put(orderId, remaining);
+                    else inv.remove(orderId);
+                });
+                recomputeAirportLoad(flight.getOrigin());
+            }
+
+            origin.process(flight.getCapacityUsed());
+            flight.tryDepart();
+            activeFlights.put(flight.getFlightId() + "|" + flight.getDepartureTime(), flight);
+
+            flight.getOrderLoads().forEach((orderId, qty) -> {
+                LiveOrder order = orders.get(orderId);
+                if (order != null) {
+                    order.markInTransit(flight.getDepartureTime(), flight.getOrigin(), flight.getFlightId(), qty);
+                }
+            });
+        }
+
+        // 3. TERCERO: Procesar liberaciones (Deliveries)
         while (!releaseQueue.isEmpty() && !releaseQueue.peek().releaseTime.isAfter(currentSimTime)) {
             ReleaseEvent ev = releaseQueue.poll();
             Map<String, Integer> inv = airportInventory.computeIfAbsent(ev.airportCode, k -> new HashMap<>());

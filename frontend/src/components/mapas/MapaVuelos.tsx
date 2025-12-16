@@ -14,11 +14,9 @@ import { OutgoingOrdersList } from '../simulacion/OutgoingOrdersList';
 // --- FUNCIONES DE ESTILO E ICONOS ---
 
 const getStatusColor = (pct: number) => {
-  if (pct === 0) return '#22c55e';
-  if (pct < 10) return '#22c55e'; // Verde (Ok)
-  if (pct < 20) return '#eab308'; // Amarillo (Advertencia)
-  if (pct <= 30) return '#ef4444'; // Rojo (Crítico/Lleno)
-  return '#22c55e';
+  if (pct < 10) return '#22c55e';      // Verde (Ok)
+  if (pct < 20) return '#eab308';      // Amarillo (Advertencia)
+  return '#ef4444';                     // Rojo (Crítico/Lleno)
 };
 
 const getAirportIcon = (pct: number, forPopup = false, lat?: number, _northBound?: number) => {
