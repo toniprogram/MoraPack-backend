@@ -22,19 +22,18 @@ export default function OperacionPage() {
     } = useOperacion();
 
      const activeAirports: ActiveAirportTick[] = useMemo(() => {
-        const result = aeropuertos.map(a => {
-            const code = a.code || a.id || '';
-            const stock = airportStocks[code];
-            const capacity = a.storageCapacity;
-
-            return {
-                airportCode: code,
-                currentLoad: stock || 0,
-                maxThroughputPerHour: capacity || 0
-            };
-        });
-        return result;
-    }, [aeropuertos, airportStocks]);
+         const result = aeropuertos.map(a => {
+             const code = a.code || a.id || '';
+             const liveData = airportStocks[code];
+             return {
+                 airportCode: code,
+                 currentLoad: liveData?.currentLoad || 0,
+                 maxThroughputPerHour: liveData?.maxThroughputPerHour || a.storageCapacity || 0,
+                 orderLoads: liveData?.orderLoads || []
+             };
+         });
+         return result;
+     }, [aeropuertos, airportStocks]);
 
     const [manualDateStr, setManualDateStr] = useState('');
 

@@ -20,6 +20,9 @@ export interface SegmentoVuelo {
     orderIds: string[];
     retrasado: boolean;
     routeQuantity?: number;
+    capacityUsed?: number;
+    capacityTotal?: number;
+    orderLoads?: { orderId: string; quantity: number }[];
 }
 
 export interface VueloEnMovimiento {
@@ -86,6 +89,12 @@ export interface OperationMetrics {
     delayedOrders: number;
 }
 
+interface AirportLiveStatus {
+    currentLoad: number;
+    maxThroughputPerHour: number;
+    orderLoads: { orderId: string; quantity: number }[];
+}
+
 export const useOperacion = () => {
     const [status, setStatus] = useState<'idle' | 'buffering' | 'running' | 'error'>('idle');
     const [isReplanning, setIsReplanning] = useState(false);
@@ -128,7 +137,7 @@ export const useOperacion = () => {
     const [activeSegments, setActiveSegments] = useState<SegmentoVuelo[]>([]);
     const [vuelosEnMovimiento, setVuelosEnMovimiento] = useState<VueloEnMovimiento[]>([]);
     const [orderStatusList, setOrderStatusList] = useState<OrderStatusDetail[]>([]);
-    const [airportStocks, setAirportStocks] = useState<Record<string, number>>({});
+    const [airportStocks, setAirportStocks] = useState<Record<string, AirportLiveStatus>>({});
     const stompClientRef = useRef<Client | null>(null);
 
     const [metrics, setMetrics] = useState<OperationMetrics>({
@@ -358,7 +367,6 @@ export const useOperacion = () => {
             const wsBase = base.replace(/^http/, 'ws').replace(/\/api\/?$/, '');
             return `${wsBase}/ws`;
         };
-
         const client = new Client({
             brokerURL: resolveWsUrl(),
             reconnectDelay: 5000,
@@ -366,30 +374,38 @@ export const useOperacion = () => {
                 client.subscribe('/topic/ops/current', (message) => {
                     try {
                         const parsed: SimulationMessage = JSON.parse(message.body);
+                        if (parsed.tick) {
+                            // A) PROCESAR VUELOS (ActiveSegments)
+                            if (parsed.tick.activeSegments) {
+                                const mapped: SegmentoVuelo[] = parsed.tick.activeSegments.map((s: any) => ({
+                                    id: s.id,
+                                    flightId: s.flightId,
+                                    origin: s.origin,
+                                    destination: s.destination,
+                                    departureUtc: s.departureUtc,
+                                    arrivalUtc: s.arrivalUtc,
+                                    orderIds: s.orderIds ?? [],
+                                    retrasado: false,
+                                    routeQuantity: s.capacityUsed,
+                                    capacityUsed: s.capacityUsed,
+                                    capacityTotal: s.capacityTotal,
+                                    orderLoads: s.orderLoads ?? []
+                                }));
+                                setActiveSegments(mapped);
+                            }
 
-                        if (parsed.tick && parsed.tick.activeSegments) {
-
-                            const mapped: SegmentoVuelo[] = parsed.tick.activeSegments.map((s: any) => ({
-                                id: s.id,
-                                flightId: s.flightId,
-                                origin: s.origin,
-                                destination: s.destination,
-                                departureUtc: s.departureUtc,
-                                arrivalUtc: s.arrivalUtc,
-                                orderIds: s.orderIds ?? [],
-                                retrasado: false,
-                                progressPct: 0,
-                                latitude: null,
-                                longitude: null,
-                                routeQuantity: s.capacityUsed,
-                                capacityUsed: s.capacityUsed,
-                                capacityTotal: s.capacityTotal,
-                                orderLoads: s.orderLoads ?? []
-                            }));
-                            setActiveSegments(mapped);
-                        } else {
-                             // Si activeSegments es null o vacío, el backend no está enviando vuelos
-                             // console.warn('[OPS WS] El tick no tiene activeSegments o está vacío');
+                            // B) PROCESAR AEROPUERTOS (ActiveAirports)
+                            if (parsed.tick.activeAirports) {
+                                const stockMap: Record<string, AirportLiveStatus> = {};
+                                parsed.tick.activeAirports.forEach((a: any) => {
+                                    stockMap[a.airportCode] = {
+                                        currentLoad: a.currentLoad,
+                                        maxThroughputPerHour: a.maxThroughputPerHour,
+                                        orderLoads: a.orderLoads ?? []
+                                    };
+                                });
+                                setAirportStocks(stockMap);
+                            }
                         }
                     } catch (err) {
                         console.warn('No se pudo parsear tick de operación', err);
