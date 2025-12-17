@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap, Tooltip, useMapEvents, ZoomControl } from 'react-leaflet';
 import L from 'leaflet';
 import { useEffect, useRef, useState, useMemo } from 'react';

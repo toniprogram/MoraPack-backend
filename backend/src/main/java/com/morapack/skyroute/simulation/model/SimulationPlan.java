@@ -3,6 +3,7 @@ package com.morapack.skyroute.simulation.model;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.BatchSize;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -32,5 +33,6 @@ public class SimulationPlan {
     private int slaViolations;
 
     @OneToMany(mappedBy = "plan", cascade = CascadeType.ALL, orphanRemoval = true)
+    @BatchSize(size = 500)
     private List<SimulationOrderPlan> orderPlans;
 }

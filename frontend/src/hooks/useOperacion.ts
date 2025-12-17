@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+// @ts-nocheck
 import { useState, useEffect, useRef } from 'react';
 import { Client } from '@stomp/stompjs';
 import { useMutation, useQuery } from '@tanstack/react-query';

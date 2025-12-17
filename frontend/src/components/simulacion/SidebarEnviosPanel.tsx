@@ -7,7 +7,6 @@ interface SidebarEnviosPanelProps {
   ordenesParaSimular: unknown[];
   selectedOrders: string[] | null;
   onSelectOrders: (orderIds: string[] | null) => void;
-  scrollParent?: HTMLDivElement | null;
 }
 
 export function SidebarEnviosPanel({
@@ -15,7 +14,6 @@ export function SidebarEnviosPanel({
   ordenesParaSimular,
   selectedOrders,
   onSelectOrders,
-  scrollParent,
 }: SidebarEnviosPanelProps) {
   const PAGE_SIZE = 10;
   const sorted = useMemo(() => {

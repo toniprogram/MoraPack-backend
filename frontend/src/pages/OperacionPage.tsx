@@ -42,14 +42,6 @@ export default function OperacionPage() {
         setManualDateStr(val);
     };
 
-    const handleResetTime = () => {
-        setManualDateStr('');
-        actions.resetTime();
-    };
-
-    const formatTime = (date: Date) =>
-        date.toLocaleTimeString('es-PE', { timeZone: 'UTC', hour12: false });
-
     const formatShortTime = (isoDate: string) => {
         if(!isoDate) return '--:--';
         const d = new Date(isoDate);

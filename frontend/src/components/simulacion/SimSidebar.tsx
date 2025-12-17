@@ -224,7 +224,6 @@ export function SimSidebar({
             ordenesParaSimular={ordenesParaSimular}
             selectedOrders={selectedOrderIds}
             onSelectOrders={onSelectOrders}
-            scrollParent={scrollRef.current}
           />
         )}
 
@@ -235,7 +234,6 @@ export function SimSidebar({
             vuelosEnMovimiento={vuelosEnMovimiento}
             selectedFlightId={selectedFlightId}
             onSelectFlight={onSelectFlight}
-            scrollParent={scrollRef.current}
             selectedOrders={selectedOrderIds}
             selectedAirportIds={selectedAirportIds}
           />

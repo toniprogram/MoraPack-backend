@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useSimulacion } from '../hooks/useSimulacion';
 import { MapaVuelos } from '../components/mapas/MapaVuelos';
 import type { OrderRequest } from '../types/orderRequest';
-import type { OrderStatusTick, SimulationOrderPlan } from '../types/simulation';
+import type { SimulationOrderPlan } from '../types/simulation';
 import { SimTopBar } from '../components/simulacion/SimTopBar';
 import { SimSidebar } from '../components/simulacion/SimSidebar';
 import type { EnvioInfo, FlightGroup } from '../types/simulacionUI';
@@ -42,7 +42,6 @@ export default function SimulacionPage() {
       setNotificacion,
       plannedLog: plannedLogState = [],
       deliveredPage,
-      deliveredLoading,
       fetchDeliveries,
   } = useSimulacion();
   const location = useLocation();
@@ -164,60 +163,9 @@ export default function SimulacionPage() {
   const enviosCalc = useMemo(() => {
     const term = (filtroTexto || '').toLowerCase();
     const next = new Map<string, EnvioInfo>();
-    const planMap = new Map<string, SimulationOrderPlan>();
-    // Primero planes con estado desde BD (sin rutas)
-    (orderPlansDb ?? []).forEach(p => {
-      planMap.set(p.orderId, {
-        orderId: p.orderId,
-        creationUtc: null,
-        slackMinutes: p.slackMinutes,
-        routes: []
-      });
-    });
-    // Luego los planes completos con rutas desde snapshots/ticks
-    (orderPlans ?? []).forEach(p => planMap.set(p.orderId, p));
-
-    const merged = new Map<string, { status: string; simTime?: string; quantity?: number }>();
-    const deliveredSource = filtroEstado === 'entregados'
-      ? (deliveredPage?.items ?? []).map(item => ({
-          orderId: (item as any).orderId,
-          status: 'DELIVERED',
-          simTime: (item as any).simTime ?? (item as any).deliveredAt,
-          quantity: (item as any).deliveredQty ?? (item as any).quantity ?? 0,
-        }))
-      : [];
-
-    (orderStatuses ?? []).forEach(os => {
-      if (!os) return;
-      const statusUpper = (os.status || '').toUpperCase();
-      const normalizedStatus = statusUpper === 'WAITING' ? 'PLANNED' : statusUpper;
-      merged.set(os.orderId, { status: normalizedStatus, simTime: undefined, quantity: os.quantity });
-    });
-    deliveredSource.forEach(entry => {
-      merged.set(entry.orderId, { status: 'DELIVERED', simTime: entry.simTime, quantity: entry.quantity });
-    });
-    if (filtroEstado === 'planificados' || filtroEstado === 'enproceso') {
-      plannedLogState.forEach(entry => {
-        if (!merged.has(entry.orderId)) {
-          merged.set(entry.orderId, { status: 'PLANNED', simTime: entry.simTime, quantity: 0 });
-        }
-      });
-    }
-    // Fallback: si no hay estado para un plan existente, marcarlo como PLANNED para que aparezca
-    if (filtroEstado !== 'entregados') {
-      planMap.forEach((plan, orderId) => {
-        if (!merged.has(orderId)) {
-          merged.set(orderId, {
-            status: 'PLANNED',
-            simTime: plan.creationUtc ?? undefined,
-            quantity: plan.routes?.reduce((acc, r) => acc + (r.quantity ?? 0), 0) ?? 0,
-          });
-        }
-      });
-    }
-
-    merged.forEach((info, orderId) => {
-      const statusUpper = (info.status || '').toUpperCase();
+    const plans = orderPlansDb ?? [];
+    plans.forEach(p => {
+      const statusUpper = (p.status || '').toUpperCase();
       const statusNorm = statusUpper === 'WAITING' ? 'PLANNED' : statusUpper;
       const includeEstado =
         filtroEstado === 'planificados'
@@ -227,25 +175,27 @@ export default function SimulacionPage() {
             : statusNorm !== 'PLANNED' && statusNorm !== 'DELIVERED';
       if (!includeEstado) return;
 
-      const matchSearch = term === '' || orderId.toLowerCase().includes(term);
+      const matchSearch = term === '' || p.orderId.toLowerCase().includes(term);
       if (!matchSearch) return;
-      if (selectedOrderIds && !selectedOrderIds.includes(orderId)) return;
+      if (selectedOrderIds && !selectedOrderIds.includes(p.orderId)) return;
 
       let estado: EnvioInfo['estado'] = 'Planificado';
       if (statusNorm === 'READY_PICKUP' || statusNorm === 'IN_TRANSIT') {
-          estado = 'En tránsito';
+        estado = 'En tránsito';
       } else if (statusNorm === 'DELIVERED') {
-          estado = 'Entregado';
+        estado = 'Entregado';
       }
 
-      const plan = planMap.get(orderId);
-      next.set(orderId, {
-        plan: plan ?? { orderId, slackMinutes: 0, routes: [] } as SimulationOrderPlan,
+      next.set(p.orderId, {
+        plan: {
+          orderId: p.orderId,
+          creationUtc: p.creationUtc ?? null,
+          slackMinutes: p.slackMinutes,
+          routes: p.routes ?? [],
+        },
         estado,
-        creationMs: plan?.creationUtc
-          ? Date.parse(plan.creationUtc)
-          : (info.simTime ? Date.parse(info.simTime) : 0),
-        arrivalMs: 0
+        creationMs: p.creationUtc ? Date.parse(p.creationUtc) : 0,
+        arrivalMs: 0,
       });
     });
 
