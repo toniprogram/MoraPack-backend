@@ -12,6 +12,7 @@ import com.morapack.skyroute.plan.repository.CurrentPlanRepository;
 import com.morapack.skyroute.capacity.repository.FlightCapacityRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.morapack.skyroute.models.OrderPlan;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -19,6 +20,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 public class PlanningService {
@@ -40,28 +43,51 @@ public class PlanningService {
 
     @Transactional
     public CurrentPlan run() {
+        // 1. Obtener datos del mundo
         WorldBuilder.Snapshot snapshot = worldBuilder.buildOperationalSnapshot();
         if (snapshot.demand().isEmpty()) {
             throw new IllegalStateException("No orders available to run the genetic algorithm.");
         }
-
+        // 2. Ejecutar Algoritmo Genético
         GeneticAlgorithm geneticAlgorithm = new GeneticAlgorithm(snapshot.world(), snapshot.demand());
         Individual best = geneticAlgorithm.run(Config.POP_SIZE, Config.OPERATION_MAX_GEN);
-        CurrentPlan entity = mapper.toEntity(best);
-        
-        // Cargar los orderplans existentes del plan anterior
-        Optional<CurrentPlan> currentPlan = planRepository.findById(1L);
-        if (currentPlan.isPresent() && currentPlan.get().getOrderPlans() != null) {
-            // Agregar solo los orderplans nuevos (no duplicar)
-            if (entity.getOrderPlans() == null) {
-                entity.setOrderPlans(new ArrayList<>());
+        CurrentPlan newResult = mapper.toEntity(best);
+        // 3. Obtener el plan actual con BLOQUEO (para seguridad en concurrencia)
+        Optional<CurrentPlan> dbPlanOpt = planRepository.findByIdWithLock(1L);
+        CurrentPlan planToSave;
+        if (dbPlanOpt.isPresent()) {
+            CurrentPlan dbPlan = dbPlanOpt.get();
+            // Inicializar lista si es nula
+            if (dbPlan.getOrderPlans() == null) {
+                dbPlan.setOrderPlans(new ArrayList<>());
             }
-            entity.getOrderPlans().addAll(currentPlan.get().getOrderPlans());
+            // A. Recolectar IDs existentes
+            Set<String> existingOrderIds = dbPlan.getOrderPlans().stream()
+                    .map(OrderPlan::getOrderId)
+                    .collect(Collectors.toSet());
+            // B. Filtrar los nuevos (evitar duplicados)
+            List<OrderPlan> reallyNewPlans = newResult.getOrderPlans().stream()
+                    .filter(op -> !existingOrderIds.contains(op.getOrderId()))
+                    .collect(Collectors.toList());
+            // C. Asignar el padre (Usamos setPlan porque así se llama en tu modelo)
+            reallyNewPlans.forEach(op -> op.setPlan(dbPlan));
+            // D. Agregar a la lista existente
+            dbPlan.getOrderPlans().addAll(reallyNewPlans);
+            // Actualizar metadatos
+            dbPlan.setFitness(newResult.getFitness());
+            dbPlan.setGeneratedAt(newResult.getGeneratedAt());
+            planToSave = dbPlan;
+        } else {
+            // Caso: Primera ejecución histórica (DB vacía)
+            newResult.setId(1L);
+            if (newResult.getOrderPlans() != null) {
+                newResult.getOrderPlans().forEach(op -> op.setPlan(newResult));
+            }
+            planToSave = newResult;
         }
-        
-        persistFlightCapacities(entity);
-        planRepository.save(entity);
-        return entity;
+        // 4. Guardar capacidades y el plan final
+        persistFlightCapacities(planToSave);
+        return planRepository.save(planToSave);
     }
 
     private String getOrderId(Object orderPlan) {

@@ -20,7 +20,7 @@ public class ScheduledPlanningService {
      * Si hay pedidos sin planificar, genera un nuevo plan.
      * Si no hay, simplemente pasa sin hacer nada.
      */
-    @Scheduled(fixedDelay = 60000) // 60 segundos
+    @Scheduled(fixedDelay = 180000) // 180 segundos
     public void autoPlanScheduled() {
         try {
             log.info("[SCHEDULER] Ejecutando planificación automática...");
