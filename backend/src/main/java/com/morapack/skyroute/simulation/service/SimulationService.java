@@ -35,10 +35,11 @@ import com.morapack.skyroute.simulation.live.*;
 import com.morapack.skyroute.simulation.repository.SimulationPlanRepository;
 import com.morapack.skyroute.simulation.repository.SimulationOrderPlanRepository;
 import com.morapack.skyroute.simulation.repository.SimulationDeliveryRepository;
-import com.morapack.skyroute.simulation.service.SimulationPlanMapper;
 import com.morapack.skyroute.simulation.model.SimulationDelivery;
 import com.morapack.skyroute.simulation.model.SimulationPlan;
 import com.morapack.skyroute.simulation.model.SimulationRoute;
+import com.morapack.skyroute.simulation.service.SimulationPlanBulkWriter;
+import com.morapack.skyroute.simulation.service.SimulationOrderPlanReadWriter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -62,6 +63,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -94,6 +96,8 @@ public class SimulationService {
     private final SimulationPlanRepository simulationPlanRepository;
     private final SimulationOrderPlanRepository orderPlanRepository;
     private final SimulationPlanMapper simulationPlanMapper;
+    private final SimulationPlanBulkWriter planBulkWriter;
+    private final SimulationOrderPlanReadWriter readWriter;
     private final TransactionTemplate txTemplate;
     private final Path snapshotsDir = Paths.get("snapshots");
     private final ExecutorService executorService = Executors.newCachedThreadPool();
@@ -109,6 +113,8 @@ public class SimulationService {
                              SimulationPlanRepository simulationPlanRepository,
                              SimulationOrderPlanRepository orderPlanRepository,
                              SimulationPlanMapper simulationPlanMapper,
+                             SimulationPlanBulkWriter planBulkWriter,
+                             SimulationOrderPlanReadWriter readWriter,
                              TransactionTemplate txTemplate) {
         this.worldBuilder = worldBuilder;
         this.orderRepository = orderRepository;
@@ -118,12 +124,14 @@ public class SimulationService {
         this.simulationPlanRepository = simulationPlanRepository;
         this.orderPlanRepository = orderPlanRepository;
         this.simulationPlanMapper = simulationPlanMapper;
+        this.planBulkWriter = planBulkWriter;
+        this.readWriter = readWriter;
         this.txTemplate = txTemplate;
     }
 
     public SimulationStartResponse startSimulation(SimulationStartRequest request) {
         TimeRange range = resolveRange(request);
-        int windowMinutesResolved = 112;
+        long windowSecondsResolved = 560L;
         long fetchStart = System.nanoTime();
         List<Order> allProjectedInRange = filterOperationalOrders(
                 orderRepository.findAllByScopeAndCreationUtcBetweenOrderByCreationUtcAsc(
@@ -139,8 +147,8 @@ public class SimulationService {
                     "No projected orders found for the selected range"
             );
         }
-        Instant firstWindowEnd = windowMinutesResolved > 0
-                ? range.start().plus(Duration.ofMinutes(windowMinutesResolved))
+        Instant firstWindowEnd = windowSecondsResolved > 0
+                ? range.start().plus(Duration.ofSeconds(windowSecondsResolved))
                 : range.end();
         long firstLoadStartMs = System.currentTimeMillis();
         List<Order> projectedOrders = filterOperationalOrders(
@@ -206,8 +214,8 @@ public class SimulationService {
             log.warn("[SIM:{}] Unable to prepare snapshot file: {}", simulationId, ex.getMessage());
         }
 
-        log.info("[SIM] windowMinutes resolved to {} (request={}, default={})",
-                windowMinutesResolved,
+        log.info("[SIM] windowSeconds resolved to {} (request={}, default={})",
+                windowSecondsResolved,
                 request != null ? request.windowMinutes() : null,
                 Config.SIMULATION_WINDOW_MINUTES);
         boolean useHeuristicSeed = request != null && Boolean.TRUE.equals(request.useHeuristicSeed());
@@ -215,10 +223,10 @@ public class SimulationService {
             session.endInstant = toUtc(request.endDate());
         }
 
-        final int finalWindowMinutes = windowMinutesResolved;
+        final long finalWindowSeconds = 3360L; // procesar batches cada 3360s de tiempo simulado
         final boolean heuristicSeedEnabled = useHeuristicSeed;
-        if (finalWindowMinutes > 0) {
-            executorService.submit(() -> runSimulationBatched(session, simulationWorldFinal, finalWindowMinutes, rangeStart, range.end(), heuristicSeedEnabled, projectedOrders));
+        if (finalWindowSeconds > 0) {
+            executorService.submit(() -> runSimulationBatched(session, simulationWorldFinal, finalWindowSeconds, rangeStart, range.end(), heuristicSeedEnabled, projectedOrders));
         } else {
             executorService.submit(() -> runSimulationLegacy(session, projectedOrders, simulationWorldFinal, heuristicSeedEnabled));
         }
@@ -230,7 +238,7 @@ public class SimulationService {
         SimulationSession session = sessions.get(simulationId);
         if (session == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Simulation not found");
-    }
+        }
         return session.toStatus();
     }
 
@@ -307,6 +315,7 @@ public class SimulationService {
 
     private void runSimulationLegacy(SimulationSession session, List<Order> orders, World world, boolean useHeuristicSeed) {
         List<Order> demand = new ArrayList<>();
+        session.demandRef = demand;
         Individual previousBest = null;
         try {
             log.info("[SIM:{}] Starting legacy simulation with {} orders", session.id, orders.size());
@@ -331,19 +340,21 @@ public class SimulationService {
 
     private void runSimulationBatched(SimulationSession session,
                                       World world,
-                                      int windowMinutes,
+                                      long windowSeconds,
                                       Instant windowStart,
                                       Instant rangeEnd,
                                       boolean useHeuristicSeed,
                                       List<Order> initialOrders) {
         List<Order> demand = new ArrayList<>();
+        session.demandRef = demand;
         Individual previousBest = null;
-        Duration windowDuration = Duration.ofMinutes(windowMinutes);
+        Duration windowDuration = Duration.ofSeconds(windowSeconds);
         int batchesProcessed = 0;
         Instant cursorStart = windowStart;
         long scheduleStartMillis = 0L;
+        Future<List<Order>> prefetchFuture = null;
         try {
-            log.info("[SIM:{}] Starting batched simulation (window={} minutes)", session.id, windowMinutes);
+            log.info("[SIM:{}] Starting batched simulation (window={} seconds)", session.id, windowSeconds);
             int batchIndex = 0;
             List<Order> batch = initialOrders;
             while (true) {
@@ -351,12 +362,12 @@ public class SimulationService {
                 if (scheduleStartMillis == 0L) {
                     scheduleStartMillis = now;
                 }
-                long targetStart = scheduleStartMillis + batchIndex * 60_000L;
-                long targetEnd = targetStart + 60_000L;
+                long targetStart = scheduleStartMillis + batchIndex * 30_000L; // cada 30s de reloj real
+                long targetEnd = targetStart + 15_000L; // GA con presupuesto de 15s
                 if (targetEnd <= now) {
                     log.warn("[SIM:{}] GA schedule drifted (now={} ms past target end); resetting slot to now", session.id, now - targetEnd);
                     targetStart = now;
-                    targetEnd = now + 60_000L;
+                    targetEnd = now + 15_000L;
                     scheduleStartMillis = now; // resync cadence
                 }
                 long waitMs = targetStart - now;
@@ -380,13 +391,22 @@ public class SimulationService {
                 if (rangeEnd != null && windowEnd.isAfter(rangeEnd)) {
                     windowEnd = rangeEnd;
                 }
-                if (batch == null) {
-                    List<Order> fetched = orderRepository.findAllByScopeAndCreationUtcBetweenOrderByCreationUtcAsc(
-                            OrderScope.PROJECTED,
-                            cursorStart,
-                            windowEnd
-                    );
-                    batch = filterOperationalOrders(fetched);
+                if (batch == null) { // intentar usar prefetch si está listo
+                    if (prefetchFuture != null && prefetchFuture.isDone()) {
+                        try {
+                            batch = prefetchFuture.get();
+                        } catch (Exception ignored) {
+                            batch = null;
+                        }
+                    }
+                    if (batch == null) {
+                        List<Order> fetched = orderRepository.findAllByScopeAndCreationUtcBetweenOrderByCreationUtcAsc(
+                                OrderScope.PROJECTED,
+                                cursorStart,
+                                windowEnd
+                        );
+                        batch = filterOperationalOrders(fetched);
+                    }
                 }
                 if (batch == null || batch.isEmpty()) {
                     log.info("[SIM:{}] No more orders to process at window start {}", session.id, cursorStart);
@@ -409,15 +429,24 @@ public class SimulationService {
                     break;
                 }
                 cursorStart = windowEnd;
+                // Prefetch siguiente batch en paralelo para ganar tiempo de IO
+                Instant nextWindowStart = cursorStart;
+                Instant nextWindowEnd = rangeEnd != null && nextWindowStart.plus(windowDuration).isAfter(rangeEnd)
+                        ? rangeEnd
+                        : nextWindowStart.plus(windowDuration);
+                prefetchFuture = executorService.submit(() -> {
+                    List<Order> fetched = orderRepository.findAllByScopeAndCreationUtcBetweenOrderByCreationUtcAsc(
+                            OrderScope.PROJECTED,
+                            nextWindowStart,
+                            nextWindowEnd
+                    );
+                    return filterOperationalOrders(fetched);
+                });
                 if (rangeEnd != null && !cursorStart.isBefore(rangeEnd)) {
                     break;
                 }
                 batchIndex++;
-                batch = filterOperationalOrders(orderRepository.findAllByScopeAndCreationUtcBetweenOrderByCreationUtcAsc(
-                        OrderScope.PROJECTED,
-                        cursorStart,
-                        cursorStart.plus(windowDuration)
-                ));
+                batch = null; // será provisto por prefetchFuture o fetch sincrónico
             }
 
             log.info("[SIM:{}] Batch loop completed: processed {} batches", session.id, batchesProcessed);
@@ -439,6 +468,7 @@ public class SimulationService {
                                     boolean useHeuristicSeed,
                                     long targetEndMillis) {
         long iterationStart = System.nanoTime();
+        long stageStart = iterationStart;
         // Procesamos órdenes del batch en orden cronológico para que la semilla heurística respete el timeline
         List<Order> orderedBatch = batch.stream()
                 .sorted(Comparator.comparing(Order::getCreationUtc))
@@ -463,6 +493,8 @@ public class SimulationService {
                 }
             }
         }
+        log.debug("[SIM:{}] Batch demand ready in {} ms (size={})",
+                session.id, nanosToMillis(System.nanoTime() - stageStart), demand.size());
 
         // Avanzar el reloj al final de la ventana solo después del primer GA;
         // el primer batch corre en el instante inicial configurado
@@ -472,6 +504,7 @@ public class SimulationService {
 
         // Ejecutar GA una vez por batch
         Instant simInstant = world.getCurrentInstant();
+        stageStart = System.nanoTime();
         Individual completionSource = heuristicSeed != null ? heuristicSeed : previousBest;
         if (!demand.isEmpty() && completionSource != null) {
             Map<String, Instant> completion = completionSource.computeCompletionTimes(world, demand);
@@ -486,37 +519,92 @@ public class SimulationService {
                 int removed = demand.size() - activeIds.size();
                 log.info("[SIM:{}] Pruning {} delivered/expired orders before GA (simTime={})", session.id, removed, simInstant);
                 demand.removeIf(o -> !activeIds.contains(o.getId()));
-                heuristicSeed = heuristicSeed != null ? heuristicSeed.pruneToOrders(world, activeIds) : null;
-                previousBest = previousBest != null ? previousBest.pruneToOrders(world, activeIds) : null;
+                heuristicSeed = heuristicSeed != null ? heuristicSeed.pruneToOrders(world, activeIds, demand) : null;
+                previousBest = previousBest != null ? previousBest.pruneToOrders(world, activeIds, demand) : null;
                 if (session.lastPopulation != null && !session.lastPopulation.isEmpty()) {
                     session.lastPopulation = session.lastPopulation.stream()
-                            .map(ind -> ind.pruneToOrders(world, activeIds))
+                            .map(ind -> ind.pruneToOrders(world, activeIds, demand))
                             .filter(Objects::nonNull)
                             .toList();
                 }
             }
         }
+        log.debug("[SIM:{}] Prune stage finished in {} ms (demand={})",
+                session.id, nanosToMillis(System.nanoTime() - stageStart), demand.size());
+        // Normalizar demanda para eliminar duplicados y mantener referencia compartida
+        List<Order> normalizedDemand = normalizeDemand(demand);
+        if (normalizedDemand.size() != demand.size()) {
+            log.debug("[SIM:{}] Demand contained duplicates (raw={} normalized={})", session.id, demand.size(), normalizedDemand.size());
+        }
+        demand.clear();
+        demand.addAll(normalizedDemand);
+
+        // Saltamos normalizeSeed pesado; usaremos rebuild para forzar placeholders y asegurar completitud
+        int activeOrderCount = demand.size();
+        // Reconstruir individuos para que cada orden activa tenga exactamente un plan
+        stageStart = System.nanoTime();
+        log.debug("[SIM:{}] rebuild stage starting (activeOrders={} heuristic?={} previous?={} popSize={})",
+                session.id,
+                activeOrderCount,
+                heuristicSeed != null,
+                previousBest != null,
+                session.lastPopulation != null ? session.lastPopulation.size() : 0);
+        heuristicSeed = rebuildIndividualForDemand(session, heuristicSeed, demand, world);
+        previousBest = rebuildIndividualForDemand(session, previousBest, demand, world);
+        if (session.lastPopulation != null && !session.lastPopulation.isEmpty()) {
+            List<Individual> rebuilt = new ArrayList<>();
+            for (Individual ind : session.lastPopulation) {
+                Individual completed = rebuildIndividualForDemand(session, ind, demand, world);
+                if (completed != null && completed.getPlans().size() == activeOrderCount) {
+                    rebuilt.add(completed);
+                }
+            }
+            session.lastPopulation = rebuilt;
+        }
+        log.debug("[SIM:{}] rebuild stage finished in {} ms (activeOrders={} heuristicPlans={} previousPlans={} popSize={})",
+                session.id,
+                nanosToMillis(System.nanoTime() - stageStart),
+                activeOrderCount,
+                heuristicSeed != null ? heuristicSeed.getPlans().size() : 0,
+                previousBest != null ? previousBest.getPlans().size() : 0,
+                session.lastPopulation != null ? session.lastPopulation.size() : 0);
         if (demand.isEmpty()) {
             log.warn("[SIM:{}] No active orders after pruning; skipping GA for this batch", session.id);
             return heuristicSeed != null ? heuristicSeed : previousBest;
         }
+        if (heuristicSeed != null && heuristicSeed.getPlans().size() != activeOrderCount) {
+            throw new IllegalStateException("Invalid heuristicSeed: missing plans for active orders");
+        }
+        if (previousBest != null && previousBest.getPlans().size() != activeOrderCount) {
+            throw new IllegalStateException("Invalid previousBest: missing plans for active orders");
+        }
+
         GeneticAlgorithm ga = new GeneticAlgorithm(world, List.copyOf(demand));
         log.info("[SIM:{}] Starting GA for batch (simTime={})", session.id, simInstant);
         long start = System.nanoTime();
-        long gaBudgetMs = Math.max(1_000L, targetEndMillis - System.currentTimeMillis());
+        long gaBudgetMs = Math.max(15_000L, targetEndMillis - System.currentTimeMillis());
         Individual best = ga.runTimed(
                 Config.POP_SIZE,
                 Config.MAX_GEN,
                 gaBudgetMs,
                 heuristicSeed,
                 session.lastPopulation,
-                batch
+                List.of()
         );
         long gaDuration = System.nanoTime() - start;
         session.lastPopulation = ga.snapshotPopulation();
         session.gaRuns.incrementAndGet();
 
         log.info("[SIM:{}] GA done for batch of {} orders (took {} ms)", session.id, orderedBatch.size(), gaDuration / 1_000_000);
+        if (best.getPlans().size() != activeOrderCount) {
+            log.warn("[SIM:{}] GA best incomplete (plans={} expected={}); attempting rebuild", session.id, best.getPlans().size(), activeOrderCount);
+            Individual rebuiltBest = rebuildIndividualForDemand(session, best, demand, world);
+            if (rebuiltBest != null && rebuiltBest.getPlans().size() == activeOrderCount) {
+                best = rebuiltBest;
+            } else {
+                log.error("[SIM:{}] Rebuild failed to complete best individual (plans={})", session.id, rebuiltBest != null ? rebuiltBest.getPlans().size() : 0);
+            }
+        }
         var planIds = best.getPlans().stream().map(OrderPlan::getOrderId).toList();
         log.info("[SIM:{}] Best individual plans count={} ids={}", session.id, planIds.size(), planIds);
         log.info("[SIM:{}] Metrics for batch: gaRun={} ms, iterationTotal={} ms",
@@ -531,17 +619,23 @@ public class SimulationService {
                 world.advanceTo(snapshotInstant);
             }
         }
-        SimulationSnapshot snapshot = toSnapshot(session.id, demand.size(), totalOrders, best, world, demand);
+        // Actualizamos las órdenes activas desde demand (fuente de verdad)
+        session.activeOrderIds = demand.stream().map(Order::getId).collect(Collectors.toSet());
+
+        // Filtrar planes a solo órdenes activas para DTO/read model
+        List<OrderPlan> activePlans = best.getPlans().stream()
+                .filter(p -> session.activeOrderIds.contains(p.getOrderId()))
+                .toList();
+
+        SimulationSnapshot snapshot = toSnapshot(session.id, demand.size(), totalOrders, best, world, demand, activePlans);
         session.update(snapshot);
         persistDiff(session, snapshot);
         persistSnapshot(session, snapshot);
-        persistSimulationPlan(session.id, best);
-        // Build detailed updates for frontend cache (nuevos/actualizados)
         Map<String, Instant> creationMap = demand.stream()
                 .collect(Collectors.toMap(Order::getId, Order::getCreationUtc, (a, b) -> a));
         List<SimulationOrderPlan> detailedUpdates = new ArrayList<>();
         Map<String, SimulationOrderPlan> detailsMap = new HashMap<>(session.lastDetails);
-        best.getPlans().forEach(p -> {
+        activePlans.forEach(p -> {
             SimulationOrderPlan dto = toOrderPlanDto(p, creationMap.get(p.getOrderId()));
             SimulationOrderPlan prev = detailsMap.get(dto.orderId());
             if (prev == null || !prev.equals(dto)) {
@@ -550,8 +644,12 @@ public class SimulationService {
             }
         });
         session.lastDetails = detailsMap;
-        if (session.liveWorld != null && best.getPlans() != null) {
-            best.getPlans().forEach(p -> {
+        // Persistimos cambios incrementales al read model (solo los que difieren)
+        if (!detailedUpdates.isEmpty()) {
+            readWriter.upsertReadModel(session.id.toString(), detailedUpdates);
+        }
+        if (session.liveWorld != null && activePlans != null) {
+            activePlans.forEach(p -> {
                 var plannedTick = new OrderStatusTick(
                         p.getOrderId(),
                         "PLANNED",
@@ -576,13 +674,28 @@ public class SimulationService {
             startTicker(session);
         }
 
-        // Detecta colapso si faltan planes para órdenes demandadas
-        Set<String> plannedIds = best.getPlans().stream().map(OrderPlan::getOrderId).collect(Collectors.toSet());
-        for (Order o : demand) {
-            if (!plannedIds.contains(o.getId())) {
-                session.markCollapsed("Colapso logístico: no se pudo planificar el pedido " + o.getId());
-                log.warn("[SIM:{}] Logistic collapse detected at order {}", session.id, o.getId());
+        // guardar última solución para persistencia final
+        session.lastBest = best;
+
+        // Detecta colapso si hay slack negativo o faltan planes para órdenes demandadas
+        OrderPlan negativeSlackPlan = null;
+        for (OrderPlan p : best.getPlans()) {
+            if (p.getSlack() != null && p.getSlack().isNegative()) {
+                negativeSlackPlan = p;
                 break;
+            }
+        }
+        if (negativeSlackPlan != null) {
+            session.markCollapsed("Colapso logístico: slack negativo en pedido " + negativeSlackPlan.getOrderId());
+            log.warn("[SIM:{}] Logistic collapse detected due to negative slack in order {}", session.id, negativeSlackPlan.getOrderId());
+        } else {
+            Set<String> plannedIds = best.getPlans().stream().map(OrderPlan::getOrderId).collect(Collectors.toSet());
+            for (Order o : demand) {
+                if (!plannedIds.contains(o.getId())) {
+                    session.markCollapsed("Colapso logístico: no se pudo planificar el pedido " + o.getId());
+                    log.warn("[SIM:{}] Logistic collapse detected at order {}", session.id, o.getId());
+                    break;
+                }
             }
         }
 
@@ -598,7 +711,8 @@ public class SimulationService {
                                     int totalOrders,
                                     Instant snapshotInstant,
                                     boolean useHeuristicSeed) {
-        long targetEndMillis = System.currentTimeMillis() + 60_000L;
+        // Reservamos ~20s para persistencia/IO
+        long targetEndMillis = System.currentTimeMillis() + 40_000L;
         return processBatch(session, world, previousBest, demand, batch, totalOrders, snapshotInstant, useHeuristicSeed, targetEndMillis);
     }
 
@@ -618,6 +732,10 @@ public class SimulationService {
                 session.complete();
                 SimulationSnapshot finalSnapshot = session.lastSnapshot;
                 log.info("[SIM:{}] Simulation completed after deliveries. Processed {}/{} orders. GA runs={}", session.id, session.processed.get(), session.totalOrders, session.gaRuns.get());
+                // Persistimos modelo final completo (desactivado temporalmente)
+                // if (session.lastBest != null) {
+                //     persistSimulationPlan(session.id, session.lastBest);
+                // }
                 persistSnapshot(session, finalSnapshot);
                 messagingTemplate.convertAndSend(
                         topic(session.id),
@@ -640,13 +758,21 @@ public class SimulationService {
         executorService.submit(() -> {
             try {
                 String simId = simulationId.toString();
-                statusChanges.forEach((orderId, status) -> {
-                    try {
-                        orderPlanRepository.updateStatus(simId, orderId, status);
-                    } catch (Exception inner) {
-                        log.warn("[SIM:{}] Could not update status for order {}: {}", simId, orderId, inner.getMessage());
-                    }
+                // Ejecutar en una sola transacción para reducir presión sobre el pool
+                txTemplate.executeWithoutResult(status -> {
+                    Map<String, List<String>> byStatus = statusChanges.entrySet().stream()
+                            .collect(Collectors.groupingBy(Map.Entry::getValue,
+                                    Collectors.mapping(Map.Entry::getKey, Collectors.toList())));
+                    byStatus.forEach((st, ids) -> {
+                        try {
+                            orderPlanRepository.updateStatusBulk(simId, st, ids);
+                        } catch (Exception inner) {
+                            log.warn("[SIM:{}] Could not bulk update status {} for {} orders: {}", simId, st, ids.size(), inner.getMessage());
+                        }
+                    });
                 });
+                // Actualizamos read model
+                readWriter.updateStatuses(simId, statusChanges);
             } catch (Exception ex) {
                 log.warn("[SIM:{}] Could not persist status changes: {}", simulationId, ex.getMessage());
             }
@@ -663,7 +789,7 @@ public class SimulationService {
                                     Instant snapshotInstant,
                                     boolean useHeuristicSeed) {
         Instant instant = emitSnapshot ? snapshotInstant : null;
-        long targetEnd = System.currentTimeMillis() + 60_000L;
+        long targetEnd = System.currentTimeMillis() + 5_000L;
         return processBatch(session, world, previousBest, demand, List.of(order), totalOrders, instant, useHeuristicSeed, targetEnd);
     }
 
@@ -672,13 +798,14 @@ public class SimulationService {
                                           int total,
                                           Individual best,
                                           World world,
-                                          List<Order> demand) {
+                                          List<Order> demand,
+                                          List<OrderPlan> activePlans) {
 
         Instant currentSimTime = world.getCurrentInstant();
         Map<String, Instant> creationMap = demand.stream()
                 .collect(Collectors.toMap(Order::getId, Order::getCreationUtc, (a, b) -> a));
 
-        List<com.morapack.skyroute.simulation.dto.SimulationOrderPlan> orderPlans = best.getPlans().stream()
+        List<com.morapack.skyroute.simulation.dto.SimulationOrderPlan> orderPlans = activePlans.stream()
                 .map(p -> toOrderPlanDto(p, creationMap.get(p.getOrderId())))
                 .collect(Collectors.toList());
 
@@ -712,40 +839,72 @@ public class SimulationService {
                 // Upsert incremental sin reemplazar la colección completa para no disparar orphanRemoval
                 Map<String, com.morapack.skyroute.simulation.model.SimulationOrderPlan> existingByOrder = plan.getOrderPlans().stream()
                         .collect(Collectors.toMap(com.morapack.skyroute.simulation.model.SimulationOrderPlan::getOrderId, p -> p, (a, b) -> a, HashMap::new));
+                Set<String> seenOrders = new HashSet<>();
 
                 for (var original : best.getPlans()) {
-                com.morapack.skyroute.simulation.model.SimulationOrderPlan target = existingByOrder.get(original.getOrderId());
-                if (target == null) {
-                    target = new com.morapack.skyroute.simulation.model.SimulationOrderPlan();
-                    target.setOrderId(original.getOrderId());
+                    com.morapack.skyroute.simulation.model.SimulationOrderPlan target = existingByOrder.get(original.getOrderId());
+                    if (target == null) {
+                        target = new com.morapack.skyroute.simulation.model.SimulationOrderPlan();
+                        target.setOrderId(original.getOrderId());
+                        target.setPlan(plan);
+                        target.setRoutes(new ArrayList<>());
+                        plan.getOrderPlans().add(target);
+                    }
+                    seenOrders.add(original.getOrderId());
                     target.setPlan(plan);
-                    plan.getOrderPlans().add(target);
-                }
-                target.setSlack(original.getSlack());
-                if (target.getStatus() == null) {
-                    target.setStatus("WAITING"); // solo nuevas inserciones arrancan en WAITING
+                    target.setSlack(original.getSlack());
+                    if (target.getStatus() == null) {
+                        target.setStatus("WAITING"); // solo nuevas inserciones arrancan en WAITING
+                    }
+
+                    // Reutilizar rutas/segmentos que no cambian para evitar borrados masivos
+                    List<com.morapack.skyroute.simulation.model.SimulationRoute> currentRoutes = target.getRoutes() == null
+                            ? new ArrayList<>()
+                            : new ArrayList<>(target.getRoutes());
+                    Map<String, com.morapack.skyroute.simulation.model.SimulationRoute> existingRoutesBySig = currentRoutes.stream()
+                            .collect(Collectors.toMap(this::routeSignature, Function.identity(), (a, b) -> a, LinkedHashMap::new));
+                    Set<com.morapack.skyroute.simulation.model.SimulationRoute> toRemove = new HashSet<>(currentRoutes);
+                    List<com.morapack.skyroute.simulation.model.SimulationRoute> updatedRoutes = new ArrayList<>();
+
+                    if (original.getRoutes() != null) {
+                        for (Route originalRoute : original.getRoutes()) {
+                            String signature = routeSignature(originalRoute);
+                            com.morapack.skyroute.simulation.model.SimulationRoute reuse = existingRoutesBySig.get(signature);
+                            if (reuse != null) {
+                                reuse.setQuantity(originalRoute.getQuantity());
+                                reuse.setSlack(originalRoute.getSlack());
+                                toRemove.remove(reuse);
+                                updatedRoutes.add(reuse);
+                                continue;
+                            }
+
+                            com.morapack.skyroute.simulation.model.SimulationRoute mapped = simulationPlanMapper.mapRoute(originalRoute);
+                            mapped.setOrderPlan(target);
+                            updatedRoutes.add(mapped);
+                        }
+                    }
+
+                    // Elimina solo las rutas que ya no aplican
+                    final com.morapack.skyroute.simulation.model.SimulationOrderPlan targetRef = target;
+                    toRemove.forEach(r -> {
+                        r.setOrderPlan(null);
+                        if (targetRef.getRoutes() != null) {
+                            targetRef.getRoutes().remove(r);
+                        }
+                    });
+                    target.setRoutes(updatedRoutes);
+                    updatedRoutes.forEach(r -> r.setOrderPlan(targetRef));
                 }
 
-                if (target.getRoutes() == null) {
-                    target.setRoutes(new ArrayList<>());
-                } else {
-                    target.getRoutes().clear();
-                }
+                // Remueve planes que ya no están presentes sin reasignar la colección
+                plan.getOrderPlans().removeIf(p -> !seenOrders.contains(p.getOrderId()));
 
-                List<com.morapack.skyroute.simulation.model.SimulationRoute> routes = original.getRoutes() == null
-                        ? new ArrayList<>()
-                        : original.getRoutes().stream()
-                            .map(simulationPlanMapper::mapRoute)
-                            .collect(Collectors.toCollection(ArrayList::new));
-                final com.morapack.skyroute.simulation.model.SimulationOrderPlan planTarget = target;
-                routes.forEach(r -> r.setOrderPlan(planTarget));
-                target.getRoutes().addAll(routes);
-            }
-
-                List<String> planIds = plan.getOrderPlans().stream().map(com.morapack.skyroute.simulation.model.SimulationOrderPlan::getOrderId).sorted().toList();
-                log.warn("[SIM:{}] Persisting {} plans. OrderIds={}", simulationId, planIds.size(), planIds);
                 simulationPlanRepository.save(plan);
-                log.debug("[SIM:{}] Persisted simulation plan with {} orders", simulationId, plan.getOrderPlans().size());
+                // Inserta hijos vía JDBC batch para mayor velocidad
+                planBulkWriter.replaceChildren(plan.getId(), best.getPlans());
+
+                List<String> planIds = best.getPlans().stream().map(OrderPlan::getOrderId).sorted().toList();
+                log.warn("[SIM:{}] Persisted {} plans via bulk JDBC. OrderIds={}", simulationId, planIds.size(), planIds);
             } catch (Exception ex) {
                 log.warn("[SIM:{}] Could not persist simulation plan: {}", simulationId, ex.getMessage());
                 status.setRollbackOnly();
@@ -852,6 +1011,9 @@ public class SimulationService {
         List<OrderStatusTick> plannedStatuses = List.of();
         List<OrderStatusTick> deliveredForDb = session.liveWorld.drainDeliveredOnce();
         Map<String, String> statusChanges = session.liveWorld.captureStatusChanges();
+        if (deliveredForDb != null) {
+            deliveredForDb.forEach(os -> onOrderDelivered(session.id, os.orderId()));
+        }
         // Persistimos estados aunque no viajen en el tick
         persistStatusChangesAsync(session.id, statusChanges);
         List<SimulationOrderPlan> currentPlans = List.of();
@@ -956,7 +1118,7 @@ public class SimulationService {
                 ? List.of()
                 : plan.getRoutes().stream().map(this::toRouteDto).toList();
         long slackMinutes = plan.getSlack() != null ? plan.getSlack().toMinutes() : 0L;
-        return new SimulationOrderPlanItem(plan.getOrderId(), plan.getStatus(), slackMinutes, routes);
+        return new SimulationOrderPlanItem(plan.getOrderId(), plan.getStatus(), slackMinutes, routes, null);
     }
 
     private long optionalDurationMinutes(Duration duration) {
@@ -994,6 +1156,47 @@ public class SimulationService {
 
     private static long nanosToMillis(long nanos) {
         return nanos / 1_000_000;
+    }
+
+    private List<Order> normalizeDemand(List<Order> demand) {
+        if (demand == null || demand.isEmpty()) {
+            return List.of();
+        }
+        return demand.stream()
+                .filter(Objects::nonNull)
+                .filter(o -> o.getId() != null)
+                .collect(Collectors.collectingAndThen(
+                        Collectors.toMap(Order::getId, Function.identity(), (a, b) -> a, LinkedHashMap::new),
+                        m -> new ArrayList<>(m.values())
+                ));
+    }
+
+    private Individual rebuildIndividualForDemand(SimulationSession session,
+                                                  Individual individual,
+                                                  List<Order> demand,
+                                                  World world) {
+        if (individual == null) {
+            return null;
+        }
+        List<Order> normalizedDemand = normalizeDemand(demand);
+        if (normalizedDemand.isEmpty()) {
+            return null;
+        }
+        try {
+            Individual rebuilt = individual.rebuildWithOrders(world, normalizedDemand, random);
+            if (rebuilt == null) {
+                return null;
+            }
+            if (rebuilt.getPlans().size() != normalizedDemand.size()) {
+                log.warn("[SIM:{}] Rebuilt individual still incomplete (plans={} demand={})",
+                        session.id, rebuilt.getPlans().size(), normalizedDemand.size());
+                return null;
+            }
+            return rebuilt;
+        } catch (Exception ex) {
+            log.warn("[SIM:{}] Could not rebuild individual before GA: {}", session.id, ex.getMessage());
+            return null;
+        }
     }
 
     private void waitIfPaused(SimulationSession session) {
@@ -1055,6 +1258,37 @@ public class SimulationService {
         } catch (IOException ex) {
             log.warn("[SIM:{}] Unable to persist snapshot: {}", session.id, ex.getMessage());
         }
+    }
+
+    private String routeSignature(Route route) {
+        if (route == null) {
+            return "null";
+        }
+        String segmentSig = route.getSegments() == null ? "" : route.getSegments().stream()
+                .sorted(Comparator.comparing(RouteSegment::getDate).thenComparing(s -> s.getFlight().getId()))
+                .map(this::segmentSignature)
+                .collect(Collectors.joining(";"));
+        return route.getQuantity() + "|" + route.getSlack() + "|" + segmentSig;
+    }
+
+    private String routeSignature(com.morapack.skyroute.simulation.model.SimulationRoute route) {
+        if (route == null) {
+            return "null";
+        }
+        String segmentSig = route.getSegments() == null ? "" : route.getSegments().stream()
+                .sorted(Comparator.comparing(com.morapack.skyroute.simulation.model.SimulationRouteSegment::getDate)
+                        .thenComparing(s -> s.getFlight().getId()))
+                .map(this::segmentSignature)
+                .collect(Collectors.joining(";"));
+        return route.getQuantity() + "|" + route.getSlack() + "|" + segmentSig;
+    }
+
+    private String segmentSignature(RouteSegment segment) {
+        return segment.getFlight().getId() + "|" + segment.getDate() + "|" + segment.getRouteQuantity() + "|" + segment.isFinalLeg() + "|" + segment.getSlack();
+    }
+
+    private String segmentSignature(com.morapack.skyroute.simulation.model.SimulationRouteSegment segment) {
+        return segment.getFlight().getId() + "|" + segment.getDate() + "|" + segment.getRouteQuantity() + "|" + segment.isFinalLeg() + "|" + segment.getSlack();
     }
 
     private void startTicker(SimulationSession session) {
@@ -1128,6 +1362,7 @@ public class SimulationService {
         executorService.submit(() -> {
             for (OrderStatusTick os : delivered) {
                 try {
+                    onOrderDelivered(simulationId, os.orderId());
                     SimulationDelivery existing = deliveryRepository
                             .findBySimulationIdAndOrderId(simulationId, os.orderId())
                             .orElse(null);
@@ -1181,26 +1416,9 @@ public class SimulationService {
     }
 
     public SimulationOrderPlanPage getOrderPlans(UUID simulationId, int page, int size, String search, String statuses) {
-        int sanitizedPage = Math.max(0, page);
-        int sanitizedSize = Math.min(Math.max(1, size), 200);
-        Pageable pageable = PageRequest.of(sanitizedPage, sanitizedSize);
-        Page<com.morapack.skyroute.simulation.model.SimulationOrderPlan> plansPage;
         String simId = simulationId.toString();
         List<String> statusFilter = normalizeStatuses(statuses);
-
-        if (search != null && !search.isBlank()) {
-            plansPage = statusFilter == null
-                    ? orderPlanRepository.findByPlanSimulationIdAndOrderIdContainingIgnoreCase(simId, search, pageable)
-                    : orderPlanRepository.findByPlanSimulationIdAndStatusInAndOrderIdContainingIgnoreCase(simId, statusFilter, search, pageable);
-        } else {
-            plansPage = statusFilter == null
-                    ? orderPlanRepository.findByPlanSimulationId(simId, pageable)
-                    : orderPlanRepository.findByPlanSimulationIdAndStatusIn(simId, statusFilter, pageable);
-        }
-        List<SimulationOrderPlanItem> items = plansPage.getContent().stream()
-                .map(this::toOrderPlanItem)
-                .toList();
-        return new SimulationOrderPlanPage(plansPage.getTotalElements(), plansPage.getNumber(), plansPage.getSize(), items);
+        return readWriter.getPage(simId, page, size, search, statusFilter);
     }
 
     private List<String> normalizeStatuses(String statuses) {
@@ -1220,6 +1438,86 @@ public class SimulationService {
 
     private String topic(UUID simulationId) {
         return TOPIC_PREFIX + simulationId;
+    }
+
+    private void onOrderDelivered(UUID simulationId, String orderId) {
+        SimulationSession session = sessions.get(simulationId);
+        if (session == null || orderId == null) {
+            return;
+        }
+        // eliminar de demand/activos/caches
+        if (session.demandRef != null) {
+            session.demandRef.removeIf(o -> orderId.equals(o.getId()));
+        }
+        session.activeOrderIds.remove(orderId);
+        session.lastDetails.remove(orderId);
+        session.lastPlans.remove(orderId);
+        session.lastStatuses.remove(orderId);
+        // marcar delivered en read model una sola vez
+        if (session.deliveredOrders.add(orderId)) {
+            try {
+                readWriter.markDelivered(simulationId.toString(), orderId);
+            } catch (Exception ex) {
+                log.warn("[SIM:{}] Could not mark delivered in read model for {}: {}", simulationId, orderId, ex.getMessage());
+            }
+        }
+    }
+
+    private Individual normalizeSeed(World world, Individual seed, List<Order> demand) {
+        if (seed == null) {
+            log.debug("normalizeSeed enter: seed=null demand={}", demand != null ? demand.size() : 0);
+            return null;
+        }
+        long start = System.nanoTime();
+        log.debug("normalizeSeed enter: seedPlans={} demand={}", seed.getPlans().size(), demand != null ? demand.size() : 0);
+        Map<String, Order> orderById = new LinkedHashMap<>();
+        for (Order o : demand) {
+            if (o != null && o.getId() != null) {
+                orderById.putIfAbsent(o.getId(), o);
+            }
+        }
+        Set<String> planned = seed.getPlans().stream().map(OrderPlan::getOrderId).collect(Collectors.toSet());
+        if (planned.containsAll(orderById.keySet())) {
+            log.debug("Seed already complete; skipping normalize (plans={} demand={})", planned.size(), orderById.size());
+            return seed;
+        }
+        Set<String> missingIds = new LinkedHashSet<>();
+        for (Order o : demand) {
+            if (o != null && o.getId() != null && !planned.contains(o.getId())) {
+                missingIds.add(o.getId());
+            }
+        }
+        int missingBefore = missingIds.size();
+        Individual current = seed;
+        for (String id : missingIds) {
+            Order order = orderById.get(id);
+            if (order == null) {
+                log.warn("Seed discarded: missing order {} not found in demand map (missingBefore={})", id, missingBefore);
+                return null;
+            }
+            Individual patched = current.tryInsertOrder(world, order, random);
+            if (patched == null) {
+                log.warn("Seed discarded: could not insert order {} (missingBefore={})", order.getId(), missingBefore);
+                return null;
+            }
+            current = patched;
+        }
+        Set<String> plannedAfter = current.getPlans().stream().map(OrderPlan::getOrderId).collect(Collectors.toSet());
+        int missingAfter = (int) demand.stream().filter(o -> !plannedAfter.contains(o.getId())).count();
+        log.debug("Seed normalized: missingBefore={} missingAfter={} tookMs={}", missingBefore, missingAfter, nanosToMillis(System.nanoTime() - start));
+        return current;
+    }
+
+    /**
+     * Genera un plan placeholder simple para asegurar la invariante de “un plan por orden”.
+     * No reserva vuelos ni rutas reales; el GA lo reconstruirá luego.
+     */
+    private OrderPlan createPlaceholderPlan(Order order) {
+        OrderPlan plan = new OrderPlan(order.getId());
+        // Slack neutro/ligero para que el GA lo reconstruya sin premiarlo artificialmente
+        plan.setSlack(Duration.ZERO);
+        plan.setRoutes(new ArrayList<>()); // sin segmentos reales
+        return plan;
     }
 
     private static class SimulationSession {
@@ -1247,6 +1545,10 @@ public class SimulationService {
         private volatile Map<String, SimulationOrderPlan> lastDetails = new HashMap<>();
         private volatile long lastClientPingMillis = System.currentTimeMillis();
         private volatile String collapseMessage;
+        private volatile Individual lastBest;
+        private volatile Set<String> activeOrderIds = new HashSet<>();
+        private volatile Set<String> deliveredOrders = new HashSet<>();
+        private volatile List<Order> demandRef;
 
         private SimulationSession(UUID id, int totalOrders) {
             this.id = id;

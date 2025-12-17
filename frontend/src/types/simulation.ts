@@ -36,6 +36,7 @@ export interface SimulationOrderPlanItem {
   status: string;
   slackMinutes: number;
   routes: SimulationRoute[];
+  creationUtc?: string | null;
 }
 
 export interface SimulationOrderPlanPage {

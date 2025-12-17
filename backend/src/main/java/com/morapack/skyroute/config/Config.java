@@ -18,10 +18,22 @@ public class Config {
     public static final Path DIR_EXPORTS = Paths.get("exports");
 
     // GA
-    public static final int POP_SIZE = 15; // bajar costo por generación manteniendo diversidad moderada
+    public static final int POP_SIZE = 10; // tamaño de población reducido para cada run
     public static final int MAX_GEN = 1_000_000;
     // Número de generaciones para ejecución operativa (planificador diario)
     public static final int OPERATION_MAX_GEN = 30;
     public static final double P_CROSS = 0.5;
     public static final double P_MUT = 0.7; // ligera alza para romper estancamiento
+
+    // Pesos de fitness
+    public static final double W_SLA = 1.5;           // prioridad 1: evitar atraso
+    public static final double W_TIME = 0.7;          // prioridad 3: earliness
+    public static final double W_BACKLOG = 0.5;
+    public static final double W_INTERCONT = 0.7;
+    public static final double W_INTERCONT_FIRST_LEG = 1.0; // penal extra si el primer salto es intercontinental
+    public static final double W_INTL = 0.3;
+    public static final double W_DISTANCE = 1.0;      // prioridad 2: distancia/operación
+    public static final double W_ON_TIME = 0.5;       // bonus por pedidos dentro de SLA
+    public static final double SLA_K = 50d;
+    public static final int BACKLOG_OK = 200; // umbral a partir del cual no penalizamos intercontinental cuando ayuda
 }

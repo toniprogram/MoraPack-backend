@@ -1,8 +1,10 @@
 spring:
   datasource:
-    url: jdbc:postgresql://morapack-test-db.cfsefdaj5iud.us-east-1.rds.amazonaws.com:5432/morapack
+    url: jdbc:postgresql://morapack-test-db.cfsefdaj5iud.us-east-1.rds.amazonaws.com:5432/morapack?reWriteBatchedInserts=true
     username: morapack
     password: UQ4jdLJKWULADFrryA4v
+    hikari:
+      maximum-pool-size: 20
   jpa:
     hibernate:
       ddl-auto: update
@@ -10,6 +12,11 @@ spring:
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
+        jdbc:
+          batch_size: 500
+          batch_versioned_data: true
+        order_inserts: true
+        order_updates: true
 
 logging:
   level:

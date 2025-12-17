@@ -10,8 +10,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+
+import org.slf4j.LoggerFactory;
+
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Objects;
 
 import com.morapack.skyroute.config.*;
 import com.morapack.skyroute.io.Airports;
@@ -42,50 +46,48 @@ public class Individual {
         }
 
         Individual individual = new Individual(plans, flightSchedule, airportSchedule);
-        individual.evaluate();
         return individual;
     }
 
     static Individual crossover(World world, List<Order> orders, Individual parentA, Individual parentB, Random rnd) {
-        // Partimos del schedule del padre A para preservar sus reservas
-        FlightSchedule flightSchedule = parentA.flightSchedule.copy();
-        AirportSchedule airportSchedule = parentA.airportSchedule.copy();
+        // Construimos desde un schedule limpio para mezclar 50/50 sin arrastrar reservas incompatibles.
+        FlightSchedule flightSchedule = world.getFlights().getSchedule().copy();
+        AirportSchedule airportSchedule = world.getAirportSchedule().copy();
         RouteBuilder builder = new RouteBuilder(world, flightSchedule, airportSchedule, rnd, RouteBuilder.SelectionMode.HEURISTIC_APPROACH);
 
-        // Punto de partida: copiar planes de A
-        List<OrderPlan> plans = deepCopyPlans(parentA.plans);
-        // Seleccionamos un subconjunto para intentar mejorar con orígenes de B
-        int tweakCount = Math.max(1, orders.size() / 4);
-        Set<String> tweakIds = selectOrderIds(orders, tweakCount, rnd);
+        List<OrderPlan> plans = new ArrayList<>(orders.size());
+        // Mezcla simple: primera mitad intenta tomar de A, segunda mitad de B (desordenado para variedad).
+        List<Order> shuffled = new ArrayList<>(orders);
+        Collections.shuffle(shuffled, rnd);
+        int split = shuffled.size() / 2;
 
-        for (String orderId : tweakIds) {
-            Order order = findOrder(orders, orderId);
-            if (order == null) continue;
-            OrderPlan planA = findPlan(parentA, orderId);
-            OrderPlan planB = findPlan(parentB, orderId);
-            if (planA != null) {
-                releasePlan(world, planA, flightSchedule, airportSchedule);
-                plans.removeIf(p -> p.getOrderId().equals(orderId));
+        for (int i = 0; i < shuffled.size(); i++) {
+            Order order = shuffled.get(i);
+            boolean preferA = i < split;
+            OrderPlan preferred = preferA ? findPlan(parentA, order.getId()) : findPlan(parentB, order.getId());
+            OrderPlan fallback = preferA ? findPlan(parentB, order.getId()) : findPlan(parentA, order.getId());
+
+            // Intentar adoptar el plan preferido; si falla probamos el alternativo y luego reconstruimos.
+            OrderPlan adopted = tryAdoptPlan(world, order, preferred, flightSchedule, airportSchedule);
+            if (adopted == null) {
+                adopted = tryAdoptPlan(world, order, fallback, flightSchedule, airportSchedule);
             }
-            OrderPlan adopted = tryAdoptPlan(world, order, planB, flightSchedule, airportSchedule);
             if (adopted != null) {
                 plans.add(adopted);
             } else {
-                OrderPlan rebuilt = buildPlanWithPreferences(order, planB, builder, world, rnd);
+                OrderPlan rebuilt = buildPlanWithPreferences(order, preferred != null ? preferred : fallback, builder, world, rnd);
                 plans.add(rebuilt);
             }
         }
 
-        Individual child = new Individual(plans, flightSchedule, airportSchedule);
-        child.evaluate();
-        return child;
+        return new Individual(plans, flightSchedule, airportSchedule);
     }
 
     static Individual mutate(World world, List<Order> orders, Individual parent, Random rnd) {
         // Partimos del schedule del padre para evitar reconstruir todo desde cero
         FlightSchedule flightSchedule = parent.flightSchedule.copy();
         AirportSchedule airportSchedule = parent.airportSchedule.copy();
-        RouteBuilder builder = new RouteBuilder(world, flightSchedule, airportSchedule, rnd, RouteBuilder.SelectionMode.HEURISTIC_APPROACH);
+        RouteBuilder builder = new RouteBuilder(world, flightSchedule, airportSchedule, rnd, RouteBuilder.SelectionMode.RANDOM_APPROACH);
 
         int mutateCount = Math.max(1, orders.size() / 5);
         Set<String> mutateIds = selectOrderIds(orders, mutateCount, rnd);
@@ -115,7 +117,6 @@ public class Individual {
         }
 
         Individual mutant = new Individual(plans, flightSchedule, airportSchedule);
-        mutant.evaluate();
         return mutant;
     }
 
@@ -130,17 +131,13 @@ public class Individual {
     public Individual tryInsertOrder(World world, Order newOrder, Random rnd) {
         FlightSchedule scheduleCopy = flightSchedule.copy();
         AirportSchedule airportCopy = airportSchedule.copy();
-        RouteBuilder builder = new RouteBuilder(world, scheduleCopy, airportCopy, rnd, RouteBuilder.SelectionMode.HEURISTIC_APPROACH);
+        RouteBuilder builder = new RouteBuilder(world, scheduleCopy, airportCopy, rnd, RouteBuilder.SelectionMode.RANDOM_APPROACH);
 
         try {
             OrderPlan newPlan = buildPlanForOrder(newOrder, builder, world, rnd);
-            if (newPlan.getSlack() == null || newPlan.getSlack().isNegative()) {
-                return null;
-            }
             List<OrderPlan> planCopies = deepCopyPlans(this.plans);
             planCopies.add(newPlan);
             Individual patched = new Individual(planCopies, scheduleCopy, airportCopy);
-            patched.evaluate();
             return patched;
         } catch (IllegalStateException ex) {
             return null;
@@ -153,7 +150,7 @@ public class Individual {
         }
         FlightSchedule scheduleCopy = flightSchedule.copy();
         AirportSchedule airportCopy = airportSchedule.copy();
-        RouteBuilder builder = new RouteBuilder(world, scheduleCopy, airportCopy, rnd, RouteBuilder.SelectionMode.HEURISTIC_APPROACH);
+        RouteBuilder builder = new RouteBuilder(world, scheduleCopy, airportCopy, rnd, RouteBuilder.SelectionMode.RANDOM_APPROACH);
         List<OrderPlan> planCopies = deepCopyPlans(this.plans);
         try {
             for (Order order : newOrders) {
@@ -161,7 +158,6 @@ public class Individual {
                 planCopies.add(newPlan);
             }
             Individual patched = new Individual(planCopies, scheduleCopy, airportCopy);
-            patched.evaluate();
             return patched;
         } catch (IllegalStateException ex) {
             return null;
@@ -169,10 +165,54 @@ public class Individual {
     }
 
     /**
+     * Reconstruye el individuo asegurando exactamente un plan por cada orden indicada.
+     * Intenta adoptar planes existentes y, si falla, genera un plan heurístico simple.
+     */
+    public Individual rebuildWithOrders(World world, List<Order> orders, Random rnd) {
+        if (orders == null || orders.isEmpty()) {
+            return null;
+        }
+        // Defensive log to help diagnose stalls during rebuild.
+        LoggerFactory.getLogger(Individual.class).debug("[GA] rebuildWithOrders start orders={}", orders.size());
+        FlightSchedule scheduleCopy = world.getFlights().getSchedule().copy();
+        AirportSchedule airportCopy = world.getAirportSchedule().copy();
+        RouteBuilder builder = new RouteBuilder(world, scheduleCopy, airportCopy, rnd, RouteBuilder.SelectionMode.RANDOM_APPROACH);
+
+        List<OrderPlan> rebuiltPlans = new ArrayList<>();
+        Set<String> seenOrders = new HashSet<>();
+        for (Order order : orders) {
+            if (order == null || order.getId() == null || !seenOrders.add(order.getId())) {
+                continue;
+            }
+            OrderPlan preferred = findPlan(this, order.getId());
+            OrderPlan adopted = tryAdoptPlan(world, order, preferred, scheduleCopy, airportCopy);
+            if (adopted != null) {
+                rebuiltPlans.add(adopted);
+                continue;
+            }
+            OrderPlan rebuilt = buildPlanWithPreferences(order, preferred, builder, world, rnd);
+            rebuiltPlans.add(rebuilt);
+        }
+        return new Individual(rebuiltPlans, scheduleCopy, airportCopy);
+    }
+
+    /**
+     * Crea un individuo copiando el actual y agregando un plan placeholder sin reservas.
+     */
+    public Individual withPlaceholderPlan(OrderPlan placeholder) {
+        if (placeholder == null || placeholder.getOrderId() == null) {
+            return null;
+        }
+        List<OrderPlan> copies = deepCopyPlans(this.plans);
+        copies.add(placeholder);
+        return new Individual(copies, flightSchedule.copy(), airportSchedule.copy());
+    }
+
+    /**
      * Devuelve una copia del individuo manteniendo solo los planes cuyos IDs estén en keepOrderIds.
      * Libera las reservas de los planes descartados sobre los schedules copiados.
      */
-    public Individual pruneToOrders(World world, Set<String> keepOrderIds) {
+    public Individual pruneToOrders(World world, Set<String> keepOrderIds, List<Order> orders) {
         if (keepOrderIds == null || keepOrderIds.isEmpty()) {
             return null;
         }
@@ -193,7 +233,10 @@ public class Individual {
             return null;
         }
         Individual pruned = new Individual(keptPlans, scheduleCopy, airportCopy);
-        pruned.evaluate();
+        List<Order> orderList = orders == null ? List.of() : orders.stream()
+                .filter(Objects::nonNull)
+                .filter(o -> keepOrderIds.contains(o.getId()))
+                .toList();
         return pruned;
     }
 
@@ -232,36 +275,163 @@ public class Individual {
         return best == null ? Duration.ZERO : best;
     }
 
-    private void evaluate() {
-        double total = 0;
-        this.slaViolations = 0;
-        for (OrderPlan plan : plans) {
-            long slackMinutes = plan.getSlack().toMinutes();
-            if (slackMinutes < 0) {
-                slaViolations++;
-                // Penalización proporcional al retraso: cada minuto tarde resta mucho al fitness.
-                double tardinessPenalty = Math.abs(slackMinutes) * 1_000_000d;
-                total -= tardinessPenalty;
-            } else {
-                total += slackMinutes;
-            }
-        }
-
-        // Penalización suave por uso de tiempo de vuelo y cantidad de vuelos distintos.
-        double totalFlightMinutes = 0;
-        Set<String> flightsUsed = new HashSet<>();
-        for (OrderPlan plan : plans) {
-            for (Route route : plan.getRoutes()) {
-                for (RouteSegment segment : route.getSegments()) {
-                    totalFlightMinutes += segment.getFlight().getFlightDuration().toMinutes();
-                    flightsUsed.add(segment.getFlight().getId());
+    /**
+     * Evalúa el individuo con penalización SLA creciente por generación.
+     * Método puro: no modifica schedules compartidos ni el world.
+     */
+    public void evaluate(World world, List<Order> orders, int generation) {
+        Map<String, Order> orderById = new HashMap<>();
+        if (orders != null) {
+            for (Order o : orders) {
+                if (o != null) {
+                    orderById.put(o.getId(), o);
                 }
             }
         }
-        // factor pequeño para no eclipsar la holgura, pero suficiente para preferir rutas cortas y reutilizar aviones
-        total -= totalFlightMinutes * 0.1;
-        total -= flightsUsed.size() * 10.0;
-        this.fitness = total;
+        int orderCount = Math.max(1, orderById.size());
+
+        long totalLateness = 0L;
+        int violations = 0;
+        double totalCompletionMinutes = 0d;
+        int completionCount = 0;
+        int internationalLegCount = 0;
+        int intercontinentalLegCount = 0;
+        int intercontinentalFirstLegCount = 0;
+        double totalFlightMinutes = 0d;
+        List<Event> events = new ArrayList<>();
+
+        for (OrderPlan plan : plans) {
+            Order order = orderById.get(plan.getOrderId());
+            if (order == null) {
+                continue;
+            }
+            SlackStats slackStats = effectiveSlack(plan);
+            long slackMinutes = slackStats.slackMinutes();
+            long lateness = Math.max(0, -slackMinutes);
+            if (lateness > 0) {
+                totalLateness += lateness;
+                violations++;
+            }
+            internationalLegCount += slackStats.internationalLegs();
+            intercontinentalLegCount += slackStats.intercontinentalLegs();
+            // Acumular duración total recorrida como proxy de distancia
+            boolean countedFirstLeg = false;
+            for (Route route : plan.getRoutes()) {
+                for (RouteSegment segment : route.getSegments()) {
+                    Flight flight = segment.getFlight();
+                    if (flight != null && flight.getFlightDuration() != null) {
+                        totalFlightMinutes += flight.getFlightDuration().toMinutes();
+                    }
+                    if (!countedFirstLeg && flight != null) {
+                        Airport origin = flight.getOrigin();
+                        Airport dest = flight.getDestination();
+                        if (origin != null && dest != null) {
+                            String originCont = origin.getContinent();
+                            String destCont = dest.getContinent();
+                            if (originCont != null && destCont != null && !originCont.equalsIgnoreCase(destCont)) {
+                                intercontinentalFirstLegCount++;
+                            }
+                        }
+                        countedFirstLeg = true;
+                    }
+                }
+            }
+
+            Instant completion = computeOrderCompletion(order, plan);
+            if (completion != null) {
+                long completionMinutes = Duration.between(order.getCreationUtc(), completion).toMinutes();
+                totalCompletionMinutes += completionMinutes;
+                completionCount++;
+                events.add(new Event(order.getCreationUtc(), 1));
+                events.add(new Event(completion, -1));
+            }
+        }
+
+        this.slaViolations = violations;
+        double maxSlaMinutes = Config.INTERCONTINENTAL_SLA_HOURS * 60d;
+        double avgLateness = totalLateness / (double) orderCount;
+        double latenessNorm = clamp(avgLateness / maxSlaMinutes);
+
+        double avgCompletion = completionCount == 0 ? 0d : totalCompletionMinutes / completionCount;
+        double completionNorm = clamp(avgCompletion / maxSlaMinutes);
+
+        double avgFlightMinutes = totalFlightMinutes / orderCount;
+        double distanceNorm = clamp(avgFlightMinutes / 180d); // referencia: 3h de vuelo medio
+
+        int maxConcurrent = computeMaxConcurrent(events);
+        double backlogNorm = clamp(maxConcurrent / (double) Config.BACKLOG_OK);
+
+        double intlNorm = clamp((internationalLegCount / (double) orderCount) / 3d);
+        double intercontNorm = clamp((intercontinentalLegCount / (double) orderCount) / 3d);
+        double firstLegNorm = clamp(intercontinentalFirstLegCount / (double) orderCount);
+
+        double onTimeRatio = orderCount == 0 ? 0d : (orderCount - violations) / (double) orderCount;
+
+        double score = 0d;
+        score -= Config.W_SLA * latenessNorm;
+        score -= Config.W_TIME * completionNorm;
+        score -= Config.W_DISTANCE * distanceNorm;
+        score -= Config.W_BACKLOG * backlogNorm;
+        score -= Config.W_INTL * intlNorm;
+        score -= Config.W_INTERCONT * intercontNorm;
+        score -= Config.W_INTERCONT_FIRST_LEG * firstLegNorm;
+        score += Config.W_ON_TIME * onTimeRatio;
+
+        this.fitness = score;
+    }
+
+    private SlackStats effectiveSlack(OrderPlan plan) {
+        long slackMinutes = plan.getSlack() == null ? 0L : plan.getSlack().toMinutes();
+        int internationalLegs = 0;
+        int intercontinentalLegs = 0;
+        boolean hasIntercontinental = false;
+
+        for (Route route : plan.getRoutes()) {
+            for (RouteSegment segment : route.getSegments()) {
+                Flight flight = segment.getFlight();
+                if (flight == null) {
+                    continue;
+                }
+                Airport origin = flight.getOrigin();
+                Airport dest = flight.getDestination();
+                if (origin == null || dest == null) {
+                    continue;
+                }
+                String originCont = origin.getContinent();
+                String destCont = dest.getContinent();
+                if (originCont != null && destCont != null && !originCont.equalsIgnoreCase(destCont)) {
+                    intercontinentalLegs++;
+                    hasIntercontinental = true;
+                } else if (originCont != null && destCont != null && !origin.code.equalsIgnoreCase(dest.code)) {
+                    // Mismo continente, distinto país (no tenemos país explícito; usamos códigos distintos)
+                    internationalLegs++;
+                }
+            }
+        }
+        if (hasIntercontinental) {
+            slackMinutes += Duration.ofHours(24).toMinutes();
+        }
+        return new SlackStats(slackMinutes, internationalLegs, intercontinentalLegs);
+    }
+
+    private int computeMaxConcurrent(List<Event> events) {
+        if (events.isEmpty()) {
+            return 0;
+        }
+        events.sort((a, b) -> {
+            int cmp = a.instant().compareTo(b.instant());
+            if (cmp != 0) return cmp;
+            return Integer.compare(b.delta(), a.delta());
+        });
+        int running = 0;
+        int max = 0;
+        for (Event e : events) {
+            running += e.delta();
+            if (running > max) {
+                max = running;
+            }
+        }
+        return max;
     }
 
     Individual deepCopy() {
@@ -293,8 +463,11 @@ public class Individual {
     public AirportSchedule getAirportSchedule() {
         return airportSchedule;
     }
-    
+
     public Map<String, Instant> computeCompletionTimes(World world, List<Order> orders) {
+        if (orders == null) {
+            return Map.of();
+        }
         Map<String, Order> orderMap = new HashMap<>();
         for (Order order : orders) {
             orderMap.put(order.getId(), order);
@@ -418,9 +591,8 @@ public class Individual {
         OrderPlan plan = new OrderPlan(order.getId());
         int remaining = order.getQuantity();
         int stagnation = 0;
+        List<String> hubs = hubsByProximity(world, builder.productionHubs(), order.getDestinationCode());
         while (remaining > 0) {
-            List<String> hubs = new ArrayList<>(builder.productionHubs());
-            Collections.shuffle(hubs, rnd);
             boolean built = false;
             for (String origin : hubs) {
                 Route route = builder.buildRoute(order, origin, remaining);
@@ -461,7 +633,7 @@ public class Individual {
         if (preferredHubs.isEmpty()) {
             preferredHubs.addAll(builder.productionHubs());
         }
-        Collections.shuffle(preferredHubs, rnd);
+        preferredHubs = hubsByProximity(world, preferredHubs, order.getDestinationCode());
 
         OrderPlan plan = new OrderPlan(order.getId());
         int remaining = order.getQuantity();
@@ -487,6 +659,38 @@ public class Individual {
         }
         plan.setSlack(determinePlanSlack(world, order, plan));
         return plan;
+    }
+
+    private static List<String> hubsByProximity(World world, List<String> hubs, String destination) {
+        Airports airports = world.getAirports();
+        Airport dest = airports.get(destination);
+        if (dest == null || hubs == null || hubs.isEmpty()) {
+            return hubs == null ? List.of() : new ArrayList<>(hubs);
+        }
+        return hubs.stream()
+                .distinct()
+                .sorted((a, b) -> {
+                    Airport aa = airports.get(a);
+                    Airport bb = airports.get(b);
+                    if (aa == null && bb == null) return 0;
+                    if (aa == null) return 1;
+                    if (bb == null) return -1;
+                    double da = haversineKm(aa.getLatitude(), aa.getLongitude(), dest.getLatitude(), dest.getLongitude());
+                    double db = haversineKm(bb.getLatitude(), bb.getLongitude(), dest.getLatitude(), dest.getLongitude());
+                    return Double.compare(da, db);
+                })
+                .toList();
+    }
+
+    private static double haversineKm(double lat1, double lon1, double lat2, double lon2) {
+        double R = 6371.0;
+        double dLat = Math.toRadians(lat2 - lat1);
+        double dLon = Math.toRadians(lon2 - lon1);
+        double a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
+                        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c;
     }
 
     private static Set<String> selectOrderIds(List<Order> orders, int count, Random rnd) {
@@ -517,6 +721,7 @@ public class Individual {
             return null;
         }
         Airports airports = world.getAirports();
+        Instant now = world.getCurrentInstant();
         List<Route> adoptedRoutes = new ArrayList<>();
         List<Runnable> rollbacks = new ArrayList<>();
         try {
@@ -529,6 +734,11 @@ public class Individual {
                     int qty = segment.getRouteQuantity();
                     if (flight == null || date == null || qty <= 0) {
                         throw new IllegalStateException("Invalid segment to adopt");
+                    }
+                    Instant departureInstant = flight.getDepartureInstant(date);
+                    // Nunca modificamos rutas con salida ya ocurrida.
+                    if (!departureInstant.isAfter(now)) {
+                        throw new IllegalStateException("Segment already departed");
                     }
                     if (!flightSchedule.tryReserve(flight, date, qty)) {
                         throw new IllegalStateException("Unable to reserve flight " + flight.getId());
@@ -675,4 +885,12 @@ public class Individual {
         return copies;
     }
 
+    private double clamp(double value) {
+        if (value < 0d) return 0d;
+        if (value > 1d) return 1d;
+        return value;
+    }
+
+    private record Event(Instant instant, int delta) {}
+    private record SlackStats(long slackMinutes, int internationalLegs, int intercontinentalLegs) {}
 }
