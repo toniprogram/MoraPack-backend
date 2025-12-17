@@ -59,23 +59,9 @@ public class WorldBuilder {
         AirportSchedule airportSchedule = new AirportSchedule(airports.asMap());
         World world = World.fromData(airports, flights, airportSchedule, Instant.now());
 
-        // Obtener IDs de pedidos ya planificados en el plan actual
-        Set<String> plannedOrderIds = new HashSet<>();
-        try {
-            CurrentPlan currentPlan = currentPlanRepository.findById(1L).orElse(null);
-            if (currentPlan != null && currentPlan.getOrderPlans() != null) {
-                plannedOrderIds = currentPlan.getOrderPlans().stream()
-                        .map(op -> op.getOrderId())
-                        .collect(Collectors.toSet());
-            }
-        } catch (Exception e) {
-            // Si hay error al obtener el plan, continuamos sin filtrar
-        }
-
-        // Cargar solo pedidos NO planificados anteriormente
-        Set<String> finalPlannedOrderIds = plannedOrderIds;
+        // Cargar todos los pedidos sin excluir los ya planificados
+        // Los orderplans incompletos se preservarán en el plan actual
         List<Order> clonedOrders = orderRepository.findAllByScope(OrderScope.REAL).stream()
-                .filter(order -> !finalPlannedOrderIds.contains(order.getId()))
                 .map(order -> cloneOrder(order, airports))
                 .filter(Objects::nonNull)
                 .toList();

@@ -48,6 +48,17 @@ public class PlanningService {
         GeneticAlgorithm geneticAlgorithm = new GeneticAlgorithm(snapshot.world(), snapshot.demand());
         Individual best = geneticAlgorithm.run(Config.POP_SIZE, Config.OPERATION_MAX_GEN);
         CurrentPlan entity = mapper.toEntity(best);
+        
+        // Preservar todos los orderplans del plan anterior
+        Optional<CurrentPlan> currentPlan = planRepository.findById(1L);
+        if (currentPlan.isPresent() && currentPlan.get().getOrderPlans() != null) {
+            if (entity.getOrderPlans() == null) {
+                entity.setOrderPlans(new ArrayList<>(currentPlan.get().getOrderPlans()));
+            } else {
+                entity.getOrderPlans().addAll(currentPlan.get().getOrderPlans());
+            }
+        }
+        
         persistFlightCapacities(entity);
         planRepository.save(entity);
         return entity;
