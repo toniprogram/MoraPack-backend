@@ -49,19 +49,29 @@ public class PlanningService {
         Individual best = geneticAlgorithm.run(Config.POP_SIZE, Config.OPERATION_MAX_GEN);
         CurrentPlan entity = mapper.toEntity(best);
         
-        // Preservar todos los orderplans del plan anterior
+        // Cargar los orderplans existentes del plan anterior
         Optional<CurrentPlan> currentPlan = planRepository.findById(1L);
         if (currentPlan.isPresent() && currentPlan.get().getOrderPlans() != null) {
+            // Agregar solo los orderplans nuevos (no duplicar)
             if (entity.getOrderPlans() == null) {
-                entity.setOrderPlans(new ArrayList<>(currentPlan.get().getOrderPlans()));
-            } else {
-                entity.getOrderPlans().addAll(currentPlan.get().getOrderPlans());
+                entity.setOrderPlans(new ArrayList<>());
             }
+            entity.getOrderPlans().addAll(currentPlan.get().getOrderPlans());
         }
         
         persistFlightCapacities(entity);
         planRepository.save(entity);
         return entity;
+    }
+
+    private String getOrderId(Object orderPlan) {
+        // Usar reflexión para obtener el orderId de forma segura
+        try {
+            var method = orderPlan.getClass().getMethod("getOrderId");
+            return (String) method.invoke(orderPlan);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private void persistFlightCapacities(CurrentPlan plan) {
