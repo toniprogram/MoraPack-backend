@@ -7,9 +7,10 @@ import { operationService } from '../services/operationService';
 import { aeropuertoService } from '../services/aeropuertoService';
 import type { Airport } from '../types/airport';
 import type { CurrentPlanResponse } from '../types/plan';
-import type { ActiveAirportTick, SimulationMessage, SimulationTick, OrderStatusTick, ActiveSegment } from '../types/simulation';
+import type { ActiveAirportTick, SimulationMessage, OrderStatusDetail } from '../types/simulation';
 
-// --- TIPOS ---
+// --- TIPOS (Mantenidos de versión A para soporte completo de Mapa) ---
+
 export interface SegmentoVuelo {
     id: string;
     flightId: string;
@@ -33,8 +34,6 @@ export interface VueloEnMovimiento {
     lonActual: number;
     progreso: number;
     estadoVisual: 'en curso' | 'retrasado' | 'completado';
-
-    // Campos detallados
     origenCode: string;
     destinoCode: string;
     salidaProgramada: string;
@@ -51,35 +50,6 @@ export interface VueloEnMovimiento {
     }[];
 }
 
-export interface OrderStatusDetail {
-    orderId: string;
-    status: 'WAITING' | 'IN_FLIGHT' | 'LAYOVER' | 'COMPLETED';
-    currentFlightId?: string;
-    nextAirport?: string;
-    finalDestination: string;
-    departureTime: string;
-    arrivalTime: string;
-    progress: number;
-    isDelayed: boolean;
-    originAirport: string;
-    quantity: number;
-    currentSegDeparture?: string;
-    currentSegArrival?: string;
-    flights?: string[];
-    slackMinutes?: number;
-    routesDetail?: {
-        routeIndex: number;
-        segments: {
-            flightId: string;
-            origin: string;
-            destination: string;
-            departureUtc: string;
-            arrivalUtc: string;
-            quantity: number;
-        }[];
-    }[];
-}
-
 export interface OperationMetrics {
     totalOrders: number;
     deliveredOrders: number;
@@ -90,6 +60,7 @@ export interface OperationMetrics {
     delayedOrders: number;
 }
 
+// Interfaz rica para stocks (Código A)
 interface AirportLiveStatus {
     currentLoad: number;
     maxThroughputPerHour: number;
@@ -102,12 +73,17 @@ export const useOperacion = () => {
     const [isClearingPlan, setIsClearingPlan] = useState(false);
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
     const [planCache, setPlanCache] = useState<Record<string, { quantity: number; routesDetail: OrderStatusDetail['routesDetail']; slackMinutes?: number }>>({});
+
+    // Paginación y Estado de Pedidos
     const [ordersPage, setOrdersPage] = useState<{ total: number; page: number; size: number; items: OrderStatusDetail[] }>({
         total: 0,
         page: 0,
         size: 10,
         items: [],
     });
+    // Refs de optimización (Código B)
+    const ordersPageRef = useRef(0);
+    const visibleOrderIdsRef = useRef<Set<string>>(new Set());
 
     const { data: aeropuertos = [] } = useQuery<Airport[]>({
         queryKey: ['aeropuertos'],
@@ -118,23 +94,23 @@ export const useOperacion = () => {
     // --- CONTROL DE TIEMPO ---
     const [simClock, setSimClock] = useState<Date>(new Date());
     const [timeOffset, setTimeOffset] = useState<number>(0);
+    const simClockRef = useRef<Date>(new Date());
 
     const setManualTime = (newDate: Date) => {
         const offset = newDate.getTime() - Date.now();
         setTimeOffset(offset);
         setSimClock(newDate);
         simClockRef.current = newDate;
-        // Notificamos al backend para reposicionar el mundo
         operationService.setTime(newDate.toISOString()).catch(() => {/* ignore */});
         loadOrders(newDate, 0);
     };
-    const simClockRef = useRef<Date>(new Date());
 
     const resetTime = () => {
         setTimeOffset(0);
         setSimClock(new Date());
     };
 
+    // --- ESTADOS DE OPERACIÓN ---
     const [activeSegments, setActiveSegments] = useState<SegmentoVuelo[]>([]);
     const [vuelosEnMovimiento, setVuelosEnMovimiento] = useState<VueloEnMovimiento[]>([]);
     const [orderStatusList, setOrderStatusList] = useState<OrderStatusDetail[]>([]);
@@ -151,7 +127,7 @@ export const useOperacion = () => {
         delayedOrders: 0
     });
 
-    // Normaliza tiempos y cachea el plan base (rutas/segmentos) para no depender del tick
+    // 1. Fetch Plan Base
     const fetchPlanBase = async () => {
         try {
             const plan: CurrentPlanResponse = await planService.getCurrentPlan();
@@ -178,6 +154,7 @@ export const useOperacion = () => {
         }
     };
 
+    // 2. Load Orders (Optimizado con Refs de B)
     const loadOrders = async (targetDate: Date, page = 0) => {
         try {
             const res = await operationService.getOrders(targetDate.toISOString(), page, 50);
@@ -204,25 +181,28 @@ export const useOperacion = () => {
                     })),
                 })),
             }));
+
             setOrdersPage({
                 total: res.total ?? items.length,
                 page: res.page ?? page,
                 size: res.size ?? 10,
                 items,
             });
+            ordersPageRef.current = res.page ?? page ?? 0; // Actualizamos Ref
             setOrderStatusList(items);
         } catch (e) {
             console.warn('No se pudo cargar pedidos paginados', e);
         }
     };
 
-    // Inicializa el mundo de operación en backend (sincroniza hora actual) y carga plan base
+    // 3. Inicialización
     useEffect(() => {
         operationService.initWorld(simClockRef.current.toISOString()).catch(() => {});
         fetchPlanBase();
         loadOrders(simClockRef.current, 0);
     }, []);
 
+    // 4. Reloj
     useEffect(() => {
         const interval = setInterval(() => {
             const now = new Date(Date.now() + timeOffset);
@@ -232,15 +212,14 @@ export const useOperacion = () => {
         return () => clearInterval(interval);
     }, [timeOffset]);
 
+    // 5. Cálculo de Posiciones (VuelosEnMovimiento) - Lógica de A
     useEffect(() => {
-        // 1. Verificamos si tenemos datos
         if (!aeropuertos.length) return;
         if (!activeSegments.length) {
             setVuelosEnMovimiento([]);
             return;
         }
         const nowMs = simClock.getTime();
-        // Mapa de coordenadas
         const coordsMap = new Map<string, [number, number]>();
         aeropuertos.forEach(a => {
             if (a.id && a.latitude != null && a.longitude != null) {
@@ -252,20 +231,18 @@ export const useOperacion = () => {
         const calculated = activeSegments.map((seg, index) => {
             const origen = coordsMap.get(seg.origin);
             const destino = coordsMap.get(seg.destination);
-            // Validación por si faltan coordenadas
             if (!origen || !destino) return null;
+
             const horaSalida = Date.parse(seg.departureUtc);
             const horaLlegada = Date.parse(seg.arrivalUtc);
             const duracion = horaLlegada - horaSalida;
-            if (nowMs < horaSalida) {
-                return null;
-            }
+            if (nowMs < horaSalida) return null;
+
             let progreso = 0;
             let lat = origen[0];
             let lon = origen[1];
             let estado: 'en curso' | 'retrasado' | 'completado' = 'en curso';
 
-            // Lógica de posición
             if (nowMs >= horaLlegada) {
                 progreso = 100;
                 estado = 'completado';
@@ -274,7 +251,6 @@ export const useOperacion = () => {
             } else if (duracion > 0) {
                 progreso = ((nowMs - horaSalida) / duracion) * 100;
                 const ratio = progreso / 100;
-                // Offset visual para evitar superposición
                 const offsetLat = ((index % 5) - 2) * 0.15;
                 lat = origen[0] + (destino[0] - origen[0]) * ratio + offsetLat;
                 lon = origen[1] + (destino[1] - origen[1]) * ratio;
@@ -304,9 +280,9 @@ export const useOperacion = () => {
         }).filter((v): v is VueloEnMovimiento => v !== null);
 
         setVuelosEnMovimiento(calculated);
-
     }, [activeSegments, simClock, aeropuertos]);
 
+    // 6. Mutaciones
     const runPlanningMutation = useMutation({
         mutationFn: () => planService.runPlanning(true),
         onMutate: () => {
@@ -314,12 +290,7 @@ export const useOperacion = () => {
             setStatus('buffering');
         },
         onSuccess: async () => {
-            // Rehidrata el mundo en backend con la hora actual para empezar a recibir ticks
-            try {
-                await operationService.initWorld(simClockRef.current.toISOString());
-            } catch {
-                // ignore
-            }
+            try { await operationService.initWorld(simClockRef.current.toISOString()); } catch { /* ignore */ }
             loadOrders(simClockRef.current, 0);
             setIsReplanning(false);
             setStatus('running');
@@ -332,54 +303,46 @@ export const useOperacion = () => {
 
     const clearPlanMutation = useMutation({
         mutationFn: () => planService.resetAllPlans(),
-        onMutate: () => {
-            setIsClearingPlan(true);
-        },
+        onMutate: () => setIsClearingPlan(true),
         onSuccess: () => {
-            //setDayPlan(null)
             setActiveSegments([]);
             setVuelosEnMovimiento([]);
             setOrderStatusList([]);
             setAirportStocks({});
             setPlanCache({});
             setMetrics({
-                totalOrders: 0,
-                ordersInTransit: 0,
-                totalFlights: 0,
-                activeFlights: 0,
-                slaPercentage: 0,
-                delayedOrders: 0
+                totalOrders: 0, deliveredOrders: 0, ordersInTransit: 0,
+                totalFlights: 0, activeFlights: 0, slaPercentage: 0, delayedOrders: 0
             });
             setStatus('idle');
             setLastUpdated(new Date());
         },
-        onSettled: () => {
-            setIsClearingPlan(false);
-        }
+        onSettled: () => setIsClearingPlan(false)
     });
 
-    // Refetch de pedidos cada minuto para mostrar nuevos planes
+    // 7. Actualización periódica y Ref de visibilidad (Código B)
+    useEffect(() => {
+        visibleOrderIdsRef.current = new Set(orderStatusList.map(o => o.orderId));
+    }, [orderStatusList]);
+
     useEffect(() => {
         const interval = setInterval(() => {
             fetchPlanBase();
-            loadOrders(simClockRef.current, 0);
-        }, 60000); // 60 segundos = 1 minuto
+            loadOrders(simClockRef.current, ordersPageRef.current);
+        }, 60000);
         return () => clearInterval(interval);
     }, []);
 
+    // 8. Métricas en Frontend (Código A)
     useEffect(() => {
-        // Si no hay datos, no calculamos
         if (!activeSegments.length && !orderStatusList.length) return;
         const nowMs = simClock.getTime();
-        // 1. Calcular Vuelos Activos Reales
         const vuelosActivos = activeSegments.filter(s => {
             const dep = Date.parse(s.departureUtc);
             const arr = Date.parse(s.arrivalUtc);
             return nowMs >= dep && nowMs < arr;
         });
-        // 2. Calcular Pedidos en Tránsito (suma de la carga de los vuelos activos)
         const pedidosEnVuelo = vuelosActivos.reduce((acc, v) => acc + (v.capacityUsed || 0), 0);
-        // 3. Entregados (Simplemente contamos los completados)
         const pedidosEntregados = orderStatusList.filter(o => {
             if (o.status === 'COMPLETED') return true;
             if (o.arrivalTime) {
@@ -395,10 +358,9 @@ export const useOperacion = () => {
             activeFlights: vuelosActivos.length,
             ordersInTransit: pedidosEnVuelo,
         }));
-
     }, [simClock, activeSegments, orderStatusList]);
 
-    // Suscribirse al tópico de operación y consumir ticks desde el backend
+    // 9. WebSocket (HÍBRIDO: A + B)
     useEffect(() => {
         const resolveWsUrl = () => {
             const envWs = import.meta.env.VITE_WS_URL as string | undefined;
@@ -414,9 +376,10 @@ export const useOperacion = () => {
             onConnect: () => {
                 client.subscribe('/topic/ops/current', (message) => {
                     try {
-                        const parsed: SimulationMessage = JSON.parse(message.body);
+                        const parsed: SimulationMessage & { changedOrderIds?: string[] } = JSON.parse(message.body);
+
+                        // LOGICA DE A: Animación fluida de mapa
                         if (parsed.tick) {
-                            // A) PROCESAR VUELOS (ActiveSegments)
                             if (parsed.tick.activeSegments) {
                                 const mapped: SegmentoVuelo[] = parsed.tick.activeSegments.map((s: any) => ({
                                     id: s.id,
@@ -435,7 +398,6 @@ export const useOperacion = () => {
                                 setActiveSegments(mapped);
                             }
 
-                            // B) PROCESAR AEROPUERTOS (ActiveAirports)
                             if (parsed.tick.activeAirports) {
                                 const stockMap: Record<string, AirportLiveStatus> = {};
                                 parsed.tick.activeAirports.forEach((a: any) => {
@@ -448,6 +410,16 @@ export const useOperacion = () => {
                                 setAirportStocks(stockMap);
                             }
                         }
+
+                        // LOGICA DE B: Recarga inteligente de lista de pedidos
+                        const changedIds = parsed.changedOrderIds || (parsed.tick as any)?.changedOrderIds;
+                        if (changedIds?.length) {
+                            const hasVisibleChange = changedIds.some((id: string) => visibleOrderIdsRef.current.has(id));
+                            if (hasVisibleChange) {
+                                loadOrders(simClockRef.current, ordersPageRef.current);
+                            }
+                        }
+
                     } catch (err) {
                         console.warn('No se pudo parsear tick de operación', err);
                     }

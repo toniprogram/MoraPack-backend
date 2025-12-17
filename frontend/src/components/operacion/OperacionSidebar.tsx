@@ -49,11 +49,12 @@ export function OperacionSidebar({
   isClearingPlan,
   lastUpdated,
   actions,
-  formatDateTime,
   formatShortTime,
   getInputValue,
   handleTimeChange,
 }: OperacionSidebarProps) {
+
+  // --- ESTADOS Y CONTROL DE TIEMPO ---
   const inputValue = getInputValue();
   const canApplyTime = useMemo(() => {
     const parsed = new Date(inputValue);
@@ -61,11 +62,14 @@ export function OperacionSidebar({
     const simStr = simClock.toISOString().slice(0, 16);
     return inputValue !== simStr;
   }, [inputValue, simClock]);
+
   const [collapsed, setCollapsed] = useState(false);
   const [vistaPanel, setVistaPanel] = useState<'pedidos' | 'vuelos' | 'aeropuertos'>('pedidos');
   const [selectedFlightId, setSelectedFlightId] = useState<string | null>(null);
   const [selectedAirportIds, setSelectedAirportIds] = useState<string[] | null>(null);
   const [timeCollapsed, setTimeCollapsed] = useState(false);
+
+  // --- FILTROS ---
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [hastaColapso, setHastaColapso] = useState(false);
@@ -74,12 +78,14 @@ export function OperacionSidebar({
   const [filtroEstado, setFiltroEstado] = useState<'enproceso' | 'planificados' | 'entregados'>('enproceso');
   const panelScrollRef = useRef<HTMLDivElement | null>(null);
 
+  // --- LOGICA DE NEGOCIO (VUELOS) ---
+  // Calculamos grupos de vuelos, pero filtrando para NO mostrar vuelos futuros (Lógica de Código A)
   const flightGroups: FlightGroup[] = useMemo(() => {
-      const nowMs = simClock.getTime(); // Obtenemos el tiempo actual de simulación
+      const nowMs = simClock.getTime();
 
-      // Filtramos primero para quedarnos solo con los que ya salieron (o están saliendo)
       const activeNow = activeSegments.filter(seg => {
           const dep = Date.parse(seg.departureUtc);
+          // Solo mostramos vuelos que ya salieron o están saliendo
           return dep <= nowMs;
       });
 
@@ -101,6 +107,7 @@ export function OperacionSidebar({
       });
     }, [activeSegments, simClock]);
 
+  // --- SELECCION DE AEROPUERTOS ---
   const handleSelectAirport = (airportId: string | null) => {
     if (!airportId) {
       setSelectedAirportIds(null);
@@ -128,6 +135,8 @@ export function OperacionSidebar({
     }
   };
 
+  // --- FILTRADO DE DATOS (TEXTO Y ESTADO) ---
+
   const filteredOrders = useMemo(() => {
     return orderStatusList.filter((o) => {
       if (filtroTexto) {
@@ -149,6 +158,7 @@ export function OperacionSidebar({
     });
   }, [orderStatusList, filtroTexto, filtroHub, filtroEstado]);
 
+  // Filtramos vuelos por texto (Importante: Código B no tenía esto)
   const vuelosFiltrados = useMemo<FlightGroup[]>(() => {
         const term = filtroTexto.toLowerCase();
         if (!term) return flightGroups;
@@ -162,6 +172,8 @@ export function OperacionSidebar({
           );
         });
     }, [flightGroups, filtroTexto]);
+
+    // Filtramos aeropuertos por texto (Importante: Código B no tenía esto)
     const aeropuertosFiltrados = useMemo(() => {
         const term = filtroTexto.toLowerCase();
         if (!term) return aeropuertos;
@@ -170,15 +182,14 @@ export function OperacionSidebar({
           const nameMatch = a.name?.toLowerCase().includes(term);
           const cityMatch = (a as any).city?.toLowerCase().includes(term);
           const codeMatch = (a.code || a.id)?.toLowerCase().includes(term);
-
           return nameMatch || cityMatch || codeMatch;
         });
     }, [aeropuertos, filtroTexto]);
 
 
-
   return (
     <div className={`max-w-full flex flex-col bg-base-100 z-20 h-full max-h-full shrink-0 border-r border-base-300 shadow-lg transition-all overflow-hidden ${collapsed ? 'w-9' : 'w-80'}`}>
+      {/* HEADER */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-base-300 bg-base-100">
         {!collapsed && (
           <div className="flex items-center gap-2">
@@ -197,6 +208,7 @@ export function OperacionSidebar({
         </button>
       </div>
 
+      {/* ESTADO COLAPSADO */}
       {collapsed && (
         <div className="flex flex-col items-center gap-2 py-3 bg-base-100">
           <div className="tooltip tooltip-right" data-tip="Ejecutar planificador">
@@ -214,96 +226,97 @@ export function OperacionSidebar({
         </div>
       )}
 
-      {!collapsed && (
-      <div className="p-2 bg-base-100 border-b border-base-300 shrink-0 space-y-1.5">
-        <div className="flex items-center justify-between">
-          <label className="text-[11px] font-semibold uppercase text-base-content/70 flex items-center gap-2">
-            <span>Hora de operación (UTC)</span>
-          </label>
-          <button
-            className="btn btn-ghost btn-xs btn-square"
-            onClick={() => setTimeCollapsed(v => !v)}
-          >
-            {timeCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
-          </button>
-        </div>
-
-        {!timeCollapsed && (
-          <>
-            <div className="flex gap-1">
-              <input
-                type="datetime-local"
-                className="input input-xs input-bordered w-full font-mono"
-                value={inputValue}
-                onChange={handleTimeChange}
-              />
-              <button
-                onClick={() => actions.setManualTime(new Date(`${getInputValue()}:00Z`))}
-                className="btn btn-xs btn-outline btn-square"
-                disabled={!canApplyTime}
-                title="Aplicar hora"
-              >
-                <Clock3 size={14} />
-              </button>
-              <button
-                onClick={() => actions.resetTime()}
-                className="btn btn-xs btn-outline"
-                title="Volver al presente"
-              >
-                <RefreshCw size={14} />
-              </button>
-            </div>
-            <div className="flex gap-1">
-              <button
-                onClick={() => actions.planificar()}
-                disabled={isRealtimeDisabled}
-                className="btn btn-primary btn-xs flex-1 gap-1.5 font-bold shadow-lg hover:shadow-primary/20 transition-all"
-              >
-                {isReplanning ? <span className="loading loading-spinner loading-xs"></span> : <Server size={16} />}
-                {isReplanning ? 'Optimizando' : 'Planificar'}
-              </button>
-              <button
-                onClick={() => {
-                  if (window.confirm('¿Eliminar toda la planificación actual?')) {
-                    actions.clearPlan();
-                  }
-                }}
-                disabled={isClearingPlan || isReplanning || status === 'buffering'}
-                className="btn btn-error btn-outline btn-xs flex-1 gap-1.5 font-semibold"
-              >
-                {isClearingPlan ? <span className="loading loading-spinner loading-xs"></span> : <RefreshCw size={14} />}
-                Eliminar plan
-              </button>
-            </div>
-          </>
-        )}
-
-        {timeCollapsed && (
-          <div className="flex items-center justify-between text-xs text-base-content/70 border border-base-300 rounded-lg px-2 py-1">
-            <span className="font-mono">{getInputValue()}</span>
-            <div className="flex gap-1">
-              <button
-                onClick={() => actions.resetTime()}
-                className="btn btn-ghost btn-xs btn-square"
-                title="Volver al presente"
-              >
-                <RefreshCw size={12} />
-              </button>
-              <button
-                onClick={() => actions.planificar()}
-                disabled={isRealtimeDisabled}
-                className="btn btn-primary btn-xs btn-square"
-              >
-                {isReplanning ? <span className="loading loading-spinner loading-2xs"></span> : <Server size={12} />}
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-      )}
-
+      {/* CONTENIDO PRINCIPAL */}
       {!collapsed && (
       <>
+        {/* CONTROL DE TIEMPO */}
+        <div className="p-2 bg-base-100 border-b border-base-300 shrink-0 space-y-1.5">
+          <div className="flex items-center justify-between">
+            <label className="text-[11px] font-semibold uppercase text-base-content/70 flex items-center gap-2">
+              <span>Hora de operación (UTC)</span>
+            </label>
+            <button
+              className="btn btn-ghost btn-xs btn-square"
+              onClick={() => setTimeCollapsed(v => !v)}
+            >
+              {timeCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+            </button>
+          </div>
+
+          {!timeCollapsed && (
+            <>
+              <div className="flex gap-1">
+                <input
+                  type="datetime-local"
+                  className="input input-xs input-bordered w-full font-mono"
+                  value={inputValue}
+                  onChange={handleTimeChange}
+                />
+                <button
+                  onClick={() => actions.setManualTime(new Date(`${getInputValue()}:00Z`))}
+                  className="btn btn-xs btn-outline btn-square"
+                  disabled={!canApplyTime}
+                  title="Aplicar hora"
+                >
+                  <Clock3 size={14} />
+                </button>
+                <button
+                  onClick={() => actions.resetTime()}
+                  className="btn btn-xs btn-outline"
+                  title="Volver al presente"
+                >
+                  <RefreshCw size={14} />
+                </button>
+              </div>
+              <div className="flex gap-1">
+                <button
+                  onClick={() => actions.planificar()}
+                  disabled={isRealtimeDisabled}
+                  className="btn btn-primary btn-xs flex-1 gap-1.5 font-bold shadow-lg hover:shadow-primary/20 transition-all"
+                >
+                  {isReplanning ? <span className="loading loading-spinner loading-xs"></span> : <Server size={16} />}
+                  {isReplanning ? 'Optimizando' : 'Planificar'}
+                </button>
+                <button
+                  onClick={() => {
+                    if (window.confirm('¿Eliminar toda la planificación actual?')) {
+                      actions.clearPlan();
+                    }
+                  }}
+                  disabled={isClearingPlan || isReplanning || status === 'buffering'}
+                  className="btn btn-error btn-outline btn-xs flex-1 gap-1.5 font-semibold"
+                >
+                  {isClearingPlan ? <span className="loading loading-spinner loading-xs"></span> : <RefreshCw size={14} />}
+                  Eliminar plan
+                </button>
+              </div>
+            </>
+          )}
+
+          {timeCollapsed && (
+            <div className="flex items-center justify-between text-xs text-base-content/70 border border-base-300 rounded-lg px-2 py-1">
+              <span className="font-mono">{getInputValue()}</span>
+              <div className="flex gap-1">
+                <button
+                  onClick={() => actions.resetTime()}
+                  className="btn btn-ghost btn-xs btn-square"
+                  title="Volver al presente"
+                >
+                  <RefreshCw size={12} />
+                </button>
+                <button
+                  onClick={() => actions.planificar()}
+                  disabled={isRealtimeDisabled}
+                  className="btn btn-primary btn-xs btn-square"
+                >
+                  {isReplanning ? <span className="loading loading-spinner loading-2xs"></span> : <Server size={12} />}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* COMPONENTE DE FILTROS */}
         <SidebarFilters
           ordenesParaSimular={[]}
           startDate={startDate}
@@ -336,6 +349,8 @@ export function OperacionSidebar({
         />
 
         <div ref={panelScrollRef} className="flex-1 overflow-y-auto p-3 space-y-3 bg-base-200 scrollbar-thin scrollbar-thumb-base-300">
+
+          {/* VISTA DE PEDIDOS */}
           {vistaPanel === 'pedidos' && (
             <>
               {filteredOrders.length === 0 ? (
@@ -380,7 +395,7 @@ export function OperacionSidebar({
                       data={cardData}
                       isSelected={false}
                       hasSelection={false}
-                      currentTime={simClock}
+                      currentTime={simClock} // Necesario para la barra de progreso
                       onSelect={() => {}}
                     />
                   );
@@ -389,10 +404,10 @@ export function OperacionSidebar({
             </>
           )}
 
+          {/* VISTA DE VUELOS */}
           {vistaPanel === 'vuelos' && (
             <SidebarVuelosPanel
-              //vuelosFiltrados={flightGroups}
-              vuelosFiltrados={vuelosFiltrados}
+              vuelosFiltrados={vuelosFiltrados} // Pasamos la lista filtrada por texto
               vuelosTotal={flightGroups.length}
               vuelosEnMovimiento={vuelosEnMovimiento}
               selectedFlightId={selectedFlightId}
@@ -403,10 +418,10 @@ export function OperacionSidebar({
             />
           )}
 
+          {/* VISTA DE AEROPUERTOS */}
           {vistaPanel === 'aeropuertos' && (
             <SidebarAeropuertosPanel
-              //aeropuertos={aeropuertos}
-              aeropuertos={aeropuertosFiltrados}
+              aeropuertos={aeropuertosFiltrados} // Pasamos la lista filtrada por texto
               activeAirports={activeAirports}
               activeSegments={activeSegments}
               selectedAirportIds={selectedAirportIds}
@@ -418,8 +433,6 @@ export function OperacionSidebar({
             />
           )}
         </div>
-
-        {/* Se omite barra inferior para ahorrar espacio */}
       </>
       )}
     </div>
