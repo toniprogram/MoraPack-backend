@@ -520,13 +520,13 @@ public class SimulationService {
                 int removed = demand.size() - activeIds.size();
                 log.info("[SIM:{}] Pruning {} delivered/expired orders before GA (simTime={})", session.id, removed, simInstant);
                 demand.removeIf(o -> !activeIds.contains(o.getId()));
-                heuristicSeed = heuristicSeed != null ? heuristicSeed.pruneToOrders(world, activeIds, demand) : null;
-                previousBest = previousBest != null ? previousBest.pruneToOrders(world, activeIds, demand) : null;
+                heuristicSeed = heuristicSeed != null ? heuristicSeed.pruneToOrders(world, activeIds) : null;
+                previousBest = previousBest != null ? previousBest.pruneToOrders(world, activeIds) : null;
                 if (session.lastPopulation != null && !session.lastPopulation.isEmpty()) {
                     session.lastPopulation = session.lastPopulation.stream()
-                            .map(ind -> ind.pruneToOrders(world, activeIds, demand))
+                            .map(ind -> ind.pruneToOrders(world, activeIds))
                             .filter(Objects::nonNull)
-                            .toList();
+                            .collect(Collectors.toList());
                 }
             }
         }
@@ -1190,7 +1190,7 @@ public class SimulationService {
                     .collect(Collectors.toSet());
 
             // Primero podar reservas de órdenes que ya no están activas.
-            Individual pruned = individual.pruneToOrders(world, activeIds, normalizedDemand);
+            Individual pruned = individual.pruneToOrders(world, activeIds);
             if (pruned == null) {
                 return null;
             }
