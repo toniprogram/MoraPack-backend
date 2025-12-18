@@ -66,7 +66,7 @@ export interface SegmentoVuelo {
 }
 
 // URL de WebSocket nativo
-const resolveWsUrl = () => {
+/*const resolveWsUrl = () => {
   const envWs = import.meta.env.VITE_WS_URL as string | undefined;
   if (envWs) return envWs;
   const apiBase = import.meta.env.VITE_API_URL as string | undefined;
@@ -74,8 +74,8 @@ const resolveWsUrl = () => {
   const wsBase = base.replace(/^http/, 'ws').replace(/\/api\/?$/, '');
   return `${wsBase}/ws`;
 };
-const BROKER_URL = resolveWsUrl();
-//const BROKER_URL =
+const BROKER_URL = resolveWsUrl();*/
+const BROKER_URL =
   import.meta.env.PROD
     ? 'ws://200.16.7.179/ws'  // producción
     : 'ws://localhost:8080/ws'; // desarrollo local
