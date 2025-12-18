@@ -236,6 +236,7 @@ export function SimSidebar({
             onSelectFlight={onSelectFlight}
             selectedOrders={selectedOrderIds}
             selectedAirportIds={selectedAirportIds}
+            currentTime={new Date()}
           />
         )}
 

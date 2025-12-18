@@ -24,8 +24,8 @@ export function SidebarVuelosPanel({
   selectedFlightId,
   onSelectFlight,
   scrollParent,
-  selectedOrders,
-  selectedAirportIds,
+  //selectedOrders,
+  //selectedAirportIds,
   tipoVuelo,
   currentTime
 }: SidebarVuelosPanelProps) {
@@ -92,10 +92,10 @@ export function SidebarVuelosPanel({
             const flightKey = vuelo.uniqueKey ?? vuelo.segmentId ?? vuelo.flightId ?? vuelo.departureUtc;
             const isVacio = tipoVuelo === 'vacios';
             const isSelected = !isVacio && selectedFlightId === flightKey;
-            const shouldHighlight = !isVacio && (isSelected || (
+            /*const shouldHighlight = !isVacio && (isSelected || (
                 selectedFlightId === null &&
                 ((selectedAirportIds?.includes(vuelo.origen) || selectedAirportIds?.includes(vuelo.destino)))
-            ));
+            ));*/
             const isDimmed = !isVacio && selectedFlightId && !isSelected;
             const vueloEnCurso = vuelosEnMovimiento.find(v => v.id === (vuelo.segmentId ?? vuelo.departureUtc));
             let progreso = 0;

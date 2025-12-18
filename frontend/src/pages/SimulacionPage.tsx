@@ -280,6 +280,7 @@ export default function SimulacionPage() {
       const hora = dep.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
       const horaLlegada = arr.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
       return {
+        uniqueKey: seg.id,
         segmentId: seg.id,
         flightId: seg.flightId,
         origen: seg.origin,

@@ -152,7 +152,7 @@ export default function OperacionPage() {
                         ghostFlights={displayedGhostFlights}
                         activeAirports={activeAirports}
                         selectedAirportIds={selectedAirportIds}
-                        onSelectAirport={setSelectedAirportIds}
+                        onSelectAirport={(airportId) => setSelectedAirportIds(airportId ? [airportId] : null)}
                         selectedFlightId={selectedFlightId}
                         onSelectFlight={setSelectedFlightId}
                         selectedOrders={selectedOrders}

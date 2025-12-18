@@ -10,6 +10,7 @@ export interface EnvioInfo {
 }
 
 export interface FlightGroup {
+  uniqueKey: string | undefined;
   segmentId?: string;
   flightId: string;
   origen: string;
