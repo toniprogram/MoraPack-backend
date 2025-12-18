@@ -163,11 +163,11 @@ export const useOperacion = () => {
                     routeIndex: idx + 1,
                     segments: (r.segments ?? []).map(s => ({
                         flightId: s.flightId,
-                        origin: s.origin,
-                        destination: s.destination,
-                        departureUtc: s.departureUtc,
-                        arrivalUtc: s.arrivalUtc,
-                        quantity: s.quantity,
+                        origin: s.from,
+                        destination: s.to,
+                        departureUtc: s.departure,
+                        arrivalUtc: s.arrival,
+                        quantity: r.quantity ?? 0,
                     })),
                 })).filter(r => r.segments.length > 0);
                 map[op.orderId] = { quantity: qty, routesDetail, slackMinutes: op.slackMinutes };
