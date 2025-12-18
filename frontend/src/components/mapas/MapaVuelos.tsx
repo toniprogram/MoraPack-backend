@@ -465,8 +465,8 @@ export function MapaVuelos({
         let statusColorClass = 'text-success';
         let progressClass = 'progress-success';
         if (!isInfinite) {
-            if (stockPct >= 90) { statusColorClass = 'text-error'; progressClass = 'progress-error'; }
-            else if (stockPct >= 70) { statusColorClass = 'text-warning'; progressClass = 'progress-warning'; }
+            if (stockPct >= 20) { statusColorClass = 'text-error'; progressClass = 'progress-error'; }
+            else if (stockPct >= 10) { statusColorClass = 'text-warning'; progressClass = 'progress-warning'; }
         }
 
         const vuelosSalientes = activeSegments.filter(s => s.origin === (aeropuerto.id || aeropuerto.code));
@@ -648,8 +648,8 @@ export function MapaVuelos({
                     <div><div className="font-black text-lg">{vuelo.destinoCode}</div><div className="text-[10px] opacity-70">{formatDateTime(vuelo.llegadaProgramada)}</div></div>
                 </div>
                 <div className="p-3 border-b border-base-content/10">
-                    <div className="flex justify-between mb-1 text-[10px] font-semibold uppercase opacity-70"><span>Capacidad de Bodega</span><span>{vuelo.capacidadUsada} / {vuelo.capacidadTotal}</span></div>
-                    <progress className={`progress w-full h-2 ${capacityPct >= 90 ? 'progress-error' : capacityPct >= 70 ? 'progress-warning' : 'progress-success'}`} value={vuelo.capacidadUsada} max={vuelo.capacidadTotal}></progress>
+                	<div className="flex justify-between mb-1 text-[10px] font-semibold uppercase opacity-70"><span>Capacidad de Bodega</span><span>{vuelo.capacidadUsada} / {vuelo.capacidadTotal}</span></div>
+                	<progress className={`progress w-full h-2 ${capacityPct >= 20 ? 'progress-error' : capacityPct >= 10 ? 'progress-warning' : 'progress-success'}`} value={vuelo.capacidadUsada} max={vuelo.capacidadTotal}></progress>
                 </div>
                 <OrdersList items={pedidosTooltip} selectedOrders={selectedOrders} onSelectOrder={(oid) => { onSelectOrders?.([oid]); onSelectFlight?.(vuelo.id); }} />
               </div>
