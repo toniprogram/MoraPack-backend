@@ -24,8 +24,7 @@ import com.morapack.skyroute.models.*;
 class RouteBuilder {
     private static final List<String> PRODUCTION_HUBS = List.of("SPIM", "EBCI", "UBBB");
     private static final int MAX_HOPS = 8;
-    private static final int MAX_DAY_LOOKAHEAD = 3;
-    private static final double AVG_CRUISE_SPEED_KMH = 800.0;
+    private static final int MAX_DAY_LOOKAHEAD = 7;
 
     private final Flights flights;
     private final Airports airports;
@@ -122,13 +121,6 @@ class RouteBuilder {
                         currentAirport = airports.get(current);
                         LocalDateTime arrivalLocal = toLocal(candidate.getArrivalInstant(date), currentAirport.getZoneOffset());
                         readyTime = arrivalLocal.plus(finalLeg ? Config.WAREHOUSE_DWELL : Config.TRANSFER_BUFFER);
-                        if (dueInstant != null) {
-                            Instant readyInstant = readyTime.toInstant(currentAirport.getZoneOffset());
-                            if (!readyInstant.isBefore(dueInstant)) {
-                                releaseAllocated(route);
-                                return null;
-                            }
-                        }
                         visited.add(current);
                         currentRouteQty = sendQty;
                         reserved = true;
@@ -199,48 +191,28 @@ class RouteBuilder {
                                         Map<String, Integer> distances,
                                         Set<String> visited) {
         if (mode == SelectionMode.RANDOM_APPROACH) {
-            // Elige dentro de los destinos más cercanos priorizando el menor tiempo estimado a destino
-            // y luego baraja para no monopolizar siempre el mismo hub.
-            double currentGeo = distanceToDestination(options.get(0).getOriginCode(), destination);
-            List<FlightDistance> all = new ArrayList<>(options.size());
-            for (Flight option : options) {
-                double nextGeo = distanceToDestination(option.getDestinationCode(), destination);
-                double etaMinutes = estimateMinutes(option, destination);
-                all.add(new FlightDistance(option, nextGeo, etaMinutes));
-            }
-
-            all.sort((a, b) -> Double.compare(a.etaMinutes, b.etaMinutes));
-
-            // Preferimos los que reducen distancia; si no hay, tomamos los más cercanos absolutos.
-            List<FlightDistance> closer = new ArrayList<>();
-            for (FlightDistance fd : all) {
-                if (fd.distanceKm <= currentGeo) {
-                    closer.add(fd);
-                }
-            }
-
-            List<FlightDistance> primary = closer.isEmpty() ? all : closer;
-            int bucketSize = Math.min(5, primary.size());
-
-            List<FlightDistance> nearest = new ArrayList<>(primary.subList(0, bucketSize));
-            Collections.shuffle(nearest, rnd);
-
-            Set<Flight> added = new HashSet<>();
             List<Flight> prioritized = new ArrayList<>();
-            for (FlightDistance fd : nearest) {
-                prioritized.add(fd.flight);
-                added.add(fd.flight);
-            }
-
-            List<FlightDistance> remainder = new ArrayList<>(all);
-            remainder.removeAll(nearest);
-            Collections.shuffle(remainder, rnd);
-            for (FlightDistance fd : remainder) {
-                if (!added.contains(fd.flight)) {
-                    prioritized.add(fd.flight);
+            for (Flight option : options) {
+                double currentGeo = distanceToDestination(option.getOriginCode(), destination);
+                double nextGeo = distanceToDestination(option.getDestinationCode(), destination);
+                if (nextGeo < currentGeo || option.getDestinationCode().equals(destination)) {
+                    prioritized.add(option);
                 }
             }
 
+            if (prioritized.isEmpty()) {
+                for (Flight option : options) {
+                    if (!visited.contains(option.getDestinationCode())) {
+                        prioritized.add(option);
+                    }
+                }
+            }
+
+            if (prioritized.isEmpty()) {
+                prioritized.addAll(options);
+            }
+
+            Collections.shuffle(prioritized, rnd);
             return prioritized;
         }
 
@@ -284,14 +256,6 @@ class RouteBuilder {
         Airport destinationAirport = airports.get(flight.getDestinationCode());
         LocalDateTime arrivalLocal = toLocal(flight.getArrivalInstant(date), destinationAirport.getZoneOffset());
         LocalDateTime departureLocal = arrivalLocal.plus(finalLeg ? Config.WAREHOUSE_DWELL : Config.TRANSFER_BUFFER);
-
-        if (finalLeg) {
-            Instant releaseInstant = flight.getArrivalInstant(date).plus(Config.WAREHOUSE_DWELL);
-            if (dueInstant != null && releaseInstant.isAfter(dueInstant)) {
-                flightSchedule.release(flight, date, quantity);
-                return false;
-            }
-        }
 
         if (!airportSchedule.tryReserveTransit(destinationAirport.code, arrivalLocal, departureLocal, quantity)) {
             flightSchedule.release(flight, date, quantity);
@@ -338,40 +302,6 @@ class RouteBuilder {
         return haversineKm(origin.getLatitude(), origin.getLongitude(), destination.getLatitude(), destination.getLongitude());
     }
 
-    private double estimateMinutes(Flight flight, String destinationCode) {
-        double flightMinutes = estimateFlightDurationMinutes(flight);
-        double remainingKm = distanceToDestination(flight.getDestinationCode(), destinationCode);
-        double remainingMinutes = remainingKm >= Double.MAX_VALUE / 4
-                ? Double.MAX_VALUE / 2
-                : (remainingKm / AVG_CRUISE_SPEED_KMH) * 60d;
-        if (flightMinutes >= Double.MAX_VALUE / 4 || remainingMinutes >= Double.MAX_VALUE / 4) {
-            return Double.MAX_VALUE / 2;
-        }
-        return flightMinutes + remainingMinutes;
-    }
-
-    private double estimateFlightDurationMinutes(Flight flight) {
-        if (flight == null) {
-            return Double.MAX_VALUE / 2;
-        }
-        try {
-            LocalDate sample = LocalDate.now(ZoneOffset.UTC);
-            Instant dep = flight.getDepartureInstant(sample);
-            Instant arr = flight.getArrivalInstant(sample);
-            if (dep != null && arr != null && arr.isAfter(dep)) {
-                return Duration.between(dep, arr).toMinutes();
-            }
-        } catch (Exception ignored) {
-        }
-        try {
-            if (flight.getFlightDuration() != null) {
-                return flight.getFlightDuration().toMinutes();
-            }
-        } catch (Exception ignored) {
-        }
-        return Double.MAX_VALUE / 2;
-    }
-
     private double haversineKm(double lat1, double lon1, double lat2, double lon2) {
         double R = 6371.0;
         double dLat = Math.toRadians(lat2 - lat1);
@@ -400,30 +330,5 @@ class RouteBuilder {
     enum SelectionMode {
         RANDOM_APPROACH,
         HEURISTIC_APPROACH
-    }
-
-    private static final class FlightDistance {
-        private final Flight flight;
-        private final double distanceKm;
-        private final double etaMinutes;
-
-        private FlightDistance(Flight flight, double distanceKm, double etaMinutes) {
-            this.flight = flight;
-            this.distanceKm = distanceKm;
-            this.etaMinutes = etaMinutes;
-        }
-
-        @Override
-        public boolean equals(Object o) {
-            if (this == o) return true;
-            if (o == null || getClass() != o.getClass()) return false;
-            FlightDistance that = (FlightDistance) o;
-            return Objects.equals(flight, that.flight);
-        }
-
-        @Override
-        public int hashCode() {
-            return Objects.hash(flight);
-        }
     }
 }

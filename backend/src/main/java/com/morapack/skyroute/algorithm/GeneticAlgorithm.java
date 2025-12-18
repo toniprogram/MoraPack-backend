@@ -122,15 +122,15 @@ public class GeneticAlgorithm {
         } else {
             fillPopulation(populationSize, seed);
         }
-        evaluatePopulation(0);
         System.out.println("[GA] Population reuse: " + reusedCount + "/" + population.size() + " carried over");
 
         Individual best = bestIndividual(population);
+        double previousBestFitness = best.getFitness();
+
+        // int stagnant = 0;
         long deadlineNanos = durationMillis > 0 ? System.nanoTime() + durationMillis * 1_000_000L : Long.MAX_VALUE;
         log.info("[GA] runTimed start: budgetMs={} popSize={} demand={}", durationMillis, populationSize, demand.size());
         for (int gen = 0; gen < generations; gen++) {
-            evaluatePopulation(gen);
-            best = bestIndividual(population);
             if (System.nanoTime() >= deadlineNanos) {
                 log.info("[GA] Deadline reached before starting generation {}", gen + 1);
                 applyToWorld(best);
@@ -138,7 +138,7 @@ public class GeneticAlgorithm {
             }
             List<Individual> nextGen = new ArrayList<>();
             // Elitismo: conservar el mejor de la generación previa
-            nextGen.add(best.copy());
+            nextGen.add(best);
 
             while (nextGen.size() < populationSize) {
                 if (System.nanoTime() >= deadlineNanos) {
@@ -158,7 +158,7 @@ public class GeneticAlgorithm {
                 if (rnd.nextDouble() < Config.P_MUT) {
                     child = mutate(child);
                 }
-                child.evaluate(world, demand, gen);
+
                 nextGen.add(child);
             }
 
@@ -237,16 +237,6 @@ public class GeneticAlgorithm {
 
     private Individual bestIndividual(List<Individual> individuals) {
         return individuals.stream().max(Comparator.comparingDouble(Individual::getFitness)).orElseThrow();
-    }
-
-    private void evaluatePopulation(int generation) {
-        for (Individual individual : population) {
-            try {
-                individual.evaluate(world, demand, generation);
-            } catch (Exception ex) {
-                log.debug("Skipping evaluation for individual due to error: {}", ex.getMessage());
-            }
-        }
     }
 
     private void applyToWorld(Individual best) {
