@@ -205,7 +205,7 @@ class RouteBuilder {
             List<FlightDistance> all = new ArrayList<>(options.size());
             for (Flight option : options) {
                 double nextGeo = distanceToDestination(option.getDestinationCode(), destination);
-                double etaMinutes = estimateMinutes(option.getDestinationCode(), destination);
+                double etaMinutes = estimateMinutes(option, destination);
                 all.add(new FlightDistance(option, nextGeo, etaMinutes));
             }
 
@@ -338,12 +338,38 @@ class RouteBuilder {
         return haversineKm(origin.getLatitude(), origin.getLongitude(), destination.getLatitude(), destination.getLongitude());
     }
 
-    private double estimateMinutes(String airportCode, String destinationCode) {
-        double km = distanceToDestination(airportCode, destinationCode);
-        if (km == Double.MAX_VALUE / 2) {
+    private double estimateMinutes(Flight flight, String destinationCode) {
+        double flightMinutes = estimateFlightDurationMinutes(flight);
+        double remainingKm = distanceToDestination(flight.getDestinationCode(), destinationCode);
+        double remainingMinutes = remainingKm >= Double.MAX_VALUE / 4
+                ? Double.MAX_VALUE / 2
+                : (remainingKm / AVG_CRUISE_SPEED_KMH) * 60d;
+        if (flightMinutes >= Double.MAX_VALUE / 4 || remainingMinutes >= Double.MAX_VALUE / 4) {
             return Double.MAX_VALUE / 2;
         }
-        return (km / AVG_CRUISE_SPEED_KMH) * 60d;
+        return flightMinutes + remainingMinutes;
+    }
+
+    private double estimateFlightDurationMinutes(Flight flight) {
+        if (flight == null) {
+            return Double.MAX_VALUE / 2;
+        }
+        try {
+            LocalDate sample = LocalDate.now(ZoneOffset.UTC);
+            Instant dep = flight.getDepartureInstant(sample);
+            Instant arr = flight.getArrivalInstant(sample);
+            if (dep != null && arr != null && arr.isAfter(dep)) {
+                return Duration.between(dep, arr).toMinutes();
+            }
+        } catch (Exception ignored) {
+        }
+        try {
+            if (flight.getFlightDuration() != null) {
+                return flight.getFlightDuration().toMinutes();
+            }
+        } catch (Exception ignored) {
+        }
+        return Double.MAX_VALUE / 2;
     }
 
     private double haversineKm(double lat1, double lon1, double lat2, double lon2) {

@@ -590,9 +590,10 @@ public class Individual {
                                                Random rnd) {
         OrderPlan plan = new OrderPlan(order.getId());
         int remaining = order.getQuantity();
-        int stagnation = 0;
         List<String> hubs = hubsByProximity(world, builder.productionHubs(), order.getDestinationCode());
-        while (remaining > 0) {
+        int attempts = 0;
+        int maxAttempts = Math.max(10, hubs.size() * 3); // limitar greedys y evitar loops
+        while (remaining > 0 && attempts < maxAttempts) {
             boolean built = false;
             for (String origin : hubs) {
                 Route route = builder.buildRoute(order, origin, remaining);
@@ -608,9 +609,12 @@ public class Individual {
                 plan.setSlack(Duration.ofMinutes(-10_000));
                 plan.getRoutes().clear();
                 remaining = 0;
-            } else {
-                stagnation = 0;
             }
+            attempts++;
+        }
+        if (remaining > 0) {
+            plan.setSlack(Duration.ofMinutes(-10_000));
+            plan.getRoutes().clear();
         }
         plan.setSlack(determinePlanSlack(world, order, plan));
         return plan;
@@ -637,8 +641,9 @@ public class Individual {
 
         OrderPlan plan = new OrderPlan(order.getId());
         int remaining = order.getQuantity();
-        int stagnation = 0;
-        while (remaining > 0) {
+        int attempts = 0;
+        int maxAttempts = Math.max(10, preferredHubs.size() * 3);
+        while (remaining > 0 && attempts < maxAttempts) {
             boolean built = false;
             for (String origin : preferredHubs) {
                 Route route = builder.buildRoute(order, origin, remaining);
@@ -653,9 +658,12 @@ public class Individual {
                 plan.setSlack(Duration.ofMinutes(-10_000));
                 plan.getRoutes().clear();
                 remaining = 0;
-            } else {
-                stagnation = 0;
             }
+            attempts++;
+        }
+        if (remaining > 0) {
+            plan.setSlack(Duration.ofMinutes(-10_000));
+            plan.getRoutes().clear();
         }
         plan.setSlack(determinePlanSlack(world, order, plan));
         return plan;
