@@ -8,6 +8,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -21,11 +22,12 @@ import com.morapack.skyroute.config.*;
 import com.morapack.skyroute.io.*;
 import com.morapack.skyroute.models.*;
 
-class RouteBuilder {
+public class RouteBuilder {
     private static final List<String> PRODUCTION_HUBS = List.of("SPIM", "EBCI", "UBBB");
     private static final int MAX_HOPS = 8;
     private static final int MAX_DAY_LOOKAHEAD = 3;
     private static final double AVG_CRUISE_SPEED_KMH = 800.0;
+    private static final int CAPACITY_GREEDY_LOOKAHEAD_DAYS = 7; // tope superior, se ajusta por SLA
 
     private final Flights flights;
     private final Airports airports;
@@ -34,6 +36,9 @@ class RouteBuilder {
     private final Map<String, List<String>> reverseGraph;
     private final Random rnd;
     private final SelectionMode mode;
+    private static final int BEAM_WIDTH = 2;
+    private static final int BEAM_DEPTH = 4;
+    private static final long BEAM_BUDGET_MS = 30_000L;
 
     RouteBuilder(World world,
                  FlightSchedule flightSchedule,
@@ -50,6 +55,16 @@ class RouteBuilder {
     }
 
     Route buildRoute(Order order, String originHub, int quantity) {
+        if (mode == SelectionMode.CAPACITY_GREEDY) {
+            return buildRouteCapacityGreedy(order, originHub, quantity);
+        }
+        if (mode == SelectionMode.FLOW_CAPACITY) {
+            return buildRouteFlowCapacity(order, originHub, quantity);
+        }
+        // Fallback builder (sin reservas, sólo traza) para evitar planes vacíos
+        if (mode == SelectionMode.FLOW_FALLBACK) {
+            return buildRouteFallback(order, originHub, quantity);
+        }
         String destination = order.getDestinationCode();
         Route route = new Route(quantity);
         if (originHub.equals(destination)) {
@@ -64,8 +79,16 @@ class RouteBuilder {
         Duration overallSla = Duration.ZERO;
         Instant dueInstant = null;
         LocalDateTime readyTime = LocalDateTime.ofInstant(order.getCreationUtc(), currentAirport.getZoneOffset())
-                .plus(Config.WAREHOUSE_DWELL);
+                .plus(Config.TRANSFER_BUFFER); // primera pierna: solo buffer mínimo
         Map<String, Integer> distances = computeHopDistances(destination);
+
+        if (mode == SelectionMode.EXHAUSTIVE_APPROACH) {
+            Route exhaustive = buildRouteExhaustive(order, originHub, quantity);
+            return exhaustive;
+        }
+        if (mode == SelectionMode.BEAM_APPROACH) {
+            return buildRouteBeam(order, originHub, quantity);
+        }
 
         String current = originHub;
         Set<String> visited = new HashSet<>();
@@ -88,7 +111,7 @@ class RouteBuilder {
             }
 
             int currentDist = distances.getOrDefault(current, Integer.MAX_VALUE);
-            List<Flight> candidates = rankCandidates(options, currentDist, destination, distances, visited);
+            List<Flight> candidates = rankCandidates(options, currentDist, destination, distances, visited, readyTime, dueInstant);
             boolean reserved = false;
 
             for (Flight candidate : candidates) {
@@ -118,17 +141,14 @@ class RouteBuilder {
 
                     boolean finalLeg = candidate.getDestinationCode().equals(destination);
                     if (reserveSegment(route, candidate, date, sendQty, finalLeg, dueInstant)) {
+                        if (sendQty < currentRouteQty) {
+                            trimRouteToQty(route, sendQty);
+                            currentRouteQty = sendQty;
+                        }
                         current = candidate.getDestinationCode();
                         currentAirport = airports.get(current);
                         LocalDateTime arrivalLocal = toLocal(candidate.getArrivalInstant(date), currentAirport.getZoneOffset());
                         readyTime = arrivalLocal.plus(finalLeg ? Config.WAREHOUSE_DWELL : Config.TRANSFER_BUFFER);
-                        if (dueInstant != null) {
-                            Instant readyInstant = readyTime.toInstant(currentAirport.getZoneOffset());
-                            if (!readyInstant.isBefore(dueInstant)) {
-                                releaseAllocated(route);
-                                return null;
-                            }
-                        }
                         visited.add(current);
                         currentRouteQty = sendQty;
                         reserved = true;
@@ -159,6 +179,522 @@ class RouteBuilder {
         route.setQuantity(currentRouteQty);
 
         return route;
+    }
+
+    private Route buildRouteExhaustive(Order order, String originHub, int quantity) {
+        String destination = order.getDestinationCode();
+        Route route = new Route(quantity);
+        if (originHub.equals(destination)) {
+            return route;
+        }
+        Airport originAirport = airports.get(originHub);
+        if (originAirport == null) {
+            return null;
+        }
+        Duration overallSla = slaFor(originHub, destination);
+        Instant dueInstant = order.getCreationUtc().plus(overallSla);
+        LocalDateTime readyTime = LocalDateTime.ofInstant(order.getCreationUtc(), originAirport.getZoneOffset())
+                .plus(Config.TRANSFER_BUFFER);
+
+        Set<String> visited = new HashSet<>();
+        visited.add(originHub);
+        boolean success = explore(order, route, originHub, destination, quantity, readyTime, dueInstant, visited, 0);
+        if (!success || route.getSegments().isEmpty()) {
+            releaseAllocated(route);
+            return null;
+        }
+        route.setQuantity(route.getSegments().isEmpty() ? 0 : route.getSegments().get(0).getRouteQuantity());
+        return route;
+    }
+
+    private Route buildRouteCapacityGreedy(Order order, String originHub, int quantity) {
+        String destination = order.getDestinationCode();
+        Route route = new Route(quantity);
+        if (originHub.equals(destination)) {
+            return route;
+        }
+        Airport originAirport = airports.get(originHub);
+        if (originAirport == null) {
+            return null;
+        }
+        Instant dueInstant = order.getCreationUtc().plus(slaFor(originHub, destination));
+        LocalDateTime readyTime = LocalDateTime.ofInstant(order.getCreationUtc(), originAirport.getZoneOffset())
+                .plus(Config.TRANSFER_BUFFER);
+
+        List<Flight> directOptions = flights.getByOriginCode(originHub).stream()
+                .filter(f -> destination.equals(f.getDestinationCode()))
+                .toList();
+        if (directOptions.isEmpty()) {
+            return null;
+        }
+
+        // Respetamos estrictamente el SLA: continental=2 días, intercontinental=3 días (incluye buffers).
+        int slaDays = Math.max(1, (int) Math.ceil(slaFor(originHub, destination).toHours() / 24.0));
+        int dayLimit = slaDays;
+        LocalDate date = readyTime.toLocalDate();
+        for (int d = 0; d < dayLimit; d++) {
+            for (Flight flight : directOptions) {
+                LocalDateTime depLocal = toLocal(flight.getDepartureInstant(date), originAirport.getZoneOffset());
+                if (depLocal.isBefore(readyTime)) {
+                    continue;
+                }
+                int available = flightSchedule.getRemainingCapacity(flight, date);
+                if (available <= 0) {
+                    continue;
+                }
+                int sendQty = Math.min(quantity, available);
+                if (reserveSegment(route, flight, date, sendQty, true, dueInstant)) {
+                    route.setQuantity(sendQty);
+                    return route;
+                }
+            }
+            date = date.plusDays(1);
+        }
+        releaseAllocated(route);
+        return null;
+    }
+
+    /**
+     * Construye una ruta ignorando capacidad/SLA para evitar pedidos sin rutas.
+     * No reserva en schedules; sólo arma los tramos más tempranos posibles.
+     */
+    Route buildRouteFallback(Order order, String originHub, int quantity) {
+        String destination = order.getDestinationCode();
+        if (originHub.equals(destination)) {
+            return new Route(quantity);
+        }
+        Airport originAirport = airports.get(originHub);
+        if (originAirport == null) {
+            return null;
+        }
+        LocalDateTime readyTime = LocalDateTime.ofInstant(order.getCreationUtc(), originAirport.getZoneOffset())
+                .plus(Config.TRANSFER_BUFFER);
+
+        List<List<Flight>> paths = candidatePaths(originHub, destination, 2, 10);
+        if (paths.isEmpty()) {
+            return null;
+        }
+
+        Route bestRoute = null;
+        long bestArrival = Long.MAX_VALUE;
+        for (List<Flight> path : paths) {
+            LocalDateTime rt = readyTime;
+            Route candidate = new Route(quantity);
+            boolean ok = true;
+            for (int i = 0; i < path.size(); i++) {
+                Flight f = path.get(i);
+                boolean finalLeg = i == path.size() - 1 && f.getDestinationCode().equals(destination);
+                LocalDate date = rt.toLocalDate();
+                // empujar al siguiente día si la salida es antes de estar listo
+                if (toLocal(f.getDepartureInstant(date), originAirport.getZoneOffset()).isBefore(rt)) {
+                    date = date.plusDays(1);
+                }
+                LocalDateTime depLocal = toLocal(f.getDepartureInstant(date), airports.get(f.getOriginCode()).getZoneOffset());
+                LocalDateTime arrLocal = toLocal(f.getArrivalInstant(date), airports.get(f.getDestinationCode()).getZoneOffset());
+                RouteSegment segment = new RouteSegment(f, date, quantity, finalLeg);
+                candidate.add(segment);
+                rt = arrLocal.plus(finalLeg ? Config.WAREHOUSE_DWELL : Config.TRANSFER_BUFFER);
+            }
+            if (ok) {
+                candidate.setQuantity(quantity);
+                Instant arrivalInstant = candidate.getSegments().isEmpty()
+                        ? order.getCreationUtc()
+                        : candidate.getSegments().get(candidate.getSegments().size() - 1)
+                        .getFlight().getArrivalInstant(candidate.getSegments().get(candidate.getSegments().size() - 1).getDate());
+                if (arrivalInstant != null && arrivalInstant.toEpochMilli() < bestArrival) {
+                    bestArrival = arrivalInstant.toEpochMilli();
+                    bestRoute = candidate;
+                }
+            }
+        }
+        return bestRoute;
+    }
+
+    /**
+        * Enfoque orientado a congestión: limita a rutas cortas (≤2 conexiones) y asigna bloques
+        * por costo marginal (tiempo + penalización por ocupación). Divide la carga en varias rutas.
+        */
+    private Route buildRouteFlowCapacity(Order order, String originHub, int quantity) {
+        String destination = order.getDestinationCode();
+        if (originHub.equals(destination)) {
+            return new Route(quantity);
+        }
+        Airport originAirport = airports.get(originHub);
+        if (originAirport == null) {
+            return null;
+        }
+        Instant dueInstant = order.getCreationUtc().plus(slaFor(originHub, destination));
+        LocalDateTime readyTime = LocalDateTime.ofInstant(order.getCreationUtc(), originAirport.getZoneOffset())
+                .plus(Config.TRANSFER_BUFFER);
+
+        List<List<Flight>> candidates = candidatePaths(originHub, destination, 2, 10);
+        if (candidates.isEmpty()) {
+            return null;
+        }
+
+        int remainingQty = quantity;
+        Route finalRoute = new Route(quantity);
+        // Seguimos asignando bloques mientras haya demanda y exista un camino factible
+        while (remainingQty > 0) {
+            PathChoice best = null;
+            for (List<Flight> path : candidates) {
+                PathChoice choice = evaluatePath(path, readyTime, dueInstant, remainingQty, destination);
+                if (choice == null) continue;
+                if (best == null || choice.cost() < best.cost()) {
+                    best = choice;
+                }
+            }
+            if (best == null) {
+                break; // no hay camino factible
+            }
+            Route blockRoute = reserveSlots(best.slots(), destination, dueInstant);
+            if (blockRoute == null) {
+                candidates.remove(best.path());
+                if (candidates.isEmpty()) break;
+                continue;
+            }
+            // Sincronizar cantidad a bloque enviado
+            int sent = blockRoute.getQuantity();
+            remainingQty -= sent;
+            readyTime = best.slots().get(best.slots().size() - 1).nextReady(); // siguiente bloque parte después del último arribo + dwell
+            // agregar segmentos al finalRoute
+            finalRoute.getSegments().addAll(blockRoute.getSegments());
+            finalRoute.setSlack(blockRoute.getSlack());
+        }
+
+        if (finalRoute.getSegments().isEmpty()) {
+            releaseAllocated(finalRoute);
+            return null;
+        }
+        finalRoute.setQuantity(quantity - remainingQty);
+        return finalRoute;
+    }
+
+    private List<List<Flight>> candidatePaths(String origin,
+                                              String destination,
+                                              int maxConnections,
+                                              int maxPaths) {
+        List<List<Flight>> result = new ArrayList<>();
+
+        // directos
+        for (Flight f : flights.getByOriginCode(origin)) {
+            if (f.getDestinationCode().equals(destination)) {
+                result.add(List.of(f));
+                if (result.size() >= maxPaths) return result;
+            }
+        }
+
+        // 1 conexión
+        if (maxConnections >= 1) {
+            for (Flight first : flights.getByOriginCode(origin)) {
+                String mid = first.getDestinationCode();
+                if (mid.equals(destination) || mid.equals(origin)) continue;
+                for (Flight second : flights.getByOriginCode(mid)) {
+                    if (second.getDestinationCode().equals(origin)) continue;
+                    if (second.getDestinationCode().equals(destination)) {
+                        result.add(List.of(first, second));
+                        if (result.size() >= maxPaths) return result;
+                    }
+                }
+            }
+        }
+
+        // 2 conexiones
+        if (maxConnections >= 2) {
+            for (Flight f1 : flights.getByOriginCode(origin)) {
+                String mid1 = f1.getDestinationCode();
+                if (mid1.equals(origin)) continue;
+                for (Flight f2 : flights.getByOriginCode(mid1)) {
+                    String mid2 = f2.getDestinationCode();
+                    if (mid2.equals(origin) || mid2.equals(mid1)) continue;
+                    for (Flight f3 : flights.getByOriginCode(mid2)) {
+                        if (f3.getDestinationCode().equals(destination)) {
+                            result.add(List.of(f1, f2, f3));
+                            if (result.size() >= maxPaths) return result;
+                        }
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    private PathChoice evaluatePath(List<Flight> path,
+                                    LocalDateTime readyTime,
+                                    Instant dueInstant,
+                                    int remainingQty,
+                                    String destination) {
+        List<Slot> slots = new ArrayList<>();
+        LocalDateTime currentReady = readyTime;
+        int bottleneck = remainingQty;
+        for (int i = 0; i < path.size(); i++) {
+            Flight flight = path.get(i);
+            boolean finalLeg = i == path.size() - 1 && flight.getDestinationCode().equals(destination);
+            Slot slot = findEarliestSlot(flight, currentReady, dueInstant, finalLeg);
+            if (slot == null) {
+                return null;
+            }
+            bottleneck = Math.min(bottleneck, slot.available());
+            slots.add(slot);
+            currentReady = slot.nextReady();
+        }
+        if (bottleneck <= 0) {
+            return null;
+        }
+        int block = Math.min(bottleneck, Math.max(50, remainingQty / 4));
+        // Si el vuelo más lleno está >70%, reducimos el bloque para repartir
+        double maxOccupancy = slots.stream()
+                .mapToDouble(s -> congestion(s.flight(), s.date()))
+                .max().orElse(0d);
+        if (maxOccupancy > 0.7) {
+            block = Math.min(block, Math.max(30, bottleneck / 2));
+        }
+        // costo marginal: tiempo + penalización por congestión
+        double travelMinutes = 0d;
+        double congestionCost = 0d;
+        for (Slot s : slots) {
+            travelMinutes += estimateFlightDurationMinutes(s.flight());
+            double occ = congestion(s.flight(), s.date());
+            congestionCost += occ * occ * 1000d;
+        }
+        double cost = travelMinutes + congestionCost;
+        // ajustar cantidades en slots al bloque propuesto
+        List<Slot> sized = new ArrayList<>(slots.size());
+        for (Slot s : slots) {
+            sized.add(new Slot(s.flight(), s.date(), s.nextReady(), block, s.finalLeg()));
+        }
+        return new PathChoice(path, sized, cost);
+    }
+
+    private Slot findEarliestSlot(Flight flight,
+                                  LocalDateTime readyTime,
+                                  Instant dueInstant,
+                                  boolean finalLeg) {
+        Airport originAirport = airports.get(flight.getOriginCode());
+        int slaDays = dueInstant != null
+                ? Math.max(1, (int) Math.ceil(Duration.between(readyTime.toInstant(originAirport.getZoneOffset()), dueInstant).toHours() / 24.0))
+                : MAX_DAY_LOOKAHEAD;
+        LocalDate date = readyTime.toLocalDate();
+        for (int d = 0; d < slaDays; d++) {
+            LocalDateTime depLocal = toLocal(flight.getDepartureInstant(date), originAirport.getZoneOffset());
+            if (depLocal.isBefore(readyTime)) {
+                date = date.plusDays(1);
+                continue;
+            }
+            int remaining = flightSchedule.getRemainingCapacity(flight, date);
+            if (remaining <= 0) {
+                date = date.plusDays(1);
+                continue;
+            }
+            Airport destAirport = airports.get(flight.getDestinationCode());
+            LocalDateTime arrLocal = toLocal(flight.getArrivalInstant(date), destAirport.getZoneOffset());
+            LocalDateTime nextReady = arrLocal.plus(finalLeg ? Config.WAREHOUSE_DWELL : Config.TRANSFER_BUFFER);
+            return new Slot(flight, date, nextReady, remaining, finalLeg);
+        }
+        return null;
+    }
+
+    private double congestion(Flight flight, LocalDate date) {
+        int remaining = flightSchedule.getRemainingCapacity(flight, date);
+        int cap = Math.max(1, flight.getDailyCapacity());
+        int used = Math.max(0, cap - remaining);
+        return Math.min(1.0, used / (double) cap);
+    }
+
+
+    private Route buildRouteBeam(Order order, String originHub, int quantity) {
+        String destination = order.getDestinationCode();
+        Route best = null;
+        long deadline = System.nanoTime() + BEAM_BUDGET_MS * 1_000_000L;
+
+        for (int attempt = 0; attempt < BEAM_WIDTH; attempt++) {
+            Route candidate = beamSearch(order, originHub, destination, quantity, deadline);
+            if (candidate != null && !candidate.getSegments().isEmpty()) {
+                best = candidate;
+                break;
+            }
+            if (System.nanoTime() > deadline) {
+                break;
+            }
+        }
+        return best;
+    }
+
+    private Route beamSearch(Order order,
+                             String originHub,
+                             String destination,
+                             int quantity,
+                             long deadlineNanos) {
+        Instant dueInstant = order.getCreationUtc().plus(slaFor(originHub, destination));
+        Airport originAirport = airports.get(originHub);
+        if (originAirport == null) return null;
+
+        LocalDateTime readyTime = LocalDateTime.ofInstant(order.getCreationUtc(), originAirport.getZoneOffset())
+                .plus(Config.WAREHOUSE_DWELL);
+
+        List<BeamNode> frontier = new ArrayList<>();
+        frontier.add(new BeamNode(originHub, readyTime, new ArrayList<>(), quantity));
+
+        for (int depth = 0; depth < BEAM_DEPTH; depth++) {
+            if (System.nanoTime() > deadlineNanos) break;
+            List<BeamNode> next = new ArrayList<>();
+            for (BeamNode node : frontier) {
+                if (node.airport().equals(destination)) {
+                    Route route = reservePath(node.path(), destination, dueInstant);
+                    if (route != null) {
+                        return route;
+                    }
+                    continue;
+                }
+                List<FlightCandidate> flights = nextFlights(node, destination, dueInstant);
+                flights.sort(Comparator.comparingDouble(FlightCandidate::score));
+                int width = Math.min(BEAM_WIDTH, flights.size());
+                for (int i = 0; i < width; i++) {
+                    FlightCandidate fc = flights.get(i);
+                    List<SegmentChoice> newPath = new ArrayList<>(node.path());
+                    newPath.add(new SegmentChoice(fc.flight(), fc.date(), fc.finalLeg(), fc.qty()));
+                    next.add(new BeamNode(fc.flight().getDestinationCode(), fc.readyTime(), newPath, node.quantity()));
+                }
+            }
+            if (next.isEmpty()) {
+                break;
+            }
+            frontier = next;
+        }
+
+        // Intentar reservar si alguna frontera llega al destino
+        for (BeamNode node : frontier) {
+            if (node.airport().equals(destination)) {
+                Route route = reservePath(node.path(), destination, dueInstant);
+                if (route != null) {
+                    return route;
+                }
+            }
+        }
+        return null;
+    }
+
+    private Route reservePath(List<SegmentChoice> path, String destination, Instant dueInstant) {
+        Route route = new Route(path.isEmpty() ? 0 : path.get(0).qty());
+        List<Runnable> rollbacks = new ArrayList<>();
+        try {
+            for (int i = 0; i < path.size(); i++) {
+                SegmentChoice sc = path.get(i);
+                boolean finalLeg = (i == path.size() - 1) && sc.flight().getDestinationCode().equals(destination);
+                if (!reserveSegment(route, sc.flight(), sc.date(), sc.qty(), finalLeg, dueInstant)) {
+                    throw new IllegalStateException("reserve failed");
+                }
+                trimRouteToQty(route, sc.qty());
+                rollbacks.add(() -> {
+                    try {
+                        releaseLast(route);
+                    } catch (Exception ignored) {}
+                });
+            }
+            return route;
+        } catch (Exception ex) {
+            Collections.reverse(rollbacks);
+            rollbacks.forEach(Runnable::run);
+            return null;
+        }
+    }
+
+    private Route reserveSlots(List<Slot> slots, String destination, Instant dueInstant) {
+        List<SegmentChoice> path = new ArrayList<>(slots.size());
+        for (Slot slot : slots) {
+            path.add(new SegmentChoice(slot.flight(), slot.date(), slot.finalLeg(), slot.available()));
+        }
+        return reservePath(path, destination, dueInstant);
+    }
+
+    private List<FlightCandidate> nextFlights(BeamNode node, String destination, Instant dueInstant) {
+        List<FlightCandidate> result = new ArrayList<>();
+        List<Flight> options = new ArrayList<>(flights.getByOriginCode(node.airport()));
+        for (Flight flight : options) {
+            LocalDate date = node.readyTime().toLocalDate();
+            for (int d = 0; d < MAX_DAY_LOOKAHEAD; d++) {
+                LocalDateTime depLocal = toLocal(flight.getDepartureInstant(date), airports.get(node.airport()).getZoneOffset());
+                if (depLocal.isBefore(node.readyTime())) {
+                    date = date.plusDays(1);
+                    continue;
+                }
+                int available = flightSchedule.getRemainingCapacity(flight, date);
+                if (available <= 0) {
+                    date = date.plusDays(1);
+                    continue;
+                }
+                int qty = Math.min(node.quantity(), available);
+                boolean finalLeg = flight.getDestinationCode().equals(destination);
+                LocalDateTime arrivalLocal = toLocal(flight.getArrivalInstant(date), airports.get(flight.getDestinationCode()).getZoneOffset());
+                double travelMinutes = Duration.between(depLocal, arrivalLocal).toMinutes();
+                double dist = distanceToDestination(flight.getDestinationCode(), destination);
+                double score = travelMinutes + dist / 1000.0;
+                result.add(new FlightCandidate(flight, date, finalLeg, arrivalLocal.plus(finalLeg ? Config.WAREHOUSE_DWELL : Config.TRANSFER_BUFFER), score, qty));
+                break; // tomar la primera fecha válida para este vuelo
+            }
+        }
+        return result;
+    }
+
+    private boolean explore(Order order,
+                            Route route,
+                            String current,
+                            String destination,
+                            int quantity,
+                            LocalDateTime readyTime,
+                            Instant dueInstant,
+                            Set<String> visited,
+                            int hops) {
+        if (hops >= MAX_HOPS) {
+            return false;
+        }
+        List<Flight> options = new ArrayList<>(flights.getByOriginCode(current));
+        if (options.isEmpty()) {
+            return false;
+        }
+        for (Flight candidate : options) {
+            LocalDate date = readyTime.toLocalDate();
+            for (int attempts = 0; attempts < MAX_DAY_LOOKAHEAD; attempts++) {
+                LocalDateTime depLocal = toLocal(candidate.getDepartureInstant(date), airports.get(current).getZoneOffset());
+                if (depLocal.isBefore(readyTime)) {
+                    date = date.plusDays(1);
+                    continue;
+                }
+                int available = flightSchedule.getRemainingCapacity(candidate, date);
+                if (available <= 0) {
+                    date = date.plusDays(1);
+                    continue;
+                }
+                int sendQty = Math.min(quantity, available);
+                boolean finalLeg = candidate.getDestinationCode().equals(destination);
+                if (!reserveSegment(route, candidate, date, sendQty, finalLeg, dueInstant)) {
+                    date = date.plusDays(1);
+                    continue;
+                }
+                if (finalLeg) {
+                    route.setQuantity(sendQty);
+                    return true;
+                }
+                String next = candidate.getDestinationCode();
+                if (visited.contains(next)) {
+                    // backtrack
+                    releaseLast(route);
+                    date = date.plusDays(1);
+                    continue;
+                }
+                visited.add(next);
+                Airport nextAirport = airports.get(next);
+                LocalDateTime arrivalLocal = toLocal(candidate.getArrivalInstant(date), nextAirport.getZoneOffset());
+                LocalDateTime nextReady = arrivalLocal.plus(Config.TRANSFER_BUFFER);
+                if (explore(order, route, next, destination, sendQty, nextReady, dueInstant, visited, hops + 1)) {
+                    return true;
+                }
+                visited.remove(next);
+                releaseLast(route);
+                date = date.plusDays(1);
+            }
+        }
+        return false;
     }
 
     List<String> productionHubs() {
@@ -197,7 +733,9 @@ class RouteBuilder {
                                         int currentDist,
                                         String destination,
                                         Map<String, Integer> distances,
-                                        Set<String> visited) {
+                                        Set<String> visited,
+                                        LocalDateTime readyTime,
+                                        Instant dueInstant) {
         if (mode == SelectionMode.RANDOM_APPROACH) {
             // Elige dentro de los destinos más cercanos priorizando el menor tiempo estimado a destino
             // y luego baraja para no monopolizar siempre el mismo hub.
@@ -249,31 +787,76 @@ class RouteBuilder {
         if (prioritized.isEmpty()) prioritized.addAll(options);
 
         prioritized.sort((a, b) -> Double.compare(
-                slackScore(a, destination, distances),
-                slackScore(b, destination, distances)));
+                slackScore(a, destination, distances, readyTime, dueInstant, prioritized),
+                slackScore(b, destination, distances, readyTime, dueInstant, prioritized)));
         return prioritized;
     }
 
     private double slackScore(Flight flight,
                               String destination,
-                              Map<String, Integer> distances) {
+                              Map<String, Integer> distances,
+                              LocalDateTime readyTime,
+                              Instant dueInstant,
+                              List<Flight> peerOptions) {
         double geoDistance = distanceToDestination(flight.getDestinationCode(), destination);
         int directBonus = flight.getDestinationCode().equals(destination) ? -10 : 0;
-        double continentPenalty = continentPenalty(flight.getDestinationCode(), destination);
-        return geoDistance + continentPenalty + directBonus;
+
+        Instant arrivalEstimate = estimateArrivalInstant(flight, readyTime);
+        long slackMinutes = dueInstant == null ? 0 : Duration.between(arrivalEstimate, dueInstant).toMinutes();
+
+        boolean hasContinentalOnTime = hasContinentalOnTime(peerOptions, destination, readyTime, dueInstant);
+        double continentPenalty = continentPenaltyConditional(flight.getDestinationCode(), destination, hasContinentalOnTime);
+
+        // score: favorecer los que lleguen antes (slack alto => score bajo), luego distancia y penalizaciones.
+        return -slackMinutes + geoDistance + continentPenalty + directBonus;
     }
 
-    private double continentPenalty(String airportCode, String destinationCode) {
+    private Instant estimateArrivalInstant(Flight flight, LocalDateTime readyTime) {
+        Airport originAirport = airports.get(flight.getOriginCode());
+        ZoneOffset originOffset = originAirport != null ? originAirport.getZoneOffset() : ZoneOffset.UTC;
+        LocalDate date = readyTime.toLocalDate();
+        LocalDateTime depLocal = toLocal(flight.getDepartureInstant(date), originOffset);
+        if (depLocal.isBefore(readyTime)) {
+            date = date.plusDays(1);
+        }
+        return flight.getArrivalInstant(date);
+    }
+
+    private boolean hasContinentalOnTime(List<Flight> options,
+                                         String destination,
+                                         LocalDateTime readyTime,
+                                         Instant dueInstant) {
+        if (dueInstant == null) {
+            return false;
+        }
+        for (Flight option : options) {
+            if (isIntercontinental(option.getDestinationCode(), destination)) {
+                continue;
+            }
+            Instant arrival = estimateArrivalInstant(option, readyTime);
+            if (!arrival.isAfter(dueInstant)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isIntercontinental(String airportCode, String destinationCode) {
         Airport target = airports.get(destinationCode);
         Airport candidate = airports.get(airportCode);
         if (target == null || candidate == null) {
+            return false;
+        }
+        return !Objects.equals(target.getContinent(), candidate.getContinent());
+    }
+
+    private double continentPenaltyConditional(String airportCode,
+                                               String destinationCode,
+                                               boolean hasContinentalOnTime) {
+        if (!hasContinentalOnTime) {
             return 0;
         }
-        if (Objects.equals(target.getContinent(), candidate.getContinent())) {
-            return 0;
-        }
-        // penalización suave para preferir mismo continente
-        return 5_000;
+        return isIntercontinental(airportCode, destinationCode) ? 5_000 : 0;
     }
 
     private boolean reserveSegment(Route route, Flight flight, LocalDate date, int quantity, boolean finalLeg, Instant dueInstant) {
@@ -285,14 +868,6 @@ class RouteBuilder {
         LocalDateTime arrivalLocal = toLocal(flight.getArrivalInstant(date), destinationAirport.getZoneOffset());
         LocalDateTime departureLocal = arrivalLocal.plus(finalLeg ? Config.WAREHOUSE_DWELL : Config.TRANSFER_BUFFER);
 
-        if (finalLeg) {
-            Instant releaseInstant = flight.getArrivalInstant(date).plus(Config.WAREHOUSE_DWELL);
-            if (dueInstant != null && releaseInstant.isAfter(dueInstant)) {
-                flightSchedule.release(flight, date, quantity);
-                return false;
-            }
-        }
-
         if (!airportSchedule.tryReserveTransit(destinationAirport.code, arrivalLocal, departureLocal, quantity)) {
             flightSchedule.release(flight, date, quantity);
             return false;
@@ -303,7 +878,7 @@ class RouteBuilder {
             Instant arrivalInstant = flight.getArrivalInstant(date);
             // Consideramos el dwell de almacén para la entrega final (cada tramo libera tras WAREHOUSE_DWELL)
             Instant releaseInstant = arrivalInstant.plus(Config.WAREHOUSE_DWELL);
-            Duration slack = Duration.between(releaseInstant, dueInstant);
+            Duration slack = dueInstant != null ? Duration.between(releaseInstant, dueInstant) : null;
             segment.setSlack(slack);
             route.setSlack(slack);
         }
@@ -323,6 +898,63 @@ class RouteBuilder {
             LocalDateTime departureLocal = arrivalLocal.plus(segment.isFinalLeg() ? Config.WAREHOUSE_DWELL : Config.TRANSFER_BUFFER);
             airportSchedule.releaseTransit(destinationAirport.code, arrivalLocal, departureLocal, qty);
         }
+    }
+
+    void releaseRoute(Route route) {
+        if (route == null) {
+            return;
+        }
+        releaseAllocated(route);
+    }
+
+    private void releaseLast(Route route) {
+        List<RouteSegment> segments = route.getSegments();
+        if (segments.isEmpty()) {
+            return;
+        }
+        RouteSegment last = segments.remove(segments.size() - 1);
+        Flight flight = last.getFlight();
+        LocalDate date = last.getDate();
+        int qty = last.getRouteQuantity();
+        try {
+            flightSchedule.release(flight, date, qty);
+        } catch (Exception ignored) {}
+        Airport destinationAirport = airports.get(flight.getDestinationCode());
+        if (destinationAirport != null) {
+            LocalDateTime arrivalLocal = toLocal(flight.getArrivalInstant(date), destinationAirport.getZoneOffset());
+            LocalDateTime departureLocal = arrivalLocal.plus(last.isFinalLeg() ? Config.WAREHOUSE_DWELL : Config.TRANSFER_BUFFER);
+            try {
+                airportSchedule.releaseTransit(destinationAirport.code, arrivalLocal, departureLocal, qty);
+            } catch (Exception ignored) {}
+        }
+    }
+
+    private void trimRouteToQty(Route route, int newQty) {
+        if (newQty <= 0) return;
+        List<RouteSegment> segments = route.getSegments();
+        for (RouteSegment segment : segments) {
+            int currentQty = segment.getRouteQuantity();
+            if (currentQty <= newQty) {
+                segment.setRouteQuantity(newQty);
+                continue;
+            }
+            int diff = currentQty - newQty;
+            Flight flight = segment.getFlight();
+            LocalDate date = segment.getDate();
+            try {
+                flightSchedule.release(flight, date, diff);
+            } catch (Exception ignored) {}
+            Airport destinationAirport = airports.get(flight.getDestinationCode());
+            if (destinationAirport != null) {
+                LocalDateTime arrivalLocal = toLocal(flight.getArrivalInstant(date), destinationAirport.getZoneOffset());
+                LocalDateTime departureLocal = arrivalLocal.plus(segment.isFinalLeg() ? Config.WAREHOUSE_DWELL : Config.TRANSFER_BUFFER);
+                try {
+                    airportSchedule.releaseTransit(destinationAirport.code, arrivalLocal, departureLocal, diff);
+                } catch (Exception ignored) {}
+            }
+            segment.setRouteQuantity(newQty);
+        }
+        route.setQuantity(newQty);
     }
 
     private LocalDateTime toLocal(Instant instant, ZoneOffset offset) {
@@ -397,9 +1029,14 @@ class RouteBuilder {
         return Duration.ofHours(Config.INTERCONTINENTAL_SLA_HOURS);
     }
 
-    enum SelectionMode {
+    public enum SelectionMode {
         RANDOM_APPROACH,
-        HEURISTIC_APPROACH
+        HEURISTIC_APPROACH,
+        EXHAUSTIVE_APPROACH,
+        BEAM_APPROACH,
+        CAPACITY_GREEDY,
+        FLOW_CAPACITY,
+        FLOW_FALLBACK
     }
 
     private static final class FlightDistance {
@@ -426,4 +1063,10 @@ class RouteBuilder {
             return Objects.hash(flight);
         }
     }
+
+    private record BeamNode(String airport, LocalDateTime readyTime, List<SegmentChoice> path, int quantity) {}
+    private record SegmentChoice(Flight flight, LocalDate date, boolean finalLeg, int qty) {}
+    private record FlightCandidate(Flight flight, LocalDate date, boolean finalLeg, LocalDateTime readyTime, double score, int qty) {}
+    private record Slot(Flight flight, LocalDate date, LocalDateTime nextReady, int available, boolean finalLeg) {}
+    private record PathChoice(List<Flight> path, List<Slot> slots, double cost) {}
 }

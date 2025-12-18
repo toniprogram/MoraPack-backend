@@ -18,10 +18,12 @@ public class Config {
     public static final Path DIR_EXPORTS = Paths.get("exports");
 
     // GA
-    public static final int POP_SIZE = 10; // tamaño de población reducido para cada run
+    public static final int POP_SIZE = 10; // tamaño de población para simulación
     public static final int MAX_GEN = 1_000_000;
-    // Número de generaciones para ejecución operativa (planificador diario)
-    public static final int OPERATION_MAX_GEN = 30;
+    // Parámetros específicos para operación diaria
+    public static final int OPERATION_POP_SIZE = 20;
+    public static final int OPERATION_MAX_GEN = 15;
+    public static final double OPERATION_ATTEMPT_FACTOR = 3.0; // más intentos de construcción en operación diaria
     public static final double P_CROSS = 0.5;
     public static final double P_MUT = 0.7; // ligera alza para romper estancamiento
 

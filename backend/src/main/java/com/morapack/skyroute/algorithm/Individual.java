@@ -28,6 +28,11 @@ public class Individual {
     private double fitness;
     private int slaViolations;
 
+    // Ajustes por hilo para permitir más intentos y elegir el modo de selección de rutas (p.ej. operación diaria).
+    private static final ThreadLocal<Double> ATTEMPT_FACTOR = ThreadLocal.withInitial(() -> 1d);
+    private static final ThreadLocal<RouteBuilder.SelectionMode> ROUTE_MODE =
+            ThreadLocal.withInitial(() -> RouteBuilder.SelectionMode.RANDOM_APPROACH);
+
     private Individual(List<OrderPlan> plans, FlightSchedule flightSchedule, AirportSchedule airportSchedule) {
         this.plans = plans;
         this.flightSchedule = flightSchedule;
@@ -37,7 +42,7 @@ public class Individual {
     static Individual randomIndividual(World world, List<Order> orders, Random rnd) {
         FlightSchedule flightSchedule = world.getFlights().getSchedule().copy();
         AirportSchedule airportSchedule = world.getAirportSchedule().copy();
-        RouteBuilder builder = new RouteBuilder(world, flightSchedule, airportSchedule, rnd, RouteBuilder.SelectionMode.RANDOM_APPROACH);
+        RouteBuilder builder = new RouteBuilder(world, flightSchedule, airportSchedule, rnd, ROUTE_MODE.get());
 
         List<OrderPlan> plans = new ArrayList<>();
         for (Order order : orders) {
@@ -53,7 +58,7 @@ public class Individual {
         // Construimos desde un schedule limpio para mezclar 50/50 sin arrastrar reservas incompatibles.
         FlightSchedule flightSchedule = world.getFlights().getSchedule().copy();
         AirportSchedule airportSchedule = world.getAirportSchedule().copy();
-        RouteBuilder builder = new RouteBuilder(world, flightSchedule, airportSchedule, rnd, RouteBuilder.SelectionMode.HEURISTIC_APPROACH);
+        RouteBuilder builder = new RouteBuilder(world, flightSchedule, airportSchedule, rnd, ROUTE_MODE.get());
 
         List<OrderPlan> plans = new ArrayList<>(orders.size());
         // Mezcla simple: primera mitad intenta tomar de A, segunda mitad de B (desordenado para variedad).
@@ -87,7 +92,7 @@ public class Individual {
         // Partimos del schedule del padre para evitar reconstruir todo desde cero
         FlightSchedule flightSchedule = parent.flightSchedule.copy();
         AirportSchedule airportSchedule = parent.airportSchedule.copy();
-        RouteBuilder builder = new RouteBuilder(world, flightSchedule, airportSchedule, rnd, RouteBuilder.SelectionMode.RANDOM_APPROACH);
+        RouteBuilder builder = new RouteBuilder(world, flightSchedule, airportSchedule, rnd, ROUTE_MODE.get());
 
         int mutateCount = Math.max(1, orders.size() / 5);
         Set<String> mutateIds = selectOrderIds(orders, mutateCount, rnd);
@@ -131,7 +136,7 @@ public class Individual {
     public Individual tryInsertOrder(World world, Order newOrder, Random rnd) {
         FlightSchedule scheduleCopy = flightSchedule.copy();
         AirportSchedule airportCopy = airportSchedule.copy();
-        RouteBuilder builder = new RouteBuilder(world, scheduleCopy, airportCopy, rnd, RouteBuilder.SelectionMode.RANDOM_APPROACH);
+        RouteBuilder builder = new RouteBuilder(world, scheduleCopy, airportCopy, rnd, ROUTE_MODE.get());
 
         try {
             OrderPlan newPlan = buildPlanForOrder(newOrder, builder, world, rnd);
@@ -150,7 +155,7 @@ public class Individual {
         }
         FlightSchedule scheduleCopy = flightSchedule.copy();
         AirportSchedule airportCopy = airportSchedule.copy();
-        RouteBuilder builder = new RouteBuilder(world, scheduleCopy, airportCopy, rnd, RouteBuilder.SelectionMode.RANDOM_APPROACH);
+        RouteBuilder builder = new RouteBuilder(world, scheduleCopy, airportCopy, rnd, ROUTE_MODE.get());
         List<OrderPlan> planCopies = deepCopyPlans(this.plans);
         try {
             for (Order order : newOrders) {
@@ -176,7 +181,7 @@ public class Individual {
         LoggerFactory.getLogger(Individual.class).debug("[GA] rebuildWithOrders start orders={}", orders.size());
         FlightSchedule scheduleCopy = world.getFlights().getSchedule().copy();
         AirportSchedule airportCopy = world.getAirportSchedule().copy();
-        RouteBuilder builder = new RouteBuilder(world, scheduleCopy, airportCopy, rnd, RouteBuilder.SelectionMode.RANDOM_APPROACH);
+        RouteBuilder builder = new RouteBuilder(world, scheduleCopy, airportCopy, rnd, ROUTE_MODE.get());
 
         List<OrderPlan> rebuiltPlans = new ArrayList<>();
         Set<String> seenOrders = new HashSet<>();
@@ -247,7 +252,12 @@ public class Individual {
 
     private static Duration determinePlanSlack(World world, Order order, OrderPlan plan) {
         if (plan.getRoutes().isEmpty()) {
-            return Duration.ZERO;
+            // Sin rutas: devolvemos el atraso real respecto al due (no enmascarar con -10000).
+            if (order.getDueUtc() != null && order.getCreationUtc() != null) {
+                return Duration.between(order.getDueUtc(), order.getCreationUtc());
+            }
+            // fallback: penalización fija si no hay due definido
+            return Duration.ofHours(-Config.INTERCONTINENTAL_SLA_HOURS);
         }
 
         Duration maxSla = Duration.ZERO;
@@ -367,14 +377,25 @@ public class Individual {
 
         double onTimeRatio = orderCount == 0 ? 0d : (orderCount - violations) / (double) orderCount;
 
+        double worstSlackMin = plans.stream()
+                .map(OrderPlan::getSlack)
+                .mapToDouble(d -> d == null ? 0d : d.toMinutes())
+                .min()
+                .orElse(0d);
+
+        double T = 90.0;
+        double slaDanger = 1.0 / (1.0 + Math.exp(worstSlackMin / T));
+        double secondaryFactor = 1.0 - slaDanger;
+        double intercontFactor = secondaryFactor * secondaryFactor;
+
         double score = 0d;
         score -= Config.W_SLA * latenessNorm;
-        score -= Config.W_TIME * completionNorm;
-        score -= Config.W_DISTANCE * distanceNorm;
-        score -= Config.W_BACKLOG * backlogNorm;
-        score -= Config.W_INTL * intlNorm;
-        score -= Config.W_INTERCONT * intercontNorm;
-        score -= Config.W_INTERCONT_FIRST_LEG * firstLegNorm;
+        score -= Config.W_TIME * completionNorm * secondaryFactor;
+        score -= Config.W_DISTANCE * distanceNorm * secondaryFactor;
+        score -= Config.W_BACKLOG * backlogNorm * secondaryFactor;
+        score -= Config.W_INTL * intlNorm * secondaryFactor;
+        score -= Config.W_INTERCONT * intercontNorm * intercontFactor;
+        score -= Config.W_INTERCONT_FIRST_LEG * firstLegNorm * intercontFactor;
         score += Config.W_ON_TIME * onTimeRatio;
 
         this.fitness = score;
@@ -592,32 +613,57 @@ public class Individual {
         int remaining = order.getQuantity();
         List<String> hubs = hubsByProximity(world, builder.productionHubs(), order.getDestinationCode());
         int attempts = 0;
-        int maxAttempts = Math.max(10, hubs.size() * 3); // limitar greedys y evitar loops
+        int baseAttempts = Math.max(10, hubs.size() * 3);
+        int maxAttempts = (int) Math.ceil(baseAttempts * ATTEMPT_FACTOR.get());
         while (remaining > 0 && attempts < maxAttempts) {
             boolean built = false;
             for (String origin : hubs) {
                 Route route = builder.buildRoute(order, origin, remaining);
-                if (route != null && route.getQuantity() > 0) {
+                if (route != null && route.getQuantity() > 0 && isUniqueRoute(route, plan)) {
                     plan.addRoute(route);
                     remaining -= route.getQuantity();
                     built = true;
                     break;
+                } else if (route != null) {
+                    builder.releaseRoute(route); // solo rutas reservadas
                 }
             }
-            if (!built) {
-                // Infeasible: penalizar y salir
-                plan.setSlack(Duration.ofMinutes(-10_000));
-                plan.getRoutes().clear();
-                remaining = 0;
-            }
+            // Si no se pudo reservar en schedule, salimos y el slack penalizará
             attempts++;
         }
         if (remaining > 0) {
-            plan.setSlack(Duration.ofMinutes(-10_000));
-            plan.getRoutes().clear();
+            // Si no se pudo cubrir todo, mantenemos las rutas parciales; slack reflejará atraso
+            remaining = 0;
         }
         plan.setSlack(determinePlanSlack(world, order, plan));
         return plan;
+    }
+
+    private static boolean isUniqueRoute(Route route, OrderPlan plan) {
+        if (route == null) return false;
+        Set<String> used = new HashSet<>();
+        if (plan != null && plan.getRoutes() != null) {
+            for (Route r : plan.getRoutes()) {
+                if (r.getSegments() == null) continue;
+                for (RouteSegment seg : r.getSegments()) {
+                    used.add(key(seg.getFlight(), seg.getDate()));
+                }
+            }
+        }
+        if (route.getSegments() != null) {
+            Set<String> seen = new HashSet<>();
+            for (RouteSegment seg : route.getSegments()) {
+                String k = key(seg.getFlight(), seg.getDate());
+                if (!seen.add(k) || used.contains(k)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private static String key(Flight flight, LocalDate date) {
+        return (flight == null ? "?" : flight.getId()) + "|" + (date == null ? "?" : date.toString());
     }
 
     private static OrderPlan buildPlanWithPreferences(Order order,
@@ -642,28 +688,26 @@ public class Individual {
         OrderPlan plan = new OrderPlan(order.getId());
         int remaining = order.getQuantity();
         int attempts = 0;
-        int maxAttempts = Math.max(10, preferredHubs.size() * 3);
+        int baseAttempts = Math.max(10, preferredHubs.size() * 3);
+        int maxAttempts = (int) Math.ceil(baseAttempts * ATTEMPT_FACTOR.get());
         while (remaining > 0 && attempts < maxAttempts) {
             boolean built = false;
             for (String origin : preferredHubs) {
                 Route route = builder.buildRoute(order, origin, remaining);
-                if (route != null && route.getQuantity() > 0) {
+                if (route != null && route.getQuantity() > 0 && isUniqueRoute(route, plan)) {
                     plan.addRoute(route);
                     remaining -= route.getQuantity();
                     built = true;
                     break;
+                } else if (route != null) {
+                    builder.releaseRoute(route);
                 }
             }
-            if (!built) {
-                plan.setSlack(Duration.ofMinutes(-10_000));
-                plan.getRoutes().clear();
-                remaining = 0;
-            }
+            // Si no se pudo reservar en schedule, dejamos remanente para que slack penalice
             attempts++;
         }
         if (remaining > 0) {
-            plan.setSlack(Duration.ofMinutes(-10_000));
-            plan.getRoutes().clear();
+            remaining = 0;
         }
         plan.setSlack(determinePlanSlack(world, order, plan));
         return plan;
@@ -901,4 +945,24 @@ public class Individual {
 
     private record Event(Instant instant, int delta) {}
     private record SlackStats(long slackMinutes, int internationalLegs, int intercontinentalLegs) {}
+
+    /** Ajusta el factor de intentos para construcción de planes (op diaria). */
+    public static void setAttemptFactor(double factor) {
+        ATTEMPT_FACTOR.set(factor <= 0 ? 1d : factor);
+    }
+
+    /** Restaura el factor de intentos al valor por defecto (1). */
+    public static void resetAttemptFactor() {
+        ATTEMPT_FACTOR.remove();
+    }
+
+    /** Ajusta el modo de selección de rutas para los builders. */
+    public static void setRouteSelectionMode(RouteBuilder.SelectionMode mode) {
+        ROUTE_MODE.set(mode == null ? RouteBuilder.SelectionMode.RANDOM_APPROACH : mode);
+    }
+
+    /** Restaura el modo de selección al valor por defecto (RANDOM). */
+    public static void resetRouteSelectionMode() {
+        ROUTE_MODE.remove();
+    }
 }
