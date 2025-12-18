@@ -54,7 +54,8 @@ export default function PedidosPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [ordenesArchivo, setOrdenesArchivo] = useState<OrderRequestExtended[]>([]);
   const [estaSincronizandoArchivo, setEstaSincronizandoArchivo] = useState(false);
-
+  const [userEditedDate, setUserEditedDate] = useState(false);
+  const getUtcNow = () => new Date().toISOString().slice(0, 16);
   const { data: aeropuertos = [] } = useQuery({
     queryKey: ["aeropuertos"],
     queryFn: aeropuertoService.getAll,
@@ -124,6 +125,7 @@ export default function PedidosPage() {
       {
         onSuccess: () => {
           setForm(buildDefaultForm(scope === "PROJECTED"));
+          setUserEditedDate(false);
           setShowForm(false);
         },
       }
@@ -216,6 +218,15 @@ export default function PedidosPage() {
       }
     }
   };
+
+  useEffect(() => {
+      if (!showForm || userEditedDate) return;
+      setForm((prev) => ({ ...prev, creationLocal: getUtcNow() }));
+      const interval = setInterval(() => {
+        setForm((prev) => ({ ...prev, creationLocal: getUtcNow() }));
+      }, 1000);
+      return () => clearInterval(interval);
+  }, [showForm, userEditedDate]);
 
   const handleGuardarArchivo = async () => {
     if (ordenesArchivo.length === 0) {
@@ -420,6 +431,7 @@ export default function PedidosPage() {
                 placeholder="Cantidad"
                 className="input input-bordered input-sm w-full"
                 value={form.quantity}
+                onFocus={(e) => e.target.select()}
                 onChange={(e) =>
                   setForm({ ...form, quantity: Number(e.target.value) })
                 }
@@ -432,12 +444,12 @@ export default function PedidosPage() {
               </label>
               <input
                 type="datetime-local"
-                min={new Date().toISOString().slice(0, 16)}
                 className="input input-bordered input-sm w-full"
                 value={form.creationLocal}
-                onChange={(e) =>
-                  setForm({ ...form, creationLocal: e.target.value })
-                }
+                onChange={(e) => {
+                  setUserEditedDate(true);
+                  setForm({ ...form, creationLocal: e.target.value });
+                }}
                 required
               />
             </div>
@@ -457,7 +469,10 @@ export default function PedidosPage() {
             <button
               type="button"
               className="btn btn-ghost btn-sm"
-              onClick={() => setShowForm(false)}
+              onClick={() => {
+                  setShowForm(false);
+                  setUserEditedDate(false);
+              }}
             >
               Cancelar
             </button>
