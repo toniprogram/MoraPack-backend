@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -28,6 +29,7 @@ public class RouteBuilder {
     private static final int MAX_DAY_LOOKAHEAD = 3;
     private static final double AVG_CRUISE_SPEED_KMH = 800.0;
     private static final int CAPACITY_GREEDY_LOOKAHEAD_DAYS = 7; // tope superior, se ajusta por SLA
+    private static final double TIME_BIAS_K = 3.0; // controla qué tan rápido crece el sesgo por usar días futuros
 
     private final Flights flights;
     private final Airports airports;
@@ -807,8 +809,12 @@ public class RouteBuilder {
         boolean hasContinentalOnTime = hasContinentalOnTime(peerOptions, destination, readyTime, dueInstant);
         double continentPenalty = continentPenaltyConditional(flight.getDestinationCode(), destination, hasContinentalOnTime);
 
+        LocalDate depDate = estimateDepartureDate(flight, readyTime);
+        long daysAfterStart = Math.max(0L, ChronoUnit.DAYS.between(readyTime.toLocalDate(), depDate));
+        double timeBias = Math.exp(daysAfterStart / TIME_BIAS_K);
+
         // score: favorecer los que lleguen antes (slack alto => score bajo), luego distancia y penalizaciones.
-        return -slackMinutes + geoDistance + continentPenalty + directBonus;
+        return -slackMinutes + geoDistance + continentPenalty + directBonus + timeBias;
     }
 
     private Instant estimateArrivalInstant(Flight flight, LocalDateTime readyTime) {
@@ -820,6 +826,17 @@ public class RouteBuilder {
             date = date.plusDays(1);
         }
         return flight.getArrivalInstant(date);
+    }
+
+    private LocalDate estimateDepartureDate(Flight flight, LocalDateTime readyTime) {
+        Airport originAirport = airports.get(flight.getOriginCode());
+        ZoneOffset originOffset = originAirport != null ? originAirport.getZoneOffset() : ZoneOffset.UTC;
+        LocalDate date = readyTime.toLocalDate();
+        LocalDateTime depLocal = toLocal(flight.getDepartureInstant(date), originOffset);
+        if (depLocal.isBefore(readyTime)) {
+            date = date.plusDays(1);
+        }
+        return date;
     }
 
     private boolean hasContinentalOnTime(List<Flight> options,

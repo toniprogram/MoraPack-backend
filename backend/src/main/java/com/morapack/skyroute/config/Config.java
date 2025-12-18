@@ -22,10 +22,10 @@ public class Config {
     public static final int MAX_GEN = 1_000_000;
     // Parámetros específicos para operación diaria
     public static final int OPERATION_POP_SIZE = 20;
-    public static final int OPERATION_MAX_GEN = 15;
+    public static final int OPERATION_MAX_GEN = 45;
     public static final double OPERATION_ATTEMPT_FACTOR = 3.0; // más intentos de construcción en operación diaria
     public static final double P_CROSS = 0.5;
-    public static final double P_MUT = 0.7; // ligera alza para romper estancamiento
+    public static final double P_MUT = 0.5; // ligera alza para romper estancamiento
 
     // Pesos de fitness
     public static final double W_SLA = 1.5;           // prioridad 1: evitar atraso
@@ -38,4 +38,8 @@ public class Config {
     public static final double W_ON_TIME = 0.5;       // bonus por pedidos dentro de SLA
     public static final double SLA_K = 50d;
     public static final int BACKLOG_OK = 200; // umbral a partir del cual no penalizamos intercontinental cuando ayuda
+
+    // Overflow (uso de días posteriores al due)
+    public static final double W_OVERFLOW = W_SLA * 2.0;
+    public static final double MAX_OVERFLOW_MINUTES = 720.0; // 12h de tolerancia para normalizar
 }

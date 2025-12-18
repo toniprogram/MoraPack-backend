@@ -27,6 +27,7 @@ public class Individual {
     private final AirportSchedule airportSchedule;
     private double fitness;
     private int slaViolations;
+    private static final double P_RESCUE = 0.4;
 
     // Ajustes por hilo para permitir más intentos y elegir el modo de selección de rutas (p.ej. operación diaria).
     private static final ThreadLocal<Double> ATTEMPT_FACTOR = ThreadLocal.withInitial(() -> 1d);
@@ -72,16 +73,39 @@ public class Individual {
             OrderPlan preferred = preferA ? findPlan(parentA, order.getId()) : findPlan(parentB, order.getId());
             OrderPlan fallback = preferA ? findPlan(parentB, order.getId()) : findPlan(parentA, order.getId());
 
-            // Intentar adoptar el plan preferido; si falla probamos el alternativo y luego reconstruimos.
-            OrderPlan adopted = tryAdoptPlan(world, order, preferred, flightSchedule, airportSchedule);
-            if (adopted == null) {
-                adopted = tryAdoptPlan(world, order, fallback, flightSchedule, airportSchedule);
-            }
-            if (adopted != null) {
-                plans.add(adopted);
+            boolean preferredOnTime = isOnTime(preferred);
+            boolean fallbackOnTime = isOnTime(fallback);
+
+            OrderPlan adopted = null;
+            if (preferredOnTime) {
+                adopted = tryAdoptPlan(world, order, preferred, flightSchedule, airportSchedule);
+                if (adopted == null && fallbackOnTime) {
+                    adopted = tryAdoptPlan(world, order, fallback, flightSchedule, airportSchedule);
+                }
+                if (adopted == null && !fallbackOnTime) {
+                    // no on-time plan adoptable; reconstruir
+                    OrderPlan rebuilt = buildPlanWithPreferences(order, preferred, builder, world, rnd);
+                    plans.add(rebuilt);
+                    continue;
+                }
             } else {
+                // prefería un plan tardío: prueba primero uno on-time si existe
+                if (fallbackOnTime) {
+                    adopted = tryAdoptPlan(world, order, fallback, flightSchedule, airportSchedule);
+                }
+                if (adopted == null) {
+                    OrderPlan rebuilt = buildPlanWithPreferences(order, fallbackOnTime ? fallback : preferred, builder, world, rnd);
+                    plans.add(rebuilt);
+                    continue;
+                }
+            }
+
+            if (adopted == null) {
+                // si ambos tardíos o incompatibles, reconstruir
                 OrderPlan rebuilt = buildPlanWithPreferences(order, preferred != null ? preferred : fallback, builder, world, rnd);
                 plans.add(rebuilt);
+            } else {
+                plans.add(adopted);
             }
         }
 
@@ -89,6 +113,42 @@ public class Individual {
     }
 
     static Individual mutate(World world, List<Order> orders, Individual parent, Random rnd) {
+        String worstOrderId = null;
+        long worstSlack = Long.MAX_VALUE;
+        for (OrderPlan plan : parent.plans) {
+            if (plan.getSlack() == null) continue;
+            long s = plan.getSlack().toMinutes();
+            if (s < worstSlack) {
+                worstSlack = s;
+                worstOrderId = plan.getOrderId();
+            }
+        }
+
+        if (worstOrderId != null && worstSlack < 0 && rnd.nextDouble() < P_RESCUE) {
+            FlightSchedule flightSchedule = parent.flightSchedule.copy();
+            AirportSchedule airportSchedule = parent.airportSchedule.copy();
+            RouteBuilder builder = new RouteBuilder(world, flightSchedule, airportSchedule, rnd, ROUTE_MODE.get());
+
+            List<OrderPlan> plans = new ArrayList<>();
+            for (Order order : orders) {
+                if (order.getId().equals(worstOrderId)) {
+                    OrderPlan original = findPlan(parent, order.getId());
+                    if (original != null) {
+                        releasePlan(world, original, flightSchedule, airportSchedule);
+                    }
+                    OrderPlan rebuilt = buildPlanWithPreferences(order, original, builder, world, rnd);
+                    plans.add(rebuilt);
+                } else {
+                    OrderPlan copy = copyPlan(findPlan(parent, order.getId()));
+                    if (copy == null) {
+                        copy = buildPlanWithPreferences(order, null, builder, world, rnd);
+                    }
+                    plans.add(copy);
+                }
+            }
+            return new Individual(plans, flightSchedule, airportSchedule);
+        }
+
         // Partimos del schedule del padre para evitar reconstruir todo desde cero
         FlightSchedule flightSchedule = parent.flightSchedule.copy();
         AirportSchedule airportSchedule = parent.airportSchedule.copy();
@@ -308,6 +368,7 @@ public class Individual {
         int intercontinentalLegCount = 0;
         int intercontinentalFirstLegCount = 0;
         double totalFlightMinutes = 0d;
+        double totalOverflowMinutes = 0d;
         List<Event> events = new ArrayList<>();
 
         for (OrderPlan plan : plans) {
@@ -351,6 +412,9 @@ public class Individual {
             if (completion != null) {
                 long completionMinutes = Duration.between(order.getCreationUtc(), completion).toMinutes();
                 totalCompletionMinutes += completionMinutes;
+                Instant due = order.getDueUtc();
+                long overflow = Math.max(0L, Duration.between(due, completion).toMinutes());
+                totalOverflowMinutes += overflow;
                 completionCount++;
                 events.add(new Event(order.getCreationUtc(), 1));
                 events.add(new Event(completion, -1));
@@ -367,6 +431,9 @@ public class Individual {
 
         double avgFlightMinutes = totalFlightMinutes / orderCount;
         double distanceNorm = clamp(avgFlightMinutes / 180d); // referencia: 3h de vuelo medio
+
+        double avgOverflow = totalOverflowMinutes / orderCount;
+        double overflowNorm = clamp(avgOverflow / Config.MAX_OVERFLOW_MINUTES);
 
         int maxConcurrent = computeMaxConcurrent(events);
         double backlogNorm = clamp(maxConcurrent / (double) Config.BACKLOG_OK);
@@ -392,6 +459,7 @@ public class Individual {
         score -= Config.W_SLA * latenessNorm;
         score -= Config.W_TIME * completionNorm * secondaryFactor;
         score -= Config.W_DISTANCE * distanceNorm * secondaryFactor;
+        score -= Config.W_OVERFLOW * overflowNorm;
         score -= Config.W_BACKLOG * backlogNorm * secondaryFactor;
         score -= Config.W_INTL * intlNorm * secondaryFactor;
         score -= Config.W_INTERCONT * intercontNorm * intercontFactor;
@@ -945,6 +1013,13 @@ public class Individual {
 
     private record Event(Instant instant, int delta) {}
     private record SlackStats(long slackMinutes, int internationalLegs, int intercontinentalLegs) {}
+
+    private static boolean isOnTime(OrderPlan plan) {
+        if (plan == null || plan.getSlack() == null) {
+            return false;
+        }
+        return plan.getSlack().toMinutes() >= 0;
+    }
 
     /** Ajusta el factor de intentos para construcción de planes (op diaria). */
     public static void setAttemptFactor(double factor) {
