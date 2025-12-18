@@ -87,6 +87,7 @@ public class SimulationService {
     private static final String TOPIC_PREFIX = "/topic/simulations/";
     private static final double DEFAULT_SIM_SPEED = 112.0;
     private static final Set<String> PRODUCTION_HUBS = Set.of("SPIM", "EBCI", "UBBB");
+    private static final long REBUILD_BUDGET_MS = 5_000L;
     private final Random random = new Random();
     private final WorldBuilder worldBuilder;
     private final OrderRepository orderRepository;
@@ -1183,16 +1184,43 @@ public class SimulationService {
             return null;
         }
         try {
-            Individual rebuilt = individual.rebuildWithOrders(world, normalizedDemand, random);
-            if (rebuilt == null) {
+            Set<String> activeIds = normalizedDemand.stream()
+                    .filter(Objects::nonNull)
+                    .map(Order::getId)
+                    .collect(Collectors.toSet());
+
+            // Primero podar reservas de órdenes que ya no están activas.
+            Individual pruned = individual.pruneToOrders(world, activeIds, normalizedDemand);
+            if (pruned == null) {
                 return null;
             }
-            if (rebuilt.getPlans().size() != normalizedDemand.size()) {
-                log.warn("[SIM:{}] Rebuilt individual still incomplete (plans={} demand={})",
-                        session.id, rebuilt.getPlans().size(), normalizedDemand.size());
+            if (pruned.getPlans().size() == normalizedDemand.size()) {
+                return pruned;
+            }
+
+            Map<String, Order> byId = normalizedDemand.stream()
+                    .collect(Collectors.toMap(Order::getId, Function.identity(), (a, b) -> a));
+            List<Order> missing = activeIds.stream()
+                    .filter(id -> pruned.getPlans().stream().noneMatch(p -> p.getOrderId().equals(id)))
+                    .map(byId::get)
+                    .filter(Objects::nonNull)
+                    .toList();
+
+            if (missing.isEmpty()) {
+                return pruned;
+            }
+
+            Individual patched = pruned.tryInsertOrders(world, missing, random);
+            if (patched == null) {
+                log.warn("[SIM:{}] Could not insert {} missing orders during rebuild", session.id, missing.size());
                 return null;
             }
-            return rebuilt;
+            if (patched.getPlans().size() != normalizedDemand.size()) {
+                log.warn("[SIM:{}] Patched individual still incomplete (plans={} demand={})",
+                        session.id, patched.getPlans().size(), normalizedDemand.size());
+                return null;
+            }
+            return patched;
         } catch (Exception ex) {
             log.warn("[SIM:{}] Could not rebuild individual before GA: {}", session.id, ex.getMessage());
             return null;
