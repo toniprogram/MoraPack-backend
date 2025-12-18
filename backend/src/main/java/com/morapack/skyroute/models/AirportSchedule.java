@@ -131,7 +131,11 @@ public class AirportSchedule {
     }
 
     public AirportSchedule copy() {
-        return new AirportSchedule(capacityByAirport, transitDeltas, finalDeltas, true);
+        return new AirportSchedule(
+                capacityByAirport,
+                new TreeMap<>(transitDeltas),
+                new TreeMap<>(finalDeltas),
+                false);
     }
 
     public synchronized void applyFrom(AirportSchedule other) {

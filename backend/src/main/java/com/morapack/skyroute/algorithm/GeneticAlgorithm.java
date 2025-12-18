@@ -73,12 +73,15 @@ public class GeneticAlgorithm {
     }
 
     public Individual tournamentSelect() {
-        if (population.isEmpty()) {
-            throw new IllegalStateException("Population is empty");
+        List<Individual> valids = population.stream()
+                .filter(Individual::isValid)
+                .toList();
+        if (valids.isEmpty()) {
+            throw new IllegalStateException("No valid individuals available for selection");
         }
         Individual best = null;
         for (int i = 0; i < TOURNAMENT_K; i++) {
-            Individual candidate = population.get(rnd.nextInt(population.size()));
+            Individual candidate = valids.get(rnd.nextInt(valids.size()));
             if (best == null || candidate.getFitness() > best.getFitness()) {
                 best = candidate;
             }
@@ -123,26 +126,44 @@ public class GeneticAlgorithm {
             fillPopulation(populationSize, seed);
         }
         evaluatePopulation(0);
-        System.out.println("[GA] Population reuse: " + reusedCount + "/" + population.size() + " carried over");
+        long valids = population.stream().filter(Individual::isValid).count();
+        log.info("[GA] Population reuse: {}/{} carried over (valids={})", reusedCount, population.size(), valids);
 
         Individual best = bestIndividual(population);
+        if (best == null) {
+            log.warn("[GA] No valid individuals after initialization; populationSize={} demand={}", population.size(), demand.size());
+            throw new IllegalStateException("Escenario no factible: no hay individuos completos válidos");
+        }
         long deadlineNanos = durationMillis > 0 ? System.nanoTime() + durationMillis * 1_000_000L : Long.MAX_VALUE;
         log.info("[GA] runTimed start: budgetMs={} popSize={} demand={}", durationMillis, populationSize, demand.size());
         for (int gen = 0; gen < generations; gen++) {
             evaluatePopulation(gen);
             best = bestIndividual(population);
+            if (best == null) {
+                long validCount = population.stream().filter(Individual::isValid).count();
+                log.warn("[GA] Generation {} has zero valid individuals (validCount={})", gen + 1, validCount);
+                throw new IllegalStateException("Escenario no factible: todos los individuos fallaron en generación " + (gen + 1));
+            }
             if (System.nanoTime() >= deadlineNanos) {
                 log.info("[GA] Deadline reached before starting generation {}", gen + 1);
+                if (best == null || !best.isValid()) {
+                    throw new IllegalStateException("Escenario no factible: no hay individuos válidos al alcanzar el deadline");
+                }
                 applyToWorld(best);
                 return best;
             }
             List<Individual> nextGen = new ArrayList<>();
             // Elitismo: conservar el mejor de la generación previa
-            nextGen.add(best.copy());
+            if (best.isValid()) {
+                nextGen.add(best.copy());
+            }
 
             while (nextGen.size() < populationSize) {
                 if (System.nanoTime() >= deadlineNanos) {
                     log.info("[GA] Deadline reached mid-generation {} after {} individuals", gen + 1, nextGen.size());
+                    if (best == null || !best.isValid()) {
+                        throw new IllegalStateException("Escenario no factible: sin individuos válidos al alcanzar el deadline");
+                    }
                     applyToWorld(best);
                     return best;
                 }
@@ -165,14 +186,24 @@ public class GeneticAlgorithm {
             population.clear();
             population.addAll(nextGen);
             best = bestIndividual(population);
-            log.info("[GA] Generación {} mejor fitness={} población={}", gen + 1, best.getFitness(), population.size());
+            if (best == null) {
+                throw new IllegalStateException("Escenario no factible: todos los individuos fallaron en generación " + (gen + 1));
+            }
+            long validCount = population.stream().filter(Individual::isValid).count();
+            log.info("[GA] Generación {} mejor fitness={} población={} valids={}", gen + 1, best.getFitness(), population.size(), validCount);
 
             // Early stop desactivado temporalmente
             if (System.nanoTime() >= deadlineNanos) {
                 log.info("[GA] detenido por presupuesto de tiempo en generación {} (deadline alcanzado)", gen + 1);
+                if (best == null || !best.isValid()) {
+                    throw new IllegalStateException("Escenario no factible: sin individuos válidos al alcanzar el deadline");
+                }
                 applyToWorld(best);
                 return best;
             }
+        }
+        if (best == null || !best.isValid()) {
+            throw new IllegalStateException("Escenario no factible: el GA no generó individuos válidos");
         }
         applyToWorld(best);
         return best;
@@ -185,7 +216,7 @@ public class GeneticAlgorithm {
         }
         for (Individual individual : carryOver) {
             Individual candidate = applyNewOrders(individual, newOrders);
-            if (candidate != null) {
+            if (candidate != null && candidate.isValid()) {
                 population.add(candidate);
             }
             if (population.size() >= desiredSize) {
@@ -207,7 +238,7 @@ public class GeneticAlgorithm {
         if (base == null && !population.isEmpty()) {
             base = bestIndividual(population);
         }
-        if (base != null) {
+        if (base != null && base.isValid()) {
             try {
                 population.add(base.copy());
             } catch (Exception ignored) {}
@@ -236,7 +267,10 @@ public class GeneticAlgorithm {
     }
 
     private Individual bestIndividual(List<Individual> individuals) {
-        return individuals.stream().max(Comparator.comparingDouble(Individual::getFitness)).orElseThrow();
+        return individuals.stream()
+                .filter(Individual::isValid)
+                .max(Comparator.comparingDouble(Individual::getFitness))
+                .orElse(null);
     }
 
     private void evaluatePopulation(int generation) {
@@ -250,6 +284,9 @@ public class GeneticAlgorithm {
     }
 
     private void applyToWorld(Individual best) {
+        if (best == null || !best.isValid()) {
+            throw new IllegalStateException("Escenario no factible: no hay solución válida para aplicar al mundo");
+        }
         world.getFlights().getSchedule().applyFrom(best.getFlightSchedule());
         world.getAirportSchedule().applyFrom(best.getAirportSchedule());
     }

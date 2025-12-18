@@ -31,6 +31,18 @@ public class CurrentPlan {
     @Transient
     private int slaViolations;
 
+    @Transient
+    private boolean contingencyPlan;
+
+    @Transient
+    private List<String> lateOrders;
+
+    @Transient
+    private Long maxLateMinutes;
+
+    @Transient
+    private String contingencyReason;
+
     public CurrentPlan(LocalDateTime generatedAt, double fitness, List<OrderPlan> orderPlans) {
         this.generatedAt = generatedAt;
         this.fitness = fitness;

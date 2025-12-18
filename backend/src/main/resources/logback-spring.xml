@@ -17,6 +17,21 @@
         <appender-ref ref="SIMULATION_FILE"/>
     </logger>
 
+    <appender name="FLOW_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_DIR}/flow.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_DIR}/flow.%d{yyyy-MM-dd}.log</fileNamePattern>
+            <maxHistory>7</maxHistory>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} %-5level %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <logger name="com.morapack.skyroute.algorithm.RouteBuilder" level="DEBUG" additivity="false">
+        <appender-ref ref="FLOW_FILE"/>
+    </logger>
+
     <!-- Fall back to Spring Boot default console logging for other packages -->
     <root level="INFO">
         <appender-ref ref="SIMULATION_FILE"/>

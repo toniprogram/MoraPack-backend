@@ -13,12 +13,8 @@ public class WebConfig {
             @Override
             public void addCorsMappings(CorsRegistry registry) {
                 registry.addMapping("/api/**")
-                        .allowedOrigins(
-                                "http://localhost:5173",
-                                "http://127.0.0.1:5173",
-                                "http://localhost:4173",
-                                "http://127.0.0.1:4173"
-                        )
+                        // Allow any local origin while developing (works for Vite dev, previews, etc.)
+                        .allowedOriginPatterns("http://localhost:*", "http://127.0.0.1:*")
                         .allowedMethods("*")
                         .allowedHeaders("*")
                         .allowCredentials(false)

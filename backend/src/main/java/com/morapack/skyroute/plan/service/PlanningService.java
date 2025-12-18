@@ -26,6 +26,10 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Instant;
 
 @Service
 public class PlanningService {
@@ -55,26 +59,63 @@ public class PlanningService {
         if (snapshot.demand().isEmpty()) {
             throw new IllegalStateException("No orders available to run the genetic algorithm.");
         }
+        persistWorldSnapshot(snapshot);
         // 2. Ejecutar Algoritmo Genético
         GeneticAlgorithm geneticAlgorithm = new GeneticAlgorithm(snapshot.world(), snapshot.demand());
         Individual.setAttemptFactor(Config.OPERATION_ATTEMPT_FACTOR);
         // Para operación diaria con alta congestión usamos el enfoque de flujo y, en último caso, fallback sin reservas.
         Individual.setRouteSelectionMode(RouteBuilder.SelectionMode.FLOW_CAPACITY);
+        Individual.setPlanningMode(com.morapack.skyroute.algorithm.PlanningMode.STRICT_SLA);
         log.info("[OPS] GA diario iniciando: demand={} pop={} mode={} attemptFactor={}",
                 snapshot.demand().size(),
                 Config.OPERATION_POP_SIZE,
                 RouteBuilder.SelectionMode.FLOW_CAPACITY,
                 Config.OPERATION_ATTEMPT_FACTOR);
-        Individual best;
+        Individual best = null;
+        boolean relaxedUsed = false;
         try {
             best = geneticAlgorithm.run(Config.OPERATION_POP_SIZE, Config.OPERATION_MAX_GEN);
+            log.info("[OPS] GA diario completado sin excepciones intermedias");
+        } catch (Exception ex) {
+            log.error("[OPS] GA diario terminó con excepción: {}", ex.getMessage());
+            // Intento de contingencia con relajación mínima
+            try {
+                Individual.setPlanningMode(com.morapack.skyroute.algorithm.PlanningMode.FEASIBILITY_RELAXED);
+                log.warn("[OPS] Reintentando GA en modo FEASIBILITY_RELAXED tras fallo de factibilidad");
+                best = geneticAlgorithm.run(Config.OPERATION_POP_SIZE, Config.OPERATION_MAX_GEN);
+                log.info("[OPS] GA diario completado en modo FEASIBILITY_RELAXED");
+                relaxedUsed = true;
+            } finally {
+                Individual.resetPlanningMode();
+            }
+            if (best == null) {
+                throw ex;
+            }
         } finally {
             Individual.resetAttemptFactor();
             Individual.resetRouteSelectionMode();
+            Individual.resetPlanningMode();
+        }
+        if (best == null || !best.isValid()) {
+            throw new IllegalStateException("Escenario no factible: no se pudo construir un plan completo on-time");
         }
         log.info("[OPS] GA diario finalizado: bestFitness={} generations={}", best != null ? best.getFitness() : null, Config.OPERATION_MAX_GEN);
         logPlanOutcome(best);
         CurrentPlan newResult = mapper.toEntity(best);
+        newResult.setContingencyPlan(relaxedUsed);
+        if (relaxedUsed) {
+            newResult.setContingencyReason("FEASIBILITY_RELAXED");
+            List<String> lateOrders = newResult.getOrderPlans() == null ? List.of() : newResult.getOrderPlans().stream()
+                    .filter(op -> op.getSlack() != null && op.getSlack().isNegative())
+                    .map(OrderPlan::getOrderId)
+                    .toList();
+            newResult.setLateOrders(lateOrders);
+            Long maxLate = newResult.getOrderPlans() == null ? null : newResult.getOrderPlans().stream()
+                    .filter(op -> op.getSlack() != null && op.getSlack().isNegative())
+                    .mapToLong(op -> op.getSlack().abs().toMinutes())
+                    .max().orElse(0L);
+            newResult.setMaxLateMinutes(maxLate);
+        }
         // 3. Obtener el plan actual con BLOQUEO (para seguridad en concurrencia)
         Optional<CurrentPlan> dbPlanOpt = planRepository.findByIdWithLock(1L);
         CurrentPlan planToSave;
@@ -243,6 +284,41 @@ public class PlanningService {
             log.warn("[OPS] Plan diario detectó colapso logístico ({} pedidos con slack negativo). {}", negativeCount, sb);
         } else {
             log.info(sb.toString());
+        }
+    }
+
+    private void persistWorldSnapshot(WorldBuilder.Snapshot snapshot) {
+        java.nio.file.Path path = java.nio.file.Path.of("logs", "world_snapshot.log");
+        try {
+            java.nio.file.Files.createDirectories(path.getParent());
+            var world = snapshot.world();
+            int demandSize = snapshot.demand() == null ? 0 : snapshot.demand().size();
+            int flightCount = world.getFlights().getAll().size();
+            int airportCount = world.getAirports().asMap().size();
+            int flightOverrides = getMapSize(world.getFlights().getSchedule(), "remainingCapacity");
+            int airportTransit = getMapSize(world.getAirportSchedule(), "transitDeltas");
+            int airportFinals = getMapSize(world.getAirportSchedule(), "finalDeltas");
+            String line = String.format(
+                    "%s demand=%d flights=%d airports=%d flightOverrides=%d airportTransit=%d airportFinals=%d%n",
+                    java.time.Instant.now().toString(), demandSize, flightCount, airportCount, flightOverrides, airportTransit, airportFinals);
+            java.nio.file.Files.writeString(path, line, java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+        } catch (Exception ex) {
+            log.warn("[OPS] Unable to persist world snapshot: {}", ex.getMessage());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private int getMapSize(Object target, String fieldName) {
+        try {
+            var field = target.getClass().getDeclaredField(fieldName);
+            field.setAccessible(true);
+            Object value = field.get(target);
+            if (value instanceof java.util.Map<?, ?> map) {
+                return map.size();
+            }
+            return 0;
+        } catch (Exception e) {
+            return 0;
         }
     }
 }

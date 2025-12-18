@@ -88,7 +88,7 @@ public class FlightSchedule {
     }
 
     public FlightSchedule copy() {
-        return new FlightSchedule(this.remainingCapacity, true);
+        return new FlightSchedule(new HashMap<>(this.remainingCapacity), false);
     }
 
     private record Key(String flightId, LocalDate date) {}

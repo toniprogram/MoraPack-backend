@@ -5,7 +5,6 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -18,18 +17,73 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Random;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.morapack.skyroute.config.*;
 import com.morapack.skyroute.io.*;
 import com.morapack.skyroute.models.*;
 
 public class RouteBuilder {
+    private static final Logger log = LoggerFactory.getLogger(RouteBuilder.class);
+    enum BuildStatus {
+        SUCCESS,
+        FAIL_INFEASIBLE,
+        FAIL_INCOMPLETE
+    }
+
+    static final class BuildResult {
+        private final Route route;
+        private final BuildStatus status;
+        private final boolean usedExtendedSla;
+
+        private BuildResult(Route route, BuildStatus status) {
+            this.route = route;
+            this.status = status;
+            this.usedExtendedSla = false;
+        }
+
+        private BuildResult(Route route, BuildStatus status, boolean usedExtendedSla) {
+            this.route = route;
+            this.status = status;
+            this.usedExtendedSla = usedExtendedSla;
+        }
+
+        static BuildResult success(Route route) {
+            return new BuildResult(route, BuildStatus.SUCCESS);
+        }
+
+        static BuildResult fail(BuildStatus status) {
+            return new BuildResult(null, status);
+        }
+
+        static BuildResult successWithExtension(Route route) {
+            return new BuildResult(route, BuildStatus.SUCCESS, true);
+        }
+
+        boolean isSuccess() {
+            return status == BuildStatus.SUCCESS && route != null;
+        }
+
+        Route route() {
+            return route;
+        }
+
+        BuildStatus status() {
+            return status;
+        }
+
+        boolean usedExtendedSla() {
+            return usedExtendedSla;
+        }
+    }
+
     private static final List<String> PRODUCTION_HUBS = List.of("SPIM", "EBCI", "UBBB");
     private static final int MAX_HOPS = 8;
     private static final int MAX_DAY_LOOKAHEAD = 3;
     private static final double AVG_CRUISE_SPEED_KMH = 800.0;
     private static final int CAPACITY_GREEDY_LOOKAHEAD_DAYS = 7; // tope superior, se ajusta por SLA
-    private static final double TIME_BIAS_K = 3.0; // controla qué tan rápido crece el sesgo por usar días futuros
 
     private final Flights flights;
     private final Airports airports;
@@ -38,6 +92,11 @@ public class RouteBuilder {
     private final Map<String, List<String>> reverseGraph;
     private final Random rnd;
     private final SelectionMode mode;
+    private final PlanningMode planningMode;
+    private int extraBeam = 0;
+    private int extraDepth = 0;
+    private final int beamWidthBase = BEAM_WIDTH;
+    private final int beamDepthBase = BEAM_DEPTH;
     private static final int BEAM_WIDTH = 2;
     private static final int BEAM_DEPTH = 4;
     private static final long BEAM_BUDGET_MS = 30_000L;
@@ -46,7 +105,8 @@ public class RouteBuilder {
                  FlightSchedule flightSchedule,
                  AirportSchedule airportSchedule,
                  Random rnd,
-                 SelectionMode mode) {
+                 SelectionMode mode,
+                 PlanningMode planningMode) {
         this.flights = Objects.requireNonNull(world, "world").getFlights();
         this.airports = world.getAirports();
         this.flightSchedule = Objects.requireNonNull(flightSchedule, "flightSchedule");
@@ -54,42 +114,55 @@ public class RouteBuilder {
         this.reverseGraph = buildReverseGraph();
         this.rnd = Objects.requireNonNull(rnd, "rnd");
         this.mode = Objects.requireNonNull(mode, "mode");
+        this.planningMode = planningMode == null ? PlanningMode.STRICT_SLA : planningMode;
     }
 
-    Route buildRoute(Order order, String originHub, int quantity) {
+    void withSearchRelaxation(int extraDepth, int extraBeam) {
+        this.extraDepth = Math.max(0, extraDepth);
+        this.extraBeam = Math.max(0, extraBeam);
+    }
+
+    void clearSearchRelaxation() {
+        this.extraBeam = 0;
+        this.extraDepth = 0;
+    }
+
+    BuildResult buildRoute(Order order, String originHub, int quantity, boolean allowSlaExtension, boolean allowExtendedSearch) {
         if (mode == SelectionMode.CAPACITY_GREEDY) {
-            return buildRouteCapacityGreedy(order, originHub, quantity);
+            return wrapWithGuards(order, buildRouteCapacityGreedy(order, originHub, quantity, allowSlaExtension), false);
         }
         if (mode == SelectionMode.FLOW_CAPACITY) {
-            return buildRouteFlowCapacity(order, originHub, quantity);
+            return wrapWithGuards(order, buildRouteFlowCapacity(order, originHub, quantity, allowSlaExtension), false);
         }
         // Fallback builder (sin reservas, sólo traza) para evitar planes vacíos
         if (mode == SelectionMode.FLOW_FALLBACK) {
-            return buildRouteFallback(order, originHub, quantity);
+            return wrapWithGuards(order, buildRouteFallback(order, originHub, quantity), false);
         }
         String destination = order.getDestinationCode();
         Route route = new Route(quantity);
         if (originHub.equals(destination)) {
-            return route;
+            return BuildResult.success(route);
         }
 
         Airport currentAirport = airports.get(originHub);
         if (currentAirport == null) {
-            return null;
+            return BuildResult.fail(BuildStatus.FAIL_INFEASIBLE);
         }
 
         Duration overallSla = Duration.ZERO;
         Instant dueInstant = null;
+        Instant extendedDueInstant = null;
         LocalDateTime readyTime = LocalDateTime.ofInstant(order.getCreationUtc(), currentAirport.getZoneOffset())
                 .plus(Config.TRANSFER_BUFFER); // primera pierna: solo buffer mínimo
         Map<String, Integer> distances = computeHopDistances(destination);
 
         if (mode == SelectionMode.EXHAUSTIVE_APPROACH) {
-            Route exhaustive = buildRouteExhaustive(order, originHub, quantity);
-            return exhaustive;
+            Route exhaustive = buildRouteExhaustive(order, originHub, quantity, allowSlaExtension);
+            return wrapWithGuards(order, exhaustive, false);
         }
         if (mode == SelectionMode.BEAM_APPROACH) {
-            return buildRouteBeam(order, originHub, quantity);
+            Route beamRoute = buildRouteBeam(order, originHub, quantity, allowSlaExtension, allowExtendedSearch);
+            return wrapWithGuards(order, beamRoute, false);
         }
 
         String current = originHub;
@@ -98,18 +171,22 @@ public class RouteBuilder {
         int hops = 0;
 
         int currentRouteQty = quantity;
+        AtomicBoolean usedExtendedSla = new AtomicBoolean(false);
 
         while (!current.equals(destination) && hops < MAX_HOPS) {
             if (dueInstant == null) {
                 Duration hopSla = slaFor(originHub, destination);
                 overallSla = overallSla.compareTo(hopSla) > 0 ? overallSla : hopSla;
                 dueInstant = order.getCreationUtc().plus(overallSla);
+                if (allowSlaExtension) {
+                    extendedDueInstant = dueInstant.plus(Duration.ofHours(24));
+                }
             }
 
             List<Flight> options = new ArrayList<>(flights.getByOriginCode(current));
             if (options.isEmpty()) {
                 releaseAllocated(route);
-                return null;
+                return BuildResult.fail(BuildStatus.FAIL_INFEASIBLE);
             }
 
             int currentDist = distances.getOrDefault(current, Integer.MAX_VALUE);
@@ -134,25 +211,20 @@ public class RouteBuilder {
                         continue;
                     }
 
-                    int sendQty = Math.min(currentRouteQty, availableFlight);
-                    if (sendQty <= 0) {
+                    if (availableFlight < currentRouteQty) {
                         date = date.plusDays(1);
                         attempts++;
                         continue;
                     }
 
+                    int sendQty = currentRouteQty;
                     boolean finalLeg = candidate.getDestinationCode().equals(destination);
-                    if (reserveSegment(route, candidate, date, sendQty, finalLeg, dueInstant)) {
-                        if (sendQty < currentRouteQty) {
-                            trimRouteToQty(route, sendQty);
-                            currentRouteQty = sendQty;
-                        }
+                    if (reserveSegment(route, candidate, date, sendQty, finalLeg, dueInstant, extendedDueInstant, allowSlaExtension, usedExtendedSla)) {
                         current = candidate.getDestinationCode();
                         currentAirport = airports.get(current);
                         LocalDateTime arrivalLocal = toLocal(candidate.getArrivalInstant(date), currentAirport.getZoneOffset());
                         readyTime = arrivalLocal.plus(finalLeg ? Config.WAREHOUSE_DWELL : Config.TRANSFER_BUFFER);
                         visited.add(current);
-                        currentRouteQty = sendQty;
                         reserved = true;
                         break;
                     }
@@ -167,7 +239,7 @@ public class RouteBuilder {
 
             if (!reserved) {
                 releaseAllocated(route);
-                return null;
+                return BuildResult.fail(BuildStatus.FAIL_INFEASIBLE);
             }
 
             hops++;
@@ -175,15 +247,15 @@ public class RouteBuilder {
 
         if (!current.equals(destination)) {
             releaseAllocated(route);
-            return null;
+            return BuildResult.fail(BuildStatus.FAIL_INFEASIBLE);
         }
 
         route.setQuantity(currentRouteQty);
 
-        return route;
+        return wrapWithGuards(order, route, usedExtendedSla.get());
     }
 
-    private Route buildRouteExhaustive(Order order, String originHub, int quantity) {
+    private Route buildRouteExhaustive(Order order, String originHub, int quantity, boolean allowSlaExtension) {
         String destination = order.getDestinationCode();
         Route route = new Route(quantity);
         if (originHub.equals(destination)) {
@@ -195,12 +267,13 @@ public class RouteBuilder {
         }
         Duration overallSla = slaFor(originHub, destination);
         Instant dueInstant = order.getCreationUtc().plus(overallSla);
-        LocalDateTime readyTime = LocalDateTime.ofInstant(order.getCreationUtc(), originAirport.getZoneOffset())
+        Instant extendedDue = allowSlaExtension ? dueInstant.plus(Duration.ofHours(24)) : null;
+        LocalDateTime readyTimeBase = LocalDateTime.ofInstant(order.getCreationUtc(), originAirport.getZoneOffset())
                 .plus(Config.TRANSFER_BUFFER);
 
         Set<String> visited = new HashSet<>();
         visited.add(originHub);
-        boolean success = explore(order, route, originHub, destination, quantity, readyTime, dueInstant, visited, 0);
+        boolean success = explore(order, route, originHub, destination, quantity, readyTimeBase, dueInstant, extendedDue, allowSlaExtension, visited, 0);
         if (!success || route.getSegments().isEmpty()) {
             releaseAllocated(route);
             return null;
@@ -209,7 +282,7 @@ public class RouteBuilder {
         return route;
     }
 
-    private Route buildRouteCapacityGreedy(Order order, String originHub, int quantity) {
+    private Route buildRouteCapacityGreedy(Order order, String originHub, int quantity, boolean allowSlaExtension) {
         String destination = order.getDestinationCode();
         Route route = new Route(quantity);
         if (originHub.equals(destination)) {
@@ -220,7 +293,8 @@ public class RouteBuilder {
             return null;
         }
         Instant dueInstant = order.getCreationUtc().plus(slaFor(originHub, destination));
-        LocalDateTime readyTime = LocalDateTime.ofInstant(order.getCreationUtc(), originAirport.getZoneOffset())
+        Instant extendedDue = allowSlaExtension ? dueInstant.plus(Duration.ofHours(24)) : null;
+        LocalDateTime readyTimeBase = LocalDateTime.ofInstant(order.getCreationUtc(), originAirport.getZoneOffset())
                 .plus(Config.TRANSFER_BUFFER);
 
         List<Flight> directOptions = flights.getByOriginCode(originHub).stream()
@@ -233,11 +307,11 @@ public class RouteBuilder {
         // Respetamos estrictamente el SLA: continental=2 días, intercontinental=3 días (incluye buffers).
         int slaDays = Math.max(1, (int) Math.ceil(slaFor(originHub, destination).toHours() / 24.0));
         int dayLimit = slaDays;
-        LocalDate date = readyTime.toLocalDate();
+        LocalDate date = readyTimeBase.toLocalDate();
         for (int d = 0; d < dayLimit; d++) {
             for (Flight flight : directOptions) {
                 LocalDateTime depLocal = toLocal(flight.getDepartureInstant(date), originAirport.getZoneOffset());
-                if (depLocal.isBefore(readyTime)) {
+                if (depLocal.isBefore(readyTimeBase)) {
                     continue;
                 }
                 int available = flightSchedule.getRemainingCapacity(flight, date);
@@ -245,7 +319,7 @@ public class RouteBuilder {
                     continue;
                 }
                 int sendQty = Math.min(quantity, available);
-                if (reserveSegment(route, flight, date, sendQty, true, dueInstant)) {
+                if (reserveSegment(route, flight, date, sendQty, true, dueInstant, extendedDue, allowSlaExtension, new AtomicBoolean(false))) {
                     route.setQuantity(sendQty);
                     return route;
                 }
@@ -269,7 +343,7 @@ public class RouteBuilder {
         if (originAirport == null) {
             return null;
         }
-        LocalDateTime readyTime = LocalDateTime.ofInstant(order.getCreationUtc(), originAirport.getZoneOffset())
+        LocalDateTime readyTimeBase = LocalDateTime.ofInstant(order.getCreationUtc(), originAirport.getZoneOffset())
                 .plus(Config.TRANSFER_BUFFER);
 
         List<List<Flight>> paths = candidatePaths(originHub, destination, 2, 10);
@@ -280,7 +354,7 @@ public class RouteBuilder {
         Route bestRoute = null;
         long bestArrival = Long.MAX_VALUE;
         for (List<Flight> path : paths) {
-            LocalDateTime rt = readyTime;
+            LocalDateTime rt = readyTimeBase;
             Route candidate = new Route(quantity);
             boolean ok = true;
             for (int i = 0; i < path.size(); i++) {
@@ -316,8 +390,9 @@ public class RouteBuilder {
         * Enfoque orientado a congestión: limita a rutas cortas (≤2 conexiones) y asigna bloques
         * por costo marginal (tiempo + penalización por ocupación). Divide la carga en varias rutas.
         */
-    private Route buildRouteFlowCapacity(Order order, String originHub, int quantity) {
+    private Route buildRouteFlowCapacity(Order order, String originHub, int quantity, boolean allowSlaExtension) {
         String destination = order.getDestinationCode();
+        log.info("[FLOW] Start order={} qty={} origin={} dest={} allowSlaExt={}", order.getId(), quantity, originHub, destination, allowSlaExtension);
         if (originHub.equals(destination)) {
             return new Route(quantity);
         }
@@ -326,7 +401,8 @@ public class RouteBuilder {
             return null;
         }
         Instant dueInstant = order.getCreationUtc().plus(slaFor(originHub, destination));
-        LocalDateTime readyTime = LocalDateTime.ofInstant(order.getCreationUtc(), originAirport.getZoneOffset())
+        Instant extendedDue = allowSlaExtension ? dueInstant.plus(Duration.ofHours(24)) : null;
+        LocalDateTime readyTimeBase = LocalDateTime.ofInstant(order.getCreationUtc(), originAirport.getZoneOffset())
                 .plus(Config.TRANSFER_BUFFER);
 
         List<List<Flight>> candidates = candidatePaths(originHub, destination, 2, 10);
@@ -337,31 +413,40 @@ public class RouteBuilder {
         int remainingQty = quantity;
         Route finalRoute = new Route(quantity);
         // Seguimos asignando bloques mientras haya demanda y exista un camino factible
-        while (remainingQty > 0) {
+        AtomicBoolean usedExtended = new AtomicBoolean(false);
+        int guard = Math.max(10, candidates.size() * 6);
+        int attempts = 0;
+        while (remainingQty > 0 && attempts < guard) {
             PathChoice best = null;
             for (List<Flight> path : candidates) {
-                PathChoice choice = evaluatePath(path, readyTime, dueInstant, remainingQty, destination);
+                PathChoice choice = evaluatePath(path, readyTimeBase, dueInstant, extendedDue, allowSlaExtension, remainingQty, destination);
                 if (choice == null) continue;
                 if (best == null || choice.cost() < best.cost()) {
                     best = choice;
                 }
             }
             if (best == null) {
+                log.info("[FLOW] No feasible path found for order={} remaining={}", order.getId(), remainingQty);
                 break; // no hay camino factible
             }
-            Route blockRoute = reserveSlots(best.slots(), destination, dueInstant);
+            int blockSize = best.slots().isEmpty() ? 0 : best.slots().get(0).available();
+            log.info("[FLOW] Select path order={} remaining={} path={} block={} cost={} allowExt={} bottleneck={}",
+                    order.getId(), remainingQty, pathToString(best.path()), blockSize, best.cost(), allowSlaExtension,
+                    best.slots().stream().mapToInt(Slot::available).min().orElse(0));
+            Route blockRoute = reserveSlots(best.slots(), destination, dueInstant, extendedDue, allowSlaExtension, usedExtended);
             if (blockRoute == null) {
-                candidates.remove(best.path());
-                if (candidates.isEmpty()) break;
+                log.info("[FLOW] Reservation failed for path order={} path={}, will retry later paths/slots", order.getId(), pathToString(best.path()));
+                attempts++;
                 continue;
             }
             // Sincronizar cantidad a bloque enviado
             int sent = blockRoute.getQuantity();
             remainingQty -= sent;
-            readyTime = best.slots().get(best.slots().size() - 1).nextReady(); // siguiente bloque parte después del último arribo + dwell
+            log.info("[FLOW] Reserved block order={} sent={} remaining={}", order.getId(), sent, remainingQty);
             // agregar segmentos al finalRoute
             finalRoute.getSegments().addAll(blockRoute.getSegments());
             finalRoute.setSlack(blockRoute.getSlack());
+            attempts++;
         }
 
         if (finalRoute.getSegments().isEmpty()) {
@@ -369,6 +454,10 @@ public class RouteBuilder {
             return null;
         }
         finalRoute.setQuantity(quantity - remainingQty);
+        if (remainingQty > 0 || finalRoute.getQuantity() != quantity) {
+            releaseAllocated(finalRoute);
+            return null;
+        }
         return finalRoute;
     }
 
@@ -424,6 +513,8 @@ public class RouteBuilder {
     private PathChoice evaluatePath(List<Flight> path,
                                     LocalDateTime readyTime,
                                     Instant dueInstant,
+                                    Instant extendedDue,
+                                    boolean allowSlaExtension,
                                     int remainingQty,
                                     String destination) {
         List<Slot> slots = new ArrayList<>();
@@ -432,7 +523,7 @@ public class RouteBuilder {
         for (int i = 0; i < path.size(); i++) {
             Flight flight = path.get(i);
             boolean finalLeg = i == path.size() - 1 && flight.getDestinationCode().equals(destination);
-            Slot slot = findEarliestSlot(flight, currentReady, dueInstant, finalLeg);
+            Slot slot = findEarliestSlot(flight, currentReady, dueInstant, extendedDue, allowSlaExtension, finalLeg);
             if (slot == null) {
                 return null;
             }
@@ -460,6 +551,8 @@ public class RouteBuilder {
             congestionCost += occ * occ * 1000d;
         }
         double cost = travelMinutes + congestionCost;
+        log.info("[FLOW] Path eval path={} remaining={} bottleneck={} block={} cost={} maxOcc={}",
+                pathToString(path), remainingQty, bottleneck, block, cost, maxOccupancy);
         // ajustar cantidades en slots al bloque propuesto
         List<Slot> sized = new ArrayList<>(slots.size());
         for (Slot s : slots) {
@@ -471,10 +564,16 @@ public class RouteBuilder {
     private Slot findEarliestSlot(Flight flight,
                                   LocalDateTime readyTime,
                                   Instant dueInstant,
+                                  Instant extendedDue,
+                                  boolean allowSlaExtension,
                                   boolean finalLeg) {
         Airport originAirport = airports.get(flight.getOriginCode());
-        int slaDays = dueInstant != null
-                ? Math.max(1, (int) Math.ceil(Duration.between(readyTime.toInstant(originAirport.getZoneOffset()), dueInstant).toHours() / 24.0))
+        Instant slaLimit = dueInstant;
+        if (allowSlaExtension && extendedDue != null) {
+            slaLimit = extendedDue;
+        }
+        int slaDays = slaLimit != null
+                ? Math.max(1, (int) Math.ceil(Duration.between(readyTime.toInstant(originAirport.getZoneOffset()), slaLimit).toHours() / 24.0))
                 : MAX_DAY_LOOKAHEAD;
         LocalDate date = readyTime.toLocalDate();
         for (int d = 0; d < slaDays; d++) {
@@ -504,13 +603,13 @@ public class RouteBuilder {
     }
 
 
-    private Route buildRouteBeam(Order order, String originHub, int quantity) {
+    private Route buildRouteBeam(Order order, String originHub, int quantity, boolean allowSlaExtension, boolean allowExtendedSearch) {
         String destination = order.getDestinationCode();
         Route best = null;
         long deadline = System.nanoTime() + BEAM_BUDGET_MS * 1_000_000L;
 
-        for (int attempt = 0; attempt < BEAM_WIDTH; attempt++) {
-            Route candidate = beamSearch(order, originHub, destination, quantity, deadline);
+        for (int attempt = 0; attempt < beamWidthBase + (allowExtendedSearch ? extraBeam : 0); attempt++) {
+            Route candidate = beamSearch(order, originHub, destination, quantity, deadline, allowSlaExtension, allowExtendedSearch);
             if (candidate != null && !candidate.getSegments().isEmpty()) {
                 best = candidate;
                 break;
@@ -526,8 +625,11 @@ public class RouteBuilder {
                              String originHub,
                              String destination,
                              int quantity,
-                             long deadlineNanos) {
+                             long deadlineNanos,
+                             boolean allowSlaExtension,
+                             boolean allowExtendedSearch) {
         Instant dueInstant = order.getCreationUtc().plus(slaFor(originHub, destination));
+        Instant extendedDue = allowSlaExtension ? dueInstant.plus(Duration.ofHours(24)) : null;
         Airport originAirport = airports.get(originHub);
         if (originAirport == null) return null;
 
@@ -537,12 +639,14 @@ public class RouteBuilder {
         List<BeamNode> frontier = new ArrayList<>();
         frontier.add(new BeamNode(originHub, readyTime, new ArrayList<>(), quantity));
 
-        for (int depth = 0; depth < BEAM_DEPTH; depth++) {
+        int depthLimit = beamDepthBase + (allowExtendedSearch ? extraDepth : 0);
+        int width = beamWidthBase + (allowExtendedSearch ? extraBeam : 0);
+        for (int depth = 0; depth < depthLimit; depth++) {
             if (System.nanoTime() > deadlineNanos) break;
             List<BeamNode> next = new ArrayList<>();
             for (BeamNode node : frontier) {
                 if (node.airport().equals(destination)) {
-                    Route route = reservePath(node.path(), destination, dueInstant);
+                    Route route = reservePath(node.path(), destination, dueInstant, extendedDue, allowSlaExtension, new AtomicBoolean(false));
                     if (route != null) {
                         return route;
                     }
@@ -550,8 +654,8 @@ public class RouteBuilder {
                 }
                 List<FlightCandidate> flights = nextFlights(node, destination, dueInstant);
                 flights.sort(Comparator.comparingDouble(FlightCandidate::score));
-                int width = Math.min(BEAM_WIDTH, flights.size());
-                for (int i = 0; i < width; i++) {
+                int widthNow = Math.min(width, flights.size());
+                for (int i = 0; i < widthNow; i++) {
                     FlightCandidate fc = flights.get(i);
                     List<SegmentChoice> newPath = new ArrayList<>(node.path());
                     newPath.add(new SegmentChoice(fc.flight(), fc.date(), fc.finalLeg(), fc.qty()));
@@ -567,7 +671,7 @@ public class RouteBuilder {
         // Intentar reservar si alguna frontera llega al destino
         for (BeamNode node : frontier) {
             if (node.airport().equals(destination)) {
-                Route route = reservePath(node.path(), destination, dueInstant);
+                Route route = reservePath(node.path(), destination, dueInstant, extendedDue, allowSlaExtension, new AtomicBoolean(false));
                 if (route != null) {
                     return route;
                 }
@@ -576,14 +680,19 @@ public class RouteBuilder {
         return null;
     }
 
-    private Route reservePath(List<SegmentChoice> path, String destination, Instant dueInstant) {
+    private Route reservePath(List<SegmentChoice> path,
+                              String destination,
+                              Instant dueInstant,
+                              Instant extendedDue,
+                              boolean allowSlaExtension,
+                              AtomicBoolean usedExtendedSla) {
         Route route = new Route(path.isEmpty() ? 0 : path.get(0).qty());
         List<Runnable> rollbacks = new ArrayList<>();
         try {
             for (int i = 0; i < path.size(); i++) {
                 SegmentChoice sc = path.get(i);
                 boolean finalLeg = (i == path.size() - 1) && sc.flight().getDestinationCode().equals(destination);
-                if (!reserveSegment(route, sc.flight(), sc.date(), sc.qty(), finalLeg, dueInstant)) {
+                if (!reserveSegment(route, sc.flight(), sc.date(), sc.qty(), finalLeg, dueInstant, extendedDue, allowSlaExtension, usedExtendedSla)) {
                     throw new IllegalStateException("reserve failed");
                 }
                 trimRouteToQty(route, sc.qty());
@@ -601,12 +710,17 @@ public class RouteBuilder {
         }
     }
 
-    private Route reserveSlots(List<Slot> slots, String destination, Instant dueInstant) {
+    private Route reserveSlots(List<Slot> slots,
+                               String destination,
+                               Instant dueInstant,
+                               Instant extendedDue,
+                               boolean allowSlaExtension,
+                               AtomicBoolean usedExtendedSla) {
         List<SegmentChoice> path = new ArrayList<>(slots.size());
         for (Slot slot : slots) {
             path.add(new SegmentChoice(slot.flight(), slot.date(), slot.finalLeg(), slot.available()));
         }
-        return reservePath(path, destination, dueInstant);
+        return reservePath(path, destination, dueInstant, extendedDue, allowSlaExtension, usedExtendedSla);
     }
 
     private List<FlightCandidate> nextFlights(BeamNode node, String destination, Instant dueInstant) {
@@ -645,6 +759,8 @@ public class RouteBuilder {
                             int quantity,
                             LocalDateTime readyTime,
                             Instant dueInstant,
+                            Instant extendedDue,
+                            boolean allowSlaExtension,
                             Set<String> visited,
                             int hops) {
         if (hops >= MAX_HOPS) {
@@ -669,7 +785,7 @@ public class RouteBuilder {
                 }
                 int sendQty = Math.min(quantity, available);
                 boolean finalLeg = candidate.getDestinationCode().equals(destination);
-                if (!reserveSegment(route, candidate, date, sendQty, finalLeg, dueInstant)) {
+                if (!reserveSegment(route, candidate, date, sendQty, finalLeg, dueInstant, extendedDue, allowSlaExtension, new AtomicBoolean(false))) {
                     date = date.plusDays(1);
                     continue;
                 }
@@ -688,7 +804,7 @@ public class RouteBuilder {
                 Airport nextAirport = airports.get(next);
                 LocalDateTime arrivalLocal = toLocal(candidate.getArrivalInstant(date), nextAirport.getZoneOffset());
                 LocalDateTime nextReady = arrivalLocal.plus(Config.TRANSFER_BUFFER);
-                if (explore(order, route, next, destination, sendQty, nextReady, dueInstant, visited, hops + 1)) {
+                if (explore(order, route, next, destination, sendQty, nextReady, dueInstant, extendedDue, allowSlaExtension, visited, hops + 1)) {
                     return true;
                 }
                 visited.remove(next);
@@ -809,12 +925,8 @@ public class RouteBuilder {
         boolean hasContinentalOnTime = hasContinentalOnTime(peerOptions, destination, readyTime, dueInstant);
         double continentPenalty = continentPenaltyConditional(flight.getDestinationCode(), destination, hasContinentalOnTime);
 
-        LocalDate depDate = estimateDepartureDate(flight, readyTime);
-        long daysAfterStart = Math.max(0L, ChronoUnit.DAYS.between(readyTime.toLocalDate(), depDate));
-        double timeBias = Math.exp(daysAfterStart / TIME_BIAS_K);
-
         // score: favorecer los que lleguen antes (slack alto => score bajo), luego distancia y penalizaciones.
-        return -slackMinutes + geoDistance + continentPenalty + directBonus + timeBias;
+        return -slackMinutes + geoDistance + continentPenalty + directBonus;
     }
 
     private Instant estimateArrivalInstant(Flight flight, LocalDateTime readyTime) {
@@ -826,17 +938,6 @@ public class RouteBuilder {
             date = date.plusDays(1);
         }
         return flight.getArrivalInstant(date);
-    }
-
-    private LocalDate estimateDepartureDate(Flight flight, LocalDateTime readyTime) {
-        Airport originAirport = airports.get(flight.getOriginCode());
-        ZoneOffset originOffset = originAirport != null ? originAirport.getZoneOffset() : ZoneOffset.UTC;
-        LocalDate date = readyTime.toLocalDate();
-        LocalDateTime depLocal = toLocal(flight.getDepartureInstant(date), originOffset);
-        if (depLocal.isBefore(readyTime)) {
-            date = date.plusDays(1);
-        }
-        return date;
     }
 
     private boolean hasContinentalOnTime(List<Flight> options,
@@ -871,30 +972,57 @@ public class RouteBuilder {
                                                String destinationCode,
                                                boolean hasContinentalOnTime) {
         if (!hasContinentalOnTime) {
+            if (planningMode == PlanningMode.FEASIBILITY_RELAXED) {
+                return 0;
+            }
             return 0;
         }
         return isIntercontinental(airportCode, destinationCode) ? 5_000 : 0;
     }
 
-    private boolean reserveSegment(Route route, Flight flight, LocalDate date, int quantity, boolean finalLeg, Instant dueInstant) {
+    private boolean reserveSegment(Route route,
+                                   Flight flight,
+                                   LocalDate date,
+                                   int quantity,
+                                   boolean finalLeg,
+                                   Instant dueInstant,
+                                   Instant extendedDue,
+                                   boolean allowSlaExtension,
+                                   AtomicBoolean usedExtendedSla) {
         if (!flightSchedule.tryReserve(flight, date, quantity)) {
+            log.info("[FLOW] Reserve failed flight={} date={} qty={} reason=flight_capacity", flight.getId(), date, quantity);
             return false;
         }
 
         Airport destinationAirport = airports.get(flight.getDestinationCode());
-        LocalDateTime arrivalLocal = toLocal(flight.getArrivalInstant(date), destinationAirport.getZoneOffset());
+        Instant arrivalInstant = flight.getArrivalInstant(date);
+        LocalDateTime arrivalLocal = toLocal(arrivalInstant, destinationAirport.getZoneOffset());
         LocalDateTime departureLocal = arrivalLocal.plus(finalLeg ? Config.WAREHOUSE_DWELL : Config.TRANSFER_BUFFER);
 
         if (!airportSchedule.tryReserveTransit(destinationAirport.code, arrivalLocal, departureLocal, quantity)) {
             flightSchedule.release(flight, date, quantity);
+            int occAtArrival = airportSchedule.getOccupied(destinationAirport.code, arrivalLocal);
+            int availAtArrival = airportSchedule.getAvailable(destinationAirport.code, arrivalLocal);
+            int capacityAtArrival = occAtArrival + availAtArrival;
+            log.info("[FLOW] Reserve failed airport={} flight={} date={} qty={} reason=airport_capacity capacity={} occupied={} available={}",
+                    destinationAirport.code, flight.getId(), date, quantity, capacityAtArrival, occAtArrival, availAtArrival);
             return false;
         }
 
         RouteSegment segment = new RouteSegment(flight, date, quantity, finalLeg);
         if (finalLeg) {
-            Instant arrivalInstant = flight.getArrivalInstant(date);
             // Consideramos el dwell de almacén para la entrega final (cada tramo libera tras WAREHOUSE_DWELL)
             Instant releaseInstant = arrivalInstant.plus(Config.WAREHOUSE_DWELL);
+            if (dueInstant != null && releaseInstant.isAfter(dueInstant)) {
+                boolean withinExtended = allowSlaExtension && extendedDue != null && !releaseInstant.isAfter(extendedDue);
+                if (!withinExtended) {
+                    airportSchedule.releaseTransit(destinationAirport.code, arrivalLocal, departureLocal, quantity);
+                    flightSchedule.release(flight, date, quantity);
+                    log.info("[FLOW] Reserve failed SLA flight={} date={} qty={} release={} due={}", flight.getId(), date, quantity, releaseInstant, dueInstant);
+                    return false;
+                }
+                usedExtendedSla.compareAndSet(false, true);
+            }
             Duration slack = dueInstant != null ? Duration.between(releaseInstant, dueInstant) : null;
             segment.setSlack(slack);
             route.setSlack(slack);
@@ -908,12 +1036,16 @@ public class RouteBuilder {
             Flight flight = segment.getFlight();
             LocalDate date = segment.getDate();
             int qty = segment.getRouteQuantity();
-            flightSchedule.release(flight, date, qty);
+            try {
+                flightSchedule.release(flight, date, qty);
+            } catch (Exception ignored) {}
 
             Airport destinationAirport = airports.get(flight.getDestinationCode());
             LocalDateTime arrivalLocal = toLocal(flight.getArrivalInstant(date), destinationAirport.getZoneOffset());
             LocalDateTime departureLocal = arrivalLocal.plus(segment.isFinalLeg() ? Config.WAREHOUSE_DWELL : Config.TRANSFER_BUFFER);
-            airportSchedule.releaseTransit(destinationAirport.code, arrivalLocal, departureLocal, qty);
+            try {
+                airportSchedule.releaseTransit(destinationAirport.code, arrivalLocal, departureLocal, qty);
+            } catch (Exception ignored) {}
         }
     }
 
@@ -1086,4 +1218,48 @@ public class RouteBuilder {
     private record FlightCandidate(Flight flight, LocalDate date, boolean finalLeg, LocalDateTime readyTime, double score, int qty) {}
     private record Slot(Flight flight, LocalDate date, LocalDateTime nextReady, int available, boolean finalLeg) {}
     private record PathChoice(List<Flight> path, List<Slot> slots, double cost) {}
+
+    private String pathToString(List<Flight> path) {
+        if (path == null || path.isEmpty()) return "[]";
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < path.size(); i++) {
+            Flight f = path.get(i);
+            if (i > 0) sb.append("->");
+            sb.append(f.getOriginCode()).append("-").append(f.getDestinationCode());
+        }
+        sb.append("]");
+        return sb.toString();
+    }
+
+    private BuildResult wrapWithGuards(Order order, Route route, boolean usedExtendedSla) {
+        if (route == null) {
+            return BuildResult.fail(BuildStatus.FAIL_INFEASIBLE);
+        }
+        int deliveredQty = deliveredQuantity(route);
+        if (deliveredQty != order.getQuantity()) {
+            releaseAllocated(route);
+            return BuildResult.fail(BuildStatus.FAIL_INCOMPLETE);
+        }
+        if (route.getQuantity() != order.getQuantity()) {
+            releaseAllocated(route);
+            return BuildResult.fail(BuildStatus.FAIL_INCOMPLETE);
+        }
+        if (usedExtendedSla) {
+            return BuildResult.successWithExtension(route);
+        }
+        return BuildResult.success(route);
+    }
+
+    private int deliveredQuantity(Route route) {
+        if (route == null || route.getSegments() == null) {
+            return 0;
+        }
+        if (route.getSegments().isEmpty()) {
+            return route.getQuantity();
+        }
+        return route.getSegments().stream()
+                .filter(RouteSegment::isFinalLeg)
+                .mapToInt(RouteSegment::getRouteQuantity)
+                .sum();
+    }
 }
