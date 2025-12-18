@@ -18,8 +18,11 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.stream.Stream;
 
 @Service
 @Slf4j
@@ -82,7 +85,7 @@ public class OperationService {
         Map<String, LiveFlight> uniqueFlightsMap = new HashMap<>();
 
         // -----------------------------------------------------------
-        // 3. PROCESAR PEDIDOS
+        // 3. PROCESAR PEDIDOS (Vuelos con Carga)
         // -----------------------------------------------------------
         for (OrderPlan op : plan.getOrderPlans()) {
             int totalQty = op.getRoutes() == null ? 0 : op.getRoutes().stream().mapToInt(Route::getQuantity).sum();
@@ -124,27 +127,22 @@ public class OperationService {
                 }
             }
 
-            // --- CÁLCULO DE DEADLINE (LOGICA MEJORADA) ---
+            // --- CÁLCULO DE DEADLINE ---
             long slaHours = isIntercontinental ? 72 : 48;
             Instant standardDeadline = startInstant.plus(Duration.ofHours(slaHours));
             Instant plannedDeadline = maxPlannedArrival.plus(Duration.ofMinutes(60));
 
-            // Elegimos el mayor para evitar holgura negativa
             Instant finalDueUtc = standardDeadline.isAfter(plannedDeadline) ? standardDeadline : plannedDeadline;
 
             liveWorld.registerOrderBasic(op.getOrderId(), totalQty, destCode, startInstant, finalDueUtc);
             liveWorld.registerPlanned(new OrderStatusTick(op.getOrderId(), "PLANNED", destCode != null ? destCode : "", totalQty));
 
             // -----------------------------------------------------------
-            // 4. AGENDAR VUELOS (AQUÍ ESTÁ EL FIX DE CANTIDAD)
+            // 4. AGENDAR VUELOS
             // -----------------------------------------------------------
             if (op.getRoutes() != null) {
                 for (Route route : op.getRoutes()) {
                     if (route.getSegments() == null) continue;
-
-                    // [FIX IMPORTANTE]
-                    // Capturamos la cantidad TOTAL de la ruta UNA SOLA VEZ.
-                    // Esto ignora cualquier error de cantidad parcial en los segmentos intermedios.
                     int fixedRouteQty = route.getQuantity();
 
                     for (RouteSegment seg : route.getSegments()) {
@@ -164,14 +162,52 @@ public class OperationService {
                             );
                         });
 
-                        // Usamos la variable fija 'fixedRouteQty', NO 'seg.getRouteQuantity()'
                         liveWorld.scheduleFutureFlight(liveFlight, op.getOrderId(), fixedRouteQty);
                     }
                 }
             }
         }
 
-        // 5. FAST FORWARD
+        // -----------------------------------------------------------
+        // 5. NUEVA LÓGICA: AGREGAR VUELOS VACÍOS (BACKGROUND TRAFFIC)
+        // -----------------------------------------------------------
+        // Esto rellena el cielo con los vuelos que existen en la BD pero no se usaron en el plan.
+        LocalDate startDate = startInstant.atZone(ZoneId.of("UTC")).toLocalDate();
+        long simulationDays = 3; // Horizonte de simulación
+
+        flightRepository.findAll().forEach(flightData -> {
+            Stream.iterate(0, i -> i + 1).limit(simulationDays).forEach(dayOffset -> {
+                LocalDate targetDate = startDate.plusDays(dayOffset);
+                String uniqueKey = flightData.getId() + "_" + targetDate.toString();
+
+                // Si este vuelo NO fue creado en el paso 4 (porque no tiene carga), lo creamos ahora
+                if (!uniqueFlightsMap.containsKey(uniqueKey)) {
+                    Instant dep = flightData.getDepartureInstant(targetDate);
+                    Instant arr = flightData.getArrivalInstant(targetDate);
+
+                    if (dep != null && arr != null) {
+                        LiveFlight emptyFlight = new LiveFlight(
+                                flightData.getId(),
+                                flightData.getOrigin().getCode(),
+                                flightData.getDestination().getCode(),
+                                dep,
+                                arr,
+                                flightData.getDailyCapacity()
+                        );
+
+                        // Lo registramos para evitar duplicados
+                        uniqueFlightsMap.put(uniqueKey, emptyFlight);
+
+                        // Lo agendamos en el mundo con OrderID dummy y cantidad 0
+                        liveWorld.scheduleFutureFlight(emptyFlight, "EMPTY_FLIGHT_DUMMY", 0);
+                    }
+                }
+            });
+        });
+
+        // -----------------------------------------------------------
+        // 6. FAST FORWARD
+        // -----------------------------------------------------------
         if (requestedStart != null && requestedStart.isAfter(startInstant)) {
             long seconds = Duration.between(startInstant, requestedStart).getSeconds();
             if (seconds > 0) {

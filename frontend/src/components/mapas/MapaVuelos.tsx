@@ -9,30 +9,102 @@ import type { ActiveAirportTick } from '../../types/simulation';
 import { OrdersList, type OrderLoadView } from '../simulacion/OrdersList';
 import type { SegmentoVuelo, VueloEnMovimiento } from '../../hooks/useSimulacion';
 import { Plane, Building } from 'lucide-react';
-// Importamos OutgoingOrdersList que estaba en A pero faltaba en B
 import { OutgoingOrdersList } from '../simulacion/OutgoingOrdersList';
+import type { GhostFlight } from '../../hooks/useOperacion';
 
-// --- ESTILOS E ICONOS (BASE CODIGO B - MEJORADO) ---
-
-const getStatusColor = (pct: number) => {
-  if (pct === 0) return '#22c55e';
-  if (pct < 10) return '#22c55e'; // Verde (Ok)
-  if (pct < 20) return '#eab308'; // Amarillo (Advertencia)
-  if (pct <= 30) return '#ef4444'; // Rojo (Crítico/Lleno)
-  return '#ef4444'; // Fallback Rojo
+const GhostFlightsLayer = ({ flights }: { flights: GhostFlight[] }) => {
+    const map = useMap();
+    const canvasRef = useRef<HTMLCanvasElement | null>(null);
+    // 1. Pre-renderizar el icono del avión en memoria
+    const planeSprite = useMemo(() => {
+        const canvas = document.createElement('canvas');
+        const size = 30; // Tamaño del sprite
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+            const scale = 20 / 1024;
+            ctx.translate(size / 2, size / 2);
+            ctx.scale(scale, scale);
+            ctx.translate(-512, -512);
+            ctx.fillStyle = '#9ca3af';
+            ctx.globalAlpha = 0.6;
+            const p = new Path2D("M597.333333 381.738667L938.666667 597.333333v85.333334l-341.333334-107.776v228.693333l128 71.082667V938.666667l-192-42.666667L341.333333 938.666667v-64l128-71.125334v-228.693333L128 682.666667v-85.333334l341.333333-215.594666V149.333333a64 64 0 0 1 128 0v232.405334z");
+            ctx.fill(p);
+        }
+        return canvas;
+    }, []);
+    // 2. Manejo del ciclo de vida del Canvas y Dibujado
+    useEffect(() => {
+        if (!map) return;
+        const canvas = L.DomUtil.create('canvas', 'leaflet-zoom-animated') as HTMLCanvasElement;
+        canvas.style.position = 'absolute';
+        canvas.style.top = '0';
+        canvas.style.left = '0';
+        canvas.style.pointerEvents = 'none';
+        canvas.style.zIndex = '350';
+        map.getPanes().overlayPane.appendChild(canvas);
+        canvasRef.current = canvas;
+        const draw = () => {
+            if (!canvas || !planeSprite) return;
+            const size = map.getSize();
+            const bounds = map.getBounds();
+            const topLeft = map.containerPointToLayerPoint([0, 0]);
+            L.DomUtil.setPosition(canvas, topLeft);
+            canvas.width = size.x;
+            canvas.height = size.y;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            flights.forEach(f => {
+                const latLng = L.latLng(f.lat, f.lon);
+                if (!bounds.contains(latLng)) return;
+                const p = map.latLngToContainerPoint(latLng);
+                ctx.save();
+                ctx.translate(p.x, p.y);
+                ctx.rotate(f.angle * Math.PI / 180);
+                ctx.drawImage(planeSprite, -planeSprite.width / 2, -planeSprite.height / 2);
+                ctx.restore();
+            });
+        };
+        let animationFrameId: number;
+        const onUpdate = () => {
+            cancelAnimationFrame(animationFrameId);
+            animationFrameId = requestAnimationFrame(draw);
+        };
+        map.on('move', onUpdate);
+        map.on('zoom', onUpdate);
+        map.on('viewreset', onUpdate);
+        map.on('moveend', onUpdate);
+        draw();
+        return () => {
+            cancelAnimationFrame(animationFrameId);
+            map.off('move', onUpdate);
+            map.off('zoom', onUpdate);
+            map.off('viewreset', onUpdate);
+            map.off('moveend', onUpdate);
+            if (canvas.parentNode) canvas.parentNode.removeChild(canvas);
+        };
+    }, [map, flights, planeSprite]);
+    return null;
 };
 
+// --- ESTILOS E ICONOS ---
+const getStatusColor = (pct: number) => {
+  if (pct === 0) return '#22c55e';
+  if (pct < 10) return '#22c55e';
+  if (pct < 20) return '#eab308';
+  if (pct <= 30) return '#ef4444';
+  return '#ef4444';
+};
 const getAirportIcon = (pct: number, forPopup = false, lat?: number, _northBound?: number) => {
   const color = getStatusColor(pct);
   const animId = `airport-${Math.random().toString(36).substr(2, 9)}`;
   const size = forPopup ? 20 : 20;
   const iconSize = forPopup ? 12 : 12;
-
-  // Lógica de posicionamiento de B (Mejorada)
   const nearTop = lat !== undefined ? lat > 10 : false;
   const anchorY = size;
   const popupY = nearTop ? 295 : -30;
-
   return L.divIcon({
     className: 'bg-transparent border-none',
     html: `
@@ -64,7 +136,6 @@ const getAirportIcon = (pct: number, forPopup = false, lat?: number, _northBound
     popupAnchor: [0, popupY],
   });
 };
-
 const getHubIcon = (pct: number, hubHex?: string, forPopup = false, lat?: number, _northBound?: number): L.DivIcon => {
   const fallback = getStatusColor(pct);
   const colorHex = hubHex ?? fallback;
@@ -73,11 +144,9 @@ const getHubIcon = (pct: number, hubHex?: string, forPopup = false, lat?: number
   const innerSize = forPopup ? 18 : 34;
   const iconSize = forPopup ? 18 : 22;
   const borderWidth = forPopup ? 2 : 3;
-
   const nearTop = lat !== undefined ? lat > -10 : false;
   const anchorY = 10;
   const popupY = nearTop ? 170 : -25;
-
   const html = forPopup ? `
       <div style="position: relative; width: ${outerSize}px; height: ${outerSize}px; display: inline-block;">
         <div style="position: absolute; top: 0; left: 0; width: ${outerSize}px; height: ${outerSize}px; border-radius: 50%; border: 2px dashed ${colorHex}; opacity: 0.5;"></div>
@@ -108,7 +177,6 @@ const getHubIcon = (pct: number, hubHex?: string, forPopup = false, lat?: number
         </div>
       </div>
     `;
-
   return L.divIcon({
     className: 'bg-transparent border-none',
     html,
@@ -117,7 +185,6 @@ const getHubIcon = (pct: number, hubHex?: string, forPopup = false, lat?: number
     popupAnchor: [0, popupY],
   });
 };
-
 // Fix básico de Leaflet
 const iconProto = L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown };
 delete iconProto._getIconUrl;
@@ -126,12 +193,9 @@ L.Icon.Default.mergeOptions({
   iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
-
-// --- UTILS GEO / MATH (BASE CODIGO B) ---
-
+// --- UTILS GEO / MATH ---
 const toRad = (deg: number) => (deg * Math.PI) / 180;
 const toDeg = (rad: number) => (rad * 180) / Math.PI;
-
 const haversine = (a: [number, number], b: [number, number]) => {
   const R = 6371e3;
   const lat1 = toRad(a[0]);
@@ -143,7 +207,6 @@ const haversine = (a: [number, number], b: [number, number]) => {
   const h = sinLat * sinLat + Math.cos(lat1) * Math.cos(lat2) * sinLon * sinLon;
   return 2 * R * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
 };
-
 const bearingBetween = (from: [number, number], to: [number, number]) => {
   const lat1 = toRad(from[0]);
   const lat2 = toRad(to[0]);
@@ -152,7 +215,6 @@ const bearingBetween = (from: [number, number], to: [number, number]) => {
   const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
   return (toDeg(Math.atan2(y, x)) + 360) % 360;
 };
-
 const greatCirclePath = (from: [number, number], to: [number, number], steps = 64): [number, number][] => {
   const [lat1, lon1] = from.map(toRad);
   const [lat2, lon2] = to.map(toRad);
@@ -227,7 +289,6 @@ const getRemainingPath = (path: [number, number][], progress: number): [number, 
 };
 
 // --- COMPONENTES AUXILIARES ---
-
 function MapResizer({ isLoading }: { isLoading: boolean }) {
   const map = useMap();
   useEffect(() => {
@@ -250,8 +311,6 @@ function MapClickReset({ onClear }: { onClear?: () => void }) {
 }
 
 // --- LOGICA DE NEGOCIO ---
-
-// Importante: Conservamos la lista completa de hubs del código A
 const isMainHub = (code: string) => {
     const c = code ? code.toUpperCase() : '';
     return ['SPIM','UBBB','EBCI','LIM','GYD','BRU','CRL'].includes(c);
@@ -303,6 +362,7 @@ interface MapaVuelosProps {
   aeropuertos: Airport[];
   isLoading: boolean;
   vuelosEnMovimiento: VueloEnMovimiento[];
+  ghostFlights?: GhostFlight[];
   filtroHubActivo: string;
   activeAirports?: ActiveAirportTick[];
   onSelectOrders?: (orderIds: string[] | null) => void;
@@ -312,12 +372,12 @@ interface MapaVuelosProps {
   selectedAirportIds?: string[] | null;
   onSelectAirport?: (airportId: string | null) => void;
 }
-
 export function MapaVuelos({
   activeSegments,
   aeropuertos,
   isLoading,
   vuelosEnMovimiento,
+  ghostFlights = [],
   filtroHubActivo,
   activeAirports = [],
   onSelectOrders,
@@ -329,8 +389,6 @@ export function MapaVuelos({
 }: MapaVuelosProps) {
   const initialPosition: LatLngExpression = [15, 0];
   const [mapTheme, setMapTheme] = useState<'light' | 'dark'>('dark');
-
-  // Detección de tema (Código B es más completo con 'business')
   useEffect(() => {
     const resolveTheme = () => {
       const theme = (document.documentElement.getAttribute('data-theme') || '').toLowerCase();
@@ -347,7 +405,6 @@ export function MapaVuelos({
       .filter((a) => typeof a.latitude === 'number' && typeof a.longitude === 'number')
       .map((a) => [a.id, [a.latitude, a.longitude]])
   );
-
   const maxBounds = useMemo(() => {
     if (!aeropuertos.length) return null;
     const lats = aeropuertos.map(a => a.latitude).filter(n => typeof n === 'number');
@@ -359,7 +416,6 @@ export function MapaVuelos({
       [Math.max(...lats) + padding, Math.max(...lngs) + padding]
     ];
   }, [aeropuertos]);
-
   const northBound = maxBounds ? maxBounds[1][0] : 90;
   const popupOffsetForLat = (lat: number): [number, number] => (lat > -10) ? [0, 260] : [0, 32];
 
@@ -370,11 +426,12 @@ export function MapaVuelos({
     return m;
   }, [activeSegments]);
 
-  // Lógica de Highlights (Conservamos la del Código A que es más completa para rutas conectadas)
   const airportHighlights = useMemo(() => {
     const set = new Set<string>();
-    if (selectedAirportIds?.length) selectedAirportIds.forEach(a => a && set.add(a));
-    if (selectedOrders?.length) {
+    if (Array.isArray(selectedAirportIds)) {
+        selectedAirportIds.forEach(a => a && set.add(a));
+    }
+    if (Array.isArray(selectedOrders) && selectedOrders.length > 0) {
       activeAirports.forEach(a => {
         if (a.orderLoads?.some(ol => selectedOrders.includes(ol.orderId))) set.add(a.airportCode);
       });
@@ -383,8 +440,7 @@ export function MapaVuelos({
       const seg = segmentsMap.get(selectedFlightId);
       if (seg) { set.add(seg.origin); set.add(seg.destination); }
     }
-    // FEATURE IMPORTANTE DE CODIGO A: Resaltar destinos conectados
-    if (selectedAirportIds?.length) {
+    if (Array.isArray(selectedAirportIds) && selectedAirportIds.length > 0) {
       activeSegments.forEach(seg => {
         if (selectedAirportIds.includes(seg.origin)) set.add(seg.destination);
         if (selectedAirportIds.includes(seg.destination)) set.add(seg.origin);
@@ -417,43 +473,74 @@ export function MapaVuelos({
         <TileLayer key="light" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution='&copy; OpenStreetMap contributors' noWrap={false} />
       )}
       <MapResizer isLoading={isLoading} />
+          <div className="leaflet-bottom leaflet-left m-2 z-[200] pointer-events-auto">
+            <div className="relative overflow-hidden rounded-xl shadow-2xl border border-base-content/20 w-44 bg-white">
+              <div className="p-2.5">
+                <div className="flex items-center gap-2 mb-2 pb-1.5 border-b border-base-content/10">
+                  <h4 className="font-black text-xs text-gray-800 uppercase tracking-widest">
+                    Leyenda
+                  </h4>
+                </div>
 
-      {/* LEYENDA (VERSION A: MÁS DETALLADA Y BONITA) */}
-      <div className="leaflet-bottom leaflet-left m-2 z-[200] pointer-events-auto">
-        <div className="card compact bg-base-100/90 shadow-xl border border-base-content/10 text-[10px] p-2 backdrop-blur-sm w-36">
-          <h4 className="font-bold mb-1 text-base-content uppercase tracking-wider border-b border-base-content/10 pb-1">
-            Leyenda
-          </h4>
-          <ul className="space-y-2 font-semibold">
-            <li className="flex items-center gap-2">
-              <div className="flex items-center justify-center w-4 h-4">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-base-content/80">
-                  <path d="M4 16h16"/> <path d="M4 20h16"/> <path d="M8 12h8l-2-8H10l-2 8Z"/>
-                  <circle cx="12" cy="2" r="1.5" fill="currentColor"/>
-                  <path d="M17.8 19.2 16 11l3.5-3.5" opacity="0.8"/> <path d="M6.2 19.2 8 11 4.5 7.5" opacity="0.8"/>
-                </svg>
+                <ul className="space-y-1.5 text-[11px] font-semibold text-gray-700">
+                  {/* Hub Principal */}
+                  <li className="flex items-center gap-2">
+                    <div className="flex items-center justify-center w-4 h-4">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-base-content/80">
+                        <path d="M4 16h16"/> <path d="M4 20h16"/> <path d="M8 12h8l-2-8H10l-2 8Z"/>
+                        <circle cx="12" cy="2" r="1.5" fill="currentColor"/>
+                        <path d="M17.8 19.2 16 11l3.5-3.5" opacity="0.8"/> <path d="M6.2 19.2 8 11 4.5 7.5" opacity="0.8"/>
+                      </svg>
+                    </div>
+                    <span>Sedes</span>
+                  </li>
+
+                  {/* Aeropuerto */}
+                  <li className="flex items-center gap-2 group hover:bg-gray-100 -mx-1 px-1 py-0.5 rounded transition-all">
+                    <div className="flex items-center justify-center" style={{width: '18px', height: '18px'}}>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="#1f2937" stroke="#1f2937" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/>
+                      </svg>
+                    </div>
+                    <span className="group-hover:translate-x-0.5 transition-transform">Aeropuerto</span>
+                  </li>
+                  {/* Separador */}
+                  <li className="!my-1.5 border-t border-base-content/10"></li>
+                  {/* Ruta de vuelo */}
+                  <li className="flex items-center gap-2 group hover:bg-gray-100 -mx-1 px-1 py-0.5 rounded transition-all">
+                    <div className="flex items-center justify-center" style={{width: '18px', height: '18px'}}>
+                      <span className="h-[2px] w-3.5 border-t-2 border-dashed border-info"></span>
+                    </div>
+                    <span className="group-hover:translate-x-0.5 transition-transform">Tramo activo</span>
+                  </li>
+                  {/* Vuelo con carga */}
+                  <li className="flex items-center gap-2 group hover:bg-gray-100 -mx-1 px-1 py-0.5 rounded transition-all">
+                    <div className="flex items-center justify-center" style={{width: '18px', height: '18px'}}>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 1024 1024" fill="#22c55e" style={{filter: 'drop-shadow(0px 1px 2px rgba(34, 197, 94, 0.5))'}}>
+                        <path d="M597.333333 381.738667L938.666667 597.333333v85.333334l-341.333334-107.776v228.693333l128 71.082667V938.666667l-192-42.666667L341.333333 938.666667v-64l128-71.125334v-228.693333L128 682.666667v-85.333334l341.333333-215.594666V149.333333a64 64 0 0 1 128 0v232.405334z" />
+                      </svg>
+                    </div>
+                    <span className="group-hover:translate-x-0.5 transition-transform">Vuelo con carga</span>
+                  </li>
+                  {/* Vuelo vacío */}
+                  <li className="flex items-center gap-2 group hover:bg-gray-100 -mx-1 px-1 py-0.5 rounded transition-all">
+                    <div className="flex items-center justify-center" style={{width: '18px', height: '18px'}}>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 1024 1024" fill="#9ca3af" opacity="0.6">
+                        <path d="M597.333333 381.738667L938.666667 597.333333v85.333334l-341.333334-107.776v228.693333l128 71.082667V938.666667l-192-42.666667L341.333333 938.666667v-64l128-71.125334v-228.693333L128 682.666667v-85.333334l341.333333-215.594666V149.333333a64 64 0 0 1 128 0v232.405334z" />
+                      </svg>
+                    </div>
+                    <span className="group-hover:translate-x-0.5 transition-transform">Vuelo vacío</span>
+                  </li>
+                </ul>
               </div>
-              <span>Aeropuerto</span>
-            </li>
-            <li className="flex items-center gap-2">
-              <span className="h-[2px] w-3 border-t border-dashed border-info"></span>
-              <span>Vuelo en progreso</span>
-            </li>
-            <li className="flex items-center gap-2">
-              <Plane size={14} className="text-base-content" />
-              <span>Avión</span>
-            </li>
-          </ul>
-        </div>
-      </div>
-
+            </div>
+          </div>
       {/* AEROPUERTOS */}
       {aeropuertos.slice(0, 50).map(aeropuerto => {
         const esSede = isMainHub(aeropuerto.id || aeropuerto.code || '');
         const live = activeAirports.find(a => a.airportCode === (aeropuerto.id || aeropuerto.code));
         const stockActual = live?.currentLoad ?? 0;
         const capacidadMax = live?.maxThroughputPerHour ?? aeropuerto.storageCapacity ?? 0;
-        // Lista unificada de infinitos
         const targetInfinite = ['SPIM', 'LIM', 'EBCI', 'BRU', 'UBBB', 'GYD'];
         const isInfinite = targetInfinite.includes(aeropuerto.id) || targetInfinite.includes(aeropuerto.code);
 
@@ -461,7 +548,6 @@ export function MapaVuelos({
             ? 0
             : Math.min(100, Math.round((stockActual / capacidadMax) * 100));
 
-        // Lógica de colores de B
         let statusColorClass = 'text-success';
         let progressClass = 'progress-success';
         if (!isInfinite) {
@@ -470,7 +556,7 @@ export function MapaVuelos({
         }
 
         const vuelosSalientes = activeSegments.filter(s => s.origin === (aeropuerto.id || aeropuerto.code));
-        const hasSelection = (selectedOrders && selectedOrders.length > 0) || !!selectedFlightId;
+        const hasSelection = (Array.isArray(selectedOrders) && selectedOrders.length > 0) || !!selectedFlightId;
 
         return (
           <Marker
@@ -500,7 +586,6 @@ export function MapaVuelos({
               </Tooltip>
             )}
 
-            {/* POPUP DE AEROPUERTO (FUSIONADO: ESTILO B + OUTGOING ORDERS DE A) */}
             <Popup className="p-0 overflow-hidden rounded-xl thin-popup" minWidth={200} autoPan={false}>
               <div className={`text-base-content text-xs w-60 overflow-hidden transition-all duration-300 ${hasSelection ? 'bg-base-100/75 backdrop-blur-md border border-base-content/10 shadow-sm' : 'bg-base-100 shadow-xl'}`}>
                 <div className={`p-2 border-b border-base-content/10 flex items-center gap-2 ${hasSelection ? 'bg-base-200/40' : 'bg-base-200'}`}>
@@ -532,7 +617,6 @@ export function MapaVuelos({
                         </>
                     )}
 
-                    {/* Pedidos Salientes (Solo Hubs) - FEATURE CLAVE RECUPERADA DE CODIGO A */}
                     {esSede && (
                         <div className="border-t border-base-content/10 pt-2">
                             <div className="text-[10px] font-semibold uppercase opacity-70"><span>Pedidos Salientes</span></div>
@@ -552,7 +636,6 @@ export function MapaVuelos({
                       </div>
                       <FlightsList
                         vuelos={vuelosSalientes}
-                        //onSelectFlight={selectedFlightId}
                         onSelectFlight={onSelectFlight}
                         onSelectOrders={onSelectOrders}
                       />
@@ -564,61 +647,49 @@ export function MapaVuelos({
         );
       })}
 
-      {/* RUTAS (Conservando lógica de highlighting de A) */}
+      {/* RUTAS */}
       {activeSegments.map((segmento) => {
           const origenCoords = coordsAeropuertos.get(segmento.origin);
           const destinoCoords = coordsAeropuertos.get(segmento.destination);
           if (!origenCoords || !destinoCoords) return null;
-
         const { hex: colorHex } = getHubColor(segmento.origin);
-        const hasOrderMatch = selectedOrders?.length
+        const hasOrderMatch = (Array.isArray(selectedOrders) && selectedOrders.length > 0)
             ? (segmento.orderLoads?.some(ol => selectedOrders.includes(ol.orderId)) || segmento.orderIds?.some(id => selectedOrders.includes(id)))
             : true;
-        const hasAirportMatch = selectedAirportIds?.length
+        const hasAirportMatch = (Array.isArray(selectedAirportIds) && selectedAirportIds.length > 0)
             ? selectedAirportIds.includes(segmento.origin) || selectedAirportIds.includes(segmento.destination)
             : true;
-
         const isSelected = selectedFlightId === segmento.id;
         const shouldHighlight = isSelected || (!selectedFlightId && hasOrderMatch && hasAirportMatch);
-        // Opacidad base para rutas inactivas vs activas (A tenia mejor contraste)
         const opacity = (!shouldHighlight) ? 0.1 : ((filtroHubActivo && segmento.origin !== filtroHubActivo) ? 0.1 : 0.4);
-
         const path = getCachedPath(origenCoords, destinoCoords, 64);
         pathsPorSegmento.current.set(segmento.id, path);
-
         const vueloMatch = vuelosEnMovimiento?.find(v => v.id === segmento.id);
         const polyPositions = vueloMatch ? getRemainingPath(path, vueloMatch.progreso) : path;
-
         if (!polyPositions || polyPositions.length < 2) return null;
-
         return <Polyline key={segmento.id} positions={polyPositions} pathOptions={{ color: colorHex, weight: 1.5, opacity, dashArray: '4, 8' }} />;
       })}
-
+      <GhostFlightsLayer flights={ghostFlights} />
       {/* AVIONES */}
       {vuelosEnMovimiento?.map((vuelo) => {
         const origenCoords = coordsAeropuertos.get(vuelo.origenCode);
         const destinoCoords = coordsAeropuertos.get(vuelo.destinoCode);
         if (!origenCoords || !destinoCoords) return null;
-
         const path = pathsPorSegmento.current.get(vuelo.id) ?? getCachedPath(origenCoords, destinoCoords, 64);
         const { coord, bearing } = positionAlongPath(path, vuelo.progreso);
         const segMatch = activeSegments.find(s => s.id === vuelo.id);
-
-        const hasOrderMatch = selectedOrders?.length
+        const hasOrderMatch = (Array.isArray(selectedOrders) && selectedOrders.length > 0)
             ? vuelo.pedidos.some(p => selectedOrders.includes(p.orderId)) || (segMatch?.orderLoads?.some(ol => selectedOrders.includes(ol.orderId)) ?? false)
             : true;
-        const hasAirportMatch = selectedAirportIds?.length
+        const hasAirportMatch = (Array.isArray(selectedAirportIds) && selectedAirportIds.length > 0)
             ? selectedAirportIds.includes(vuelo.origenCode) || selectedAirportIds.includes(vuelo.destinoCode)
             : true;
-
         const isSelected = selectedFlightId === vuelo.id;
         const dimmed = !(isSelected || (!selectedFlightId && hasOrderMatch && hasAirportMatch));
         const capacityPct = vuelo.capacidadTotal > 0 ? Math.round((vuelo.capacidadUsada / vuelo.capacidadTotal) * 100) : 0;
-
         const pedidosTooltip: OrderLoadView[] = vuelo.pedidos.length > 0
           ? vuelo.pedidos.map(p => ({ orderId: p.orderId, cantidad: p.cantidad }))
           : (segMatch?.orderLoads?.map(load => ({ orderId: load.orderId, cantidad: load.quantity })) ?? []);
-
         return (
           <Marker
             key={vuelo.id}
@@ -635,7 +706,6 @@ export function MapaVuelos({
               popupclose: () => { onSelectOrders?.(null); onSelectFlight?.(null); onSelectAirport?.(null); }
             }}
           >
-            {/* POPUP DE AVION (ESTILO MODERNO DE B) */}
             <Popup className="p-0 overflow-hidden rounded-xl thin-popup" maxWidth={320} autoPan={false} offset={popupOffsetForLat(coord[0])}>
               <div className="bg-base-100 text-base-content text-xs w-72 shadow-xl overflow-hidden">
                 <div className="bg-base-200 p-3 border-b border-base-content/10 flex justify-between items-center">
@@ -648,8 +718,8 @@ export function MapaVuelos({
                     <div><div className="font-black text-lg">{vuelo.destinoCode}</div><div className="text-[10px] opacity-70">{formatDateTime(vuelo.llegadaProgramada)}</div></div>
                 </div>
                 <div className="p-3 border-b border-base-content/10">
-                	<div className="flex justify-between mb-1 text-[10px] font-semibold uppercase opacity-70"><span>Capacidad de Bodega</span><span>{vuelo.capacidadUsada} / {vuelo.capacidadTotal}</span></div>
-                	<progress className={`progress w-full h-2 ${capacityPct >= 20 ? 'progress-error' : capacityPct >= 10 ? 'progress-warning' : 'progress-success'}`} value={vuelo.capacidadUsada} max={vuelo.capacidadTotal}></progress>
+                    <div className="flex justify-between mb-1 text-[10px] font-semibold uppercase opacity-70"><span>Capacidad de Bodega</span><span>{vuelo.capacidadUsada} / {vuelo.capacidadTotal}</span></div>
+                    <progress className={`progress w-full h-2 ${capacityPct >= 20 ? 'progress-error' : capacityPct >= 10 ? 'progress-warning' : 'progress-success'}`} value={vuelo.capacidadUsada} max={vuelo.capacidadTotal}></progress>
                 </div>
                 <OrdersList items={pedidosTooltip} selectedOrders={selectedOrders} onSelectOrder={(oid) => { onSelectOrders?.([oid]); onSelectFlight?.(vuelo.id); }} />
               </div>

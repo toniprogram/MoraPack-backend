@@ -1,16 +1,23 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { Client } from '@stomp/stompjs';
-import { useMutation, useQuery } from '@tanstack/react-query';
 import { planService } from '../services/planService';
 import { operationService } from '../services/operationService';
 import { aeropuertoService } from '../services/aeropuertoService';
 import type { Airport } from '../types/airport';
 import type { CurrentPlanResponse } from '../types/plan';
-import type { SimulationMessage } from '../types/simulation';
 
-// --- TIPOS (Mantenidos de versión A para soporte completo de Mapa) ---
-
+// --- TIPOS ---
+export interface GhostFlight {
+    id: string;
+    lat: number;
+    lon: number;
+    angle: number;
+    origin: string;
+    destination: string;
+    departureTime: string;
+    arrivalTime: string;
+}
 export interface SegmentoVuelo {
     id: string;
     flightId: string;
@@ -25,7 +32,6 @@ export interface SegmentoVuelo {
     capacityTotal?: number;
     orderLoads?: { orderId: string; quantity: number }[];
 }
-
 export interface VueloEnMovimiento {
     id: string;
     orderId: string;
@@ -49,7 +55,6 @@ export interface VueloEnMovimiento {
         cantidad: number;
     }[];
 }
-
 export interface OperationMetrics {
     totalOrders: number;
     deliveredOrders: number;
@@ -59,7 +64,6 @@ export interface OperationMetrics {
     slaPercentage: number;
     delayedOrders: number;
 }
-
 export interface OrderStatusDetail {
     currentFlightId: string;
     orderId: string;
@@ -84,43 +88,45 @@ export interface OrderStatusDetail {
         }>;
     }>;
 }
-
-// Interfaz rica para stocks (Código A)
 interface AirportLiveStatus {
     currentLoad: number;
     maxThroughputPerHour: number;
     orderLoads: { orderId: string; quantity: number }[];
 }
-
 export const useOperacion = () => {
     const [status, setStatus] = useState<'idle' | 'buffering' | 'running' | 'error'>('idle');
     const [isReplanning, setIsReplanning] = useState(false);
     const [isClearingPlan, setIsClearingPlan] = useState(false);
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
     const [, setPlanCache] = useState<Record<string, { quantity: number; routesDetail: OrderStatusDetail['routesDetail']; slackMinutes?: number }>>({});
-
-    // Paginación y Estado de Pedidos
     const [, setOrdersPage] = useState<{ total: number; page: number; size: number; items: OrderStatusDetail[] }>({
         total: 0,
         page: 0,
         size: 10,
         items: [],
     });
-    // Refs de optimización (Código B)
     const ordersPageRef = useRef(0);
     const visibleOrderIdsRef = useRef<Set<string>>(new Set());
-
     const { data: aeropuertos = [] } = useQuery<Airport[]>({
         queryKey: ['aeropuertos'],
         queryFn: aeropuertoService.getAll,
         staleTime: 1000 * 60 * 60,
     });
-
+    // --- Mapa de Coordenadas ---
+    const coordsMap = useMemo(() => {
+        const map = new Map<string, [number, number]>();
+        aeropuertos.forEach(a => {
+            if (a.id && a.latitude != null && a.longitude != null) {
+                map.set(a.id, [a.latitude, a.longitude]);
+                if (a.code) map.set(a.code, [a.latitude, a.longitude]);
+            }
+        });
+        return map;
+    }, [aeropuertos]);
     // --- CONTROL DE TIEMPO ---
     const [simClock, setSimClock] = useState<Date>(new Date());
     const [timeOffset, setTimeOffset] = useState<number>(0);
     const simClockRef = useRef<Date>(new Date());
-
     const setManualTime = (newDate: Date) => {
         const offset = newDate.getTime() - Date.now();
         setTimeOffset(offset);
@@ -129,19 +135,16 @@ export const useOperacion = () => {
         operationService.setTime(newDate.toISOString()).catch(() => {/* ignore */});
         loadOrders(newDate, 0);
     };
-
     const resetTime = () => {
         setTimeOffset(0);
         setSimClock(new Date());
     };
-
     // --- ESTADOS DE OPERACIÓN ---
     const [activeSegments, setActiveSegments] = useState<SegmentoVuelo[]>([]);
-    const [vuelosEnMovimiento, setVuelosEnMovimiento] = useState<VueloEnMovimiento[]>([]);
+    const [ghostFlights, setGhostFlights] = useState<GhostFlight[]>([]);
     const [orderStatusList, setOrderStatusList] = useState<OrderStatusDetail[]>([]);
     const [airportStocks, setAirportStocks] = useState<Record<string, AirportLiveStatus>>({});
     const stompClientRef = useRef<Client | null>(null);
-
     const [metrics, setMetrics] = useState<OperationMetrics>({
         totalOrders: 0,
         deliveredOrders: 0,
@@ -151,7 +154,6 @@ export const useOperacion = () => {
         slaPercentage: 100,
         delayedOrders: 0
     });
-
     // 1. Fetch Plan Base
     const fetchPlanBase = async () => {
         try {
@@ -179,7 +181,7 @@ export const useOperacion = () => {
         }
     };
 
-    // 2. Load Orders (Optimizado con Refs de B)
+    // 2. Load Orders
     const loadOrders = async (targetDate: Date, page = 0) => {
         try {
             const res = await operationService.getOrders(targetDate.toISOString(), page, 50);
@@ -213,7 +215,7 @@ export const useOperacion = () => {
                 size: res.size ?? 10,
                 items,
             });
-            ordersPageRef.current = res.page ?? page ?? 0; // Actualizamos Ref
+            ordersPageRef.current = res.page ?? page ?? 0;
             setOrderStatusList(items);
         } catch (e) {
             console.warn('No se pudo cargar pedidos paginados', e);
@@ -237,23 +239,13 @@ export const useOperacion = () => {
         return () => clearInterval(interval);
     }, [timeOffset]);
 
-    // 5. Cálculo de Posiciones (VuelosEnMovimiento) - Lógica de A
-    useEffect(() => {
-        if (!aeropuertos.length) return;
-        if (!activeSegments.length) {
-            setVuelosEnMovimiento([]);
-            return;
-        }
-        const nowMs = simClock.getTime();
-        const coordsMap = new Map<string, [number, number]>();
-        aeropuertos.forEach(a => {
-            if (a.id && a.latitude != null && a.longitude != null) {
-                coordsMap.set(a.id, [a.latitude, a.longitude]);
-                if (a.code) coordsMap.set(a.code, [a.latitude, a.longitude]);
-            }
-        });
+    // 5. Cálculo de Posiciones
+    const calculatePositions = (segments: SegmentoVuelo[], clock: Date): VueloEnMovimiento[] => {
+        if (!segments.length || coordsMap.size === 0) return [];
 
-        const calculated = activeSegments
+        const nowMs = clock.getTime();
+
+        return segments
             .map((seg, index) => {
                 const origen = coordsMap.get(seg.origin);
                 const destino = coordsMap.get(seg.destination);
@@ -262,6 +254,7 @@ export const useOperacion = () => {
                 const horaSalida = Date.parse(seg.departureUtc);
                 const horaLlegada = Date.parse(seg.arrivalUtc);
                 const duracion = horaLlegada - horaSalida;
+
                 if (nowMs < horaSalida) return null;
 
                 let progreso = 0;
@@ -305,10 +298,11 @@ export const useOperacion = () => {
                 };
             })
             .filter((v): v is VueloEnMovimiento => v !== null);
-
-        setVuelosEnMovimiento(calculated);
-    }, [activeSegments, simClock, aeropuertos]);
-
+    };
+    const vuelosEnMovimiento = useMemo(
+        () => calculatePositions(activeSegments, simClock),
+        [activeSegments, simClock, coordsMap]
+    );
     // 6. Mutaciones
     const runPlanningMutation = useMutation({
         mutationFn: () => planService.runPlanning(true),
@@ -327,13 +321,12 @@ export const useOperacion = () => {
             setStatus('error');
         }
     });
-
     const clearPlanMutation = useMutation({
         mutationFn: () => planService.resetAllPlans(),
         onMutate: () => setIsClearingPlan(true),
         onSuccess: () => {
             setActiveSegments([]);
-            setVuelosEnMovimiento([]);
+            setGhostFlights([]);
             setOrderStatusList([]);
             setAirportStocks({});
             setPlanCache({});
@@ -346,8 +339,7 @@ export const useOperacion = () => {
         },
         onSettled: () => setIsClearingPlan(false)
     });
-
-    // 7. Actualización periódica y Ref de visibilidad (Código B)
+    // 7. Actualización periódica
     useEffect(() => {
         visibleOrderIdsRef.current = new Set(orderStatusList.map(o => o.orderId));
     }, [orderStatusList]);
@@ -359,8 +351,7 @@ export const useOperacion = () => {
         }, 60000);
         return () => clearInterval(interval);
     }, []);
-
-    // 8. Métricas en Frontend (Código A)
+    // 8. Métricas
     useEffect(() => {
         if (!activeSegments.length && !orderStatusList.length) return;
         const nowMs = simClock.getTime();
@@ -386,8 +377,24 @@ export const useOperacion = () => {
             ordersInTransit: pedidosEnVuelo,
         }));
     }, [simClock, activeSegments, orderStatusList]);
-
-    // 9. WebSocket (HÍBRIDO: A + B)
+    // Helper para mapear
+    const mapSegments = (rawList: any[]): SegmentoVuelo[] => {
+        return rawList.map((s: any) => ({
+            id: s.id,
+            flightId: s.flightId,
+            origin: s.origin,
+            destination: s.destination,
+            departureUtc: s.departureUtc,
+            arrivalUtc: s.arrivalUtc,
+            orderIds: s.orderIds ?? [],
+            retrasado: false,
+            routeQuantity: s.capacityUsed,
+            capacityUsed: s.capacityUsed,
+            capacityTotal: s.capacityTotal,
+            orderLoads: s.orderLoads ?? []
+        }));
+    };
+    // 9. WebSocket
     useEffect(() => {
         const resolveWsUrl = () => {
             const envWs = import.meta.env.VITE_WS_URL as string | undefined;
@@ -403,31 +410,21 @@ export const useOperacion = () => {
             onConnect: () => {
                 client.subscribe('/topic/ops/current', (message) => {
                     try {
-                        const parsed: SimulationMessage & { changedOrderIds?: string[] } = JSON.parse(message.body);
+                        const parsed = JSON.parse(message.body);
+                        const tickData = parsed.operationTick || parsed.tick;
 
-                        // LOGICA DE A: Animación fluida de mapa
-                        if (parsed.tick) {
-                            if (parsed.tick.activeSegments) {
-                                const mapped: SegmentoVuelo[] = parsed.tick.activeSegments.map((s: any) => ({
-                                    id: s.id,
-                                    flightId: s.flightId,
-                                    origin: s.origin,
-                                    destination: s.destination,
-                                    departureUtc: s.departureUtc,
-                                    arrivalUtc: s.arrivalUtc,
-                                    orderIds: s.orderIds ?? [],
-                                    retrasado: false,
-                                    routeQuantity: s.capacityUsed,
-                                    capacityUsed: s.capacityUsed,
-                                    capacityTotal: s.capacityTotal,
-                                    orderLoads: s.orderLoads ?? []
-                                }));
-                                setActiveSegments(mapped);
+                        if (tickData) {
+                            if (tickData.activeSegments) {
+                                setActiveSegments(mapSegments(tickData.activeSegments));
                             }
-
-                            if (parsed.tick.activeAirports) {
+                            if (tickData.ghostFlights) {
+                                setGhostFlights(tickData.ghostFlights);
+                            } else {
+                                if (parsed.operationTick) setGhostFlights([]);
+                            }
+                            if (tickData.activeAirports) {
                                 const stockMap: Record<string, AirportLiveStatus> = {};
-                                parsed.tick.activeAirports.forEach((a: any) => {
+                                tickData.activeAirports.forEach((a: any) => {
                                     stockMap[a.airportCode] = {
                                         currentLoad: a.currentLoad,
                                         maxThroughputPerHour: a.maxThroughputPerHour,
@@ -438,7 +435,6 @@ export const useOperacion = () => {
                             }
                         }
 
-                        // LOGICA DE B: Recarga inteligente de lista de pedidos
                         const changedIds = parsed.changedOrderIds || (parsed.tick as any)?.changedOrderIds;
                         if (changedIds?.length) {
                             const hasVisibleChange = changedIds.some((id: string) => visibleOrderIdsRef.current.has(id));
@@ -446,7 +442,6 @@ export const useOperacion = () => {
                                 loadOrders(simClockRef.current, ordersPageRef.current);
                             }
                         }
-
                     } catch (err) {
                         console.warn('No se pudo parsear tick de operación', err);
                     }
@@ -461,10 +456,10 @@ export const useOperacion = () => {
             stompClientRef.current = null;
         };
     }, []);
-
     return {
         aeropuertos,
         activeSegments,
+        ghostFlights,
         vuelosEnMovimiento,
         orderStatusList,
         airportStocks,

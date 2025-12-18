@@ -1,6 +1,7 @@
 package com.morapack.skyroute.operation.live;
 
 import com.morapack.skyroute.config.Config;
+import com.morapack.skyroute.operation.dto.GhostFlightTick; // <--- IMPORTANTE: Asegúrate de haber creado este Record
 import com.morapack.skyroute.simulation.dto.ActiveSegment;
 import com.morapack.skyroute.simulation.live.LiveFlight;
 import com.morapack.skyroute.simulation.live.LiveAirport;
@@ -21,10 +22,7 @@ import java.util.function.Consumer;
 
 /**
  * Clase dedicada EXCLUSIVAMENTE a la Operación en Vivo.
- * CORREGIDA:
- * 1. Arrivals: Esperan si no hay espacio (Hold pattern).
- * 2. Departures: Siempre salen (para liberar espacio) y no se borran si el aeropuerto está lleno.
- * 3. Inventario: Refleja stock real (Snapshot) en lugar de flujo acumulado.
+ * MODIFICADA: Implementa 'toGhostFlights' para renderizado eficiente de vuelos vacíos.
  */
 public class LiveOperationWorld {
     private final String operationId;
@@ -37,9 +35,11 @@ public class LiveOperationWorld {
     private final List<LiveFlight> completedFlights = new ArrayList<>();
     private final Map<String, LiveOrder> orders = new HashMap<>();
     private final Map<String, LiveAirport> airports = new HashMap<>();
+
     // Inventario por aeropuerto y pedido
     private final Map<String, Map<String, Integer>> airportInventory = new HashMap<>();
     private final PriorityQueue<ReleaseEvent> releaseQueue = new PriorityQueue<>(Comparator.comparing(ReleaseEvent::releaseTime));
+
     // KPIs en tiempo real
     private final Map<String, Integer> airportLoads = new HashMap<>();
     private final Map<String, Integer> maxObservedLoad = new HashMap<>();
@@ -134,7 +134,7 @@ public class LiveOperationWorld {
             boolean hasArrived = flight.hasArrived(currentSimTime);
             LiveAirport destAirport = airports.get(flight.getDestination());
 
-            // Lógica de espera (Holding): Si llegó pero no hay espacio, no aterriza (se queda en activeFlights)
+            // Lógica de espera (Holding): Si llegó pero no hay espacio, no aterriza
             if (hasArrived && destAirport != null && !destAirport.canProcess(flight.getCapacityUsed())) {
                 continue;
             }
@@ -174,7 +174,6 @@ public class LiveOperationWorld {
         toRemove.forEach(activeFlights::remove);
 
         // 2. SEGUNDO: Procesar vuelos programados (Departures)
-        // Eliminamos el bloqueo aquí para que los aviones puedan SALIR y liberar espacio.
         while (!scheduledFlights.isEmpty() && !scheduledFlights.peek().getDepartureTime().isAfter(currentSimTime)) {
             LiveFlight flight = scheduledFlights.poll();
             scheduledByKey.remove(flight.getFlightId() + "|" + flight.getDepartureTime());
@@ -190,9 +189,6 @@ public class LiveOperationWorld {
                 });
                 recomputeAirportLoad(flight.getOrigin());
             }
-
-            // Ya no llamamos a origin.process() ni chequeamos canProcess() en la salida.
-            // La salida reduce inventario (gestionado arriba), no lo aumenta.
 
             flight.tryDepart();
             activeFlights.put(flight.getFlightId() + "|" + flight.getDepartureTime(), flight);
@@ -227,9 +223,76 @@ public class LiveOperationWorld {
 
     // --- MÉTODOS DE VISUALIZACIÓN ---
 
+    // 1. Obtiene SOLO los segmentos CON carga (formato completo ActiveSegment)
     public List<ActiveSegment> toActiveSegments() {
-        List<ActiveSegment> list = new ArrayList<>();
+        return generateSegments(true, false);
+    }
+
+    // 2. NUEVO: Obtiene SOLO los vuelos VACÍOS (formato ligero GhostFlightTick)
+    public List<GhostFlightTick> toGhostFlights() {
+        List<GhostFlightTick> ghosts = new ArrayList<>();
+
         for (LiveFlight flight : activeFlights.values()) {
+            // Si tiene carga, lo ignoramos (es un vuelo activo)
+            if (flight.getCapacityUsed() > 0) continue;
+
+            LiveAirport origin = airports.get(flight.getOrigin());
+            LiveAirport dest = airports.get(flight.getDestination());
+
+            if (origin != null && dest != null) {
+                Instant dep = flight.getDepartureTime();
+                Instant arr = flight.getArrivalTime();
+
+                // Si el vuelo no ha salido o ya llegó, continue
+                if (currentSimTime.isBefore(dep) || currentSimTime.isAfter(arr)) continue;
+
+                // Cálculos de posición
+                long total = arr.toEpochMilli() - dep.toEpochMilli();
+                long elapsed = currentSimTime.toEpochMilli() - dep.toEpochMilli();
+                double pct = total > 0 ? Math.min(1.0, Math.max(0.0, (double) elapsed / total)) : 0.0;
+
+                double lat = origin.getLatitude() + (dest.getLatitude() - origin.getLatitude()) * pct;
+                double lon = origin.getLongitude() + (dest.getLongitude() - origin.getLongitude()) * pct;
+
+                double angle = calculateBearing(origin.getLatitude(), origin.getLongitude(), dest.getLatitude(), dest.getLongitude());
+
+                // --- AGREGAMOS LOS DATOS NUEVOS AL DTO ---
+                ghosts.add(new GhostFlightTick(
+                        flight.getFlightId(),
+                        lat,
+                        lon,
+                        angle,
+                        flight.getOrigin(),                  // Origen
+                        flight.getDestination(),             // Destino
+                        flight.getDepartureTime().toString(),// Salida
+                        flight.getArrivalTime().toString()   // Llegada
+                ));
+            }
+        }
+        return ghosts;
+    }
+
+    // Helper matemático para calcular el rumbo (ángulo) entre dos coordenadas
+    private double calculateBearing(double lat1, double lon1, double lat2, double lon2) {
+        double dLon = Math.toRadians(lon2 - lon1);
+        double y = Math.sin(dLon) * Math.cos(Math.toRadians(lat2));
+        double x = Math.cos(Math.toRadians(lat1)) * Math.sin(Math.toRadians(lat2)) -
+                Math.sin(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) * Math.cos(dLon);
+        double brng = Math.toDegrees(Math.atan2(y, x));
+        return (brng + 360) % 360; // Normalizar a 0-360
+    }
+
+    // Helper original (modificado para aceptar flags) para generar segmentos completos
+    private List<ActiveSegment> generateSegments(boolean includeLoaded, boolean includeEmpty) {
+        List<ActiveSegment> list = new ArrayList<>();
+
+        for (LiveFlight flight : activeFlights.values()) {
+            boolean hasLoad = flight.getCapacityUsed() > 0;
+
+            // Filtros de inclusión
+            if (hasLoad && !includeLoaded) continue;
+            if (!hasLoad && !includeEmpty) continue;
+
             List<String> orderIds = new ArrayList<>(flight.getOrderLoads().keySet());
             List<OrderLoadTick> loads = flight.getOrderLoads().entrySet().stream()
                     .map(e -> new OrderLoadTick(e.getKey(), e.getValue()))
@@ -272,6 +335,8 @@ public class LiveOperationWorld {
         }
         return list;
     }
+
+    // --- RESTO DE MÉTODOS DE VISUALIZACIÓN ---
 
     public List<OrderStatusTick> buildOrderStatuses() {
         List<OrderStatusTick> list = new ArrayList<>();
@@ -362,7 +427,6 @@ public class LiveOperationWorld {
 
         LiveAirport airport = airports.get(airportCode);
         if (airport != null) {
-            // Reiniciar a 0 antes de poner el total para que sea "Foto del momento"
             airport.resetHour();
             airport.process(total);
         }

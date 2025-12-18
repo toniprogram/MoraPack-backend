@@ -3,7 +3,6 @@ package com.morapack.skyroute.operation.service;
 import com.morapack.skyroute.models.CurrentPlan;
 import com.morapack.skyroute.plan.service.PlanningService;
 import com.morapack.skyroute.simulation.dto.SimulationMessage;
-import com.morapack.skyroute.simulation.dto.SimulationTick;
 import com.morapack.skyroute.simulation.dto.ActiveSegment;
 import com.morapack.skyroute.simulation.dto.ActiveAirportTick;
 import com.morapack.skyroute.simulation.dto.OrderPlansDiff;
@@ -12,6 +11,8 @@ import com.morapack.skyroute.simulation.dto.OrderStatusTick;
 import com.morapack.skyroute.simulation.dto.SimulationPlanSummary;
 import com.morapack.skyroute.simulation.dto.OrderLoadTick;
 import com.morapack.skyroute.operation.live.LiveOperationWorld;
+import com.morapack.skyroute.operation.dto.OperationTick;
+import com.morapack.skyroute.operation.dto.GhostFlightTick;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
@@ -73,6 +74,7 @@ public class OperationSimulationService {
     public void setSimTime(Instant simTime) {
         initialize(simTime);
     }
+
     private void start() {
         if (running.getAndSet(true)) {
             return;
@@ -85,13 +87,19 @@ public class OperationSimulationService {
             try {
                 if (liveWorld == null) return;
                 liveWorld.tick(60); // 60 segundos de simulación por tick
-                SimulationTick tick = buildTick(liveWorld);
-                messagingTemplate.convertAndSend(TOPIC, SimulationMessage.progress(liveWorld.getOperationId(), null, tick));
+
+                // Construimos el OperationTick (DTO exclusivo de operación)
+                OperationTick tick = buildTick(liveWorld);
+
+                // Enviamos usando el método factory específico para operación
+                messagingTemplate.convertAndSend(TOPIC,
+                        SimulationMessage.operationProgress(liveWorld.getOperationId(), tick));
             } catch (Exception ex) {
                 log.warn("[OPS] Error on tick: {}", ex.getMessage());
             }
         }, 0, TICK_PERIOD_MS, TimeUnit.MILLISECONDS);
     }
+
     public void stop() {
         running.set(false);
         if (ticker != null) {
@@ -99,17 +107,25 @@ public class OperationSimulationService {
             ticker = null;
         }
     }
+
     private void sendTickNow() {
         if (liveWorld == null) return;
         try {
-            SimulationTick tick = buildTick(liveWorld);
-            messagingTemplate.convertAndSend(TOPIC, SimulationMessage.progress(liveWorld.getOperationId(), null, tick));
+            OperationTick tick = buildTick(liveWorld);
+            messagingTemplate.convertAndSend(TOPIC,
+                    SimulationMessage.operationProgress(liveWorld.getOperationId(), tick));
         } catch (Exception ex) {
             log.warn("[OPS] No se pudo enviar tick inmediato: {}", ex.getMessage());
         }
     }
-    private SimulationTick buildTick(LiveOperationWorld world) {
+
+    private OperationTick buildTick(LiveOperationWorld world) {
+        // 1. Obtener segmentos CON carga (Lógica estándar)
         List<ActiveSegment> actives = world.toActiveSegments();
+
+        // 2. Obtener segmentos VACÍOS (Nueva lógica para operación)
+        List<GhostFlightTick> ghosts = world.toGhostFlights();
+
         Map<String, Integer> loads = world.getAirportLoads();
         Map<String, Map<String, Integer>> inventory = world.getAirportInventory();
         List<OrderStatusTick> orderStatuses = world.buildOrderStatuses();
@@ -159,25 +175,26 @@ public class OperationSimulationService {
         int deliveredOrders = world.countDeliveredOrders();
         int inTransitOrders = world.countInTransitOrders();
 
-        return new SimulationTick(
+        // 3. Retornar el DTO de Operación con los segmentos vacíos inyectados
+        return new OperationTick(
                 world.getOperationId(),
                 world.getCurrentSimTime(),
                 TICK_PERIOD_MS,
                 1.0,
                 "running",
-                null,
-                List.of(),
+                List.of(), // orderPlans completo (opcional, enviamos vacío para ahorrar ancho de banda si no se usa)
                 new OrderPlansDiff(world.getCurrentSimTime(), List.of(), List.of(), List.of()),
-                actives,
+                actives,    // Segmentos cargados
+                ghosts,     // Segmentos vacíos
                 airportTicks,
                 deliveredOrders,
                 inTransitOrders,
-                List.of(), // orderStatuses
+                List.of(), // orderStatuses completo (opcional)
                 List.of(), // deliveredStatuses
                 List.of(), // plannedStatuses
-                List.of(), // nowInTransit
-                List.of(),  // planSummaries
-                List.of()   // changedOrderIds
+                List.of(), // nowInTransitIds
+                List.of(), // planSummaries
+                List.of()  // changedOrderIds
         );
     }
 }

@@ -42,12 +42,12 @@ export function SimTopBar({
             </span>
     
             <div className="tooltip tooltip-bottom pointer-events-auto" data-tip="Fecha de la simulación">
-              <div className="badge badge-neutral text-base-content text-[11px] font-mono shadow-sm border-base-content/10 whitespace-nowrap">
+              <div className="badge badge-neutral text-white text-[11px] font-mono shadow-sm border-base-content/10 whitespace-nowrap">
                 📅 {tiempoSimulado.toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })}
               </div>
             </div>
             <div className="tooltip tooltip-bottom pointer-events-auto" data-tip="Hora de la simulación">
-              <div className="badge badge-neutral text-base-content text-[11px] font-mono shadow-sm border-base-content/10 whitespace-nowrap">
+              <div className="badge badge-neutral text-white text-[11px] font-mono shadow-sm border-base-content/10 whitespace-nowrap">
                  🕒 {tiempoSimulado.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })}
               </div>
             </div>

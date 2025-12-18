@@ -3,7 +3,7 @@ import { Radio, Server, Package, Plane, RefreshCw, ChevronLeft, ChevronRight, Ch
 import type { Airport } from '../../types/airport';
 import type { ActiveAirportTick } from '../../types/simulation';
 import type { FlightGroup } from '../../types/simulacionUI';
-import type { OperationMetrics, OrderStatusDetail, SegmentoVuelo, VueloEnMovimiento } from '../../hooks/useOperacion';
+import type { OperationMetrics, OrderStatusDetail, SegmentoVuelo, VueloEnMovimiento, GhostFlight } from '../../hooks/useOperacion';
 import { SidebarVuelosPanel } from '../simulacion/SidebarVuelosPanel';
 import { SidebarAeropuertosPanel } from '../simulacion/SidebarAeropuertosPanel';
 import { PedidoCard, type PedidoCardData } from '../shared/PedidoCard';
@@ -13,6 +13,7 @@ import { SidebarFilters } from '../simulacion/SidebarFilters';
 interface OperacionSidebarProps {
   aeropuertos: Airport[];
   activeSegments: SegmentoVuelo[];
+  ghostFlights: GhostFlight[];
   activeAirports: ActiveAirportTick[];
   vuelosEnMovimiento: VueloEnMovimiento[];
   orderStatusList: OrderStatusDetail[];
@@ -23,6 +24,10 @@ interface OperacionSidebarProps {
   isReplanning: boolean;
   isClearingPlan: boolean;
   lastUpdated: Date | null;
+  selectedAirportIds: string[] | null;
+  onSelectAirport: (ids: string[] | null) => void;
+  selectedFlightId: string | null;
+  onSelectFlight: (id: string | null) => void;
   actions: {
     planificar: () => void;
     clearPlan: () => void;
@@ -34,27 +39,29 @@ interface OperacionSidebarProps {
   getInputValue: () => string;
   handleTimeChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
 }
-
 export function OperacionSidebar({
   aeropuertos,
   activeSegments,
+  ghostFlights,
   activeAirports,
   vuelosEnMovimiento,
   orderStatusList,
-  //metrics,
   status,
   simClock,
   isRealtime,
   isReplanning,
   isClearingPlan,
   lastUpdated,
+  selectedAirportIds,
+  onSelectAirport,
+  selectedFlightId,
+  onSelectFlight,
   actions,
   formatShortTime,
   getInputValue,
   handleTimeChange,
 }: OperacionSidebarProps) {
 
-  // --- ESTADOS Y CONTROL DE TIEMPO ---
   const inputValue = getInputValue();
   const canApplyTime = useMemo(() => {
     const parsed = new Date(inputValue);
@@ -62,14 +69,10 @@ export function OperacionSidebar({
     const simStr = simClock.toISOString().slice(0, 16);
     return inputValue !== simStr;
   }, [inputValue, simClock]);
-
   const [collapsed, setCollapsed] = useState(false);
   const [vistaPanel, setVistaPanel] = useState<'pedidos' | 'vuelos' | 'aeropuertos'>('pedidos');
-  const [selectedFlightId, setSelectedFlightId] = useState<string | null>(null);
-  const [selectedAirportIds, setSelectedAirportIds] = useState<string[] | null>(null);
   const [timeCollapsed, setTimeCollapsed] = useState(false);
-
-  // --- FILTROS ---
+  const [tipoVueloSidebar, setTipoVueloSidebar] = useState<'ocupados' | 'vacios'>('ocupados');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [hastaColapso, setHastaColapso] = useState(false);
@@ -77,40 +80,57 @@ export function OperacionSidebar({
   const [filtroTexto, setFiltroTexto] = useState('');
   const [filtroEstado, setFiltroEstado] = useState<'enproceso' | 'planificados' | 'entregados'>('enproceso');
   const panelScrollRef = useRef<HTMLDivElement | null>(null);
-
-  // --- LOGICA DE NEGOCIO (VUELOS) ---
-  // Calculamos grupos de vuelos, pero filtrando para NO mostrar vuelos futuros (Lógica de Código A)
   const flightGroups: FlightGroup[] = useMemo(() => {
       const nowMs = simClock.getTime();
-
-      const activeNow = activeSegments.filter(seg => {
-          const dep = Date.parse(seg.departureUtc);
-          // Solo mostramos vuelos que ya salieron o están saliendo
-          return dep <= nowMs;
-      });
-
-      return activeNow.map(seg => {
-        const dep = seg.departureUtc ? new Date(seg.departureUtc) : null;
-        const arr = seg.arrivalUtc ? new Date(seg.arrivalUtc) : null;
-        return {
-          segmentId: seg.id,
-          flightId: seg.flightId || seg.id,
-          origen: seg.origin,
-          destino: seg.destination,
-          pedidos: seg.orderIds || [],
-          hora: dep ? dep.toLocaleTimeString('es-PE', { timeZone: 'UTC', hour12: false, hour: '2-digit', minute: '2-digit' }) : '--:--',
-          horaLlegada: arr ? arr.toLocaleTimeString('es-PE', { timeZone: 'UTC', hour12: false, hour: '2-digit', minute: '2-digit' }) : '--:--',
-          fecha: dep ? dep.toLocaleDateString('es-PE', { timeZone: 'UTC', day: '2-digit', month: 'short' }) : '--/--',
-          departureUtc: seg.departureUtc,
-          arrivalUtc: seg.arrivalUtc,
-        };
-      });
-    }, [activeSegments, simClock]);
-
-  // --- SELECCION DE AEROPUERTOS ---
+      if (tipoVueloSidebar === 'ocupados') {
+          const activeNow = activeSegments.filter(seg => {
+              const dep = Date.parse(seg.departureUtc);
+              return dep <= nowMs;
+          });
+          return activeNow.map(seg => {
+            const dep = seg.departureUtc ? new Date(seg.departureUtc) : null;
+            const arr = seg.arrivalUtc ? new Date(seg.arrivalUtc) : null;
+            return {
+              uniqueKey: `active-${seg.id}`,
+              segmentId: seg.id,
+              flightId: seg.flightId || seg.id,
+              origen: seg.origin,
+              destino: seg.destination,
+              pedidos: seg.orderIds || [],
+              hora: dep ? dep.toLocaleTimeString('es-PE', { timeZone: 'UTC', hour12: false, hour: '2-digit', minute: '2-digit' }) : '--:--',
+              horaLlegada: arr ? arr.toLocaleTimeString('es-PE', { timeZone: 'UTC', hour12: false, hour: '2-digit', minute: '2-digit' }) : '--:--',
+              fecha: dep ? dep.toLocaleDateString('es-PE', { timeZone: 'UTC', day: '2-digit', month: 'short' }) : '--/--',
+              departureUtc: seg.departureUtc,
+              arrivalUtc: seg.arrivalUtc,
+            };
+          });
+      } else {
+          const ghostsNow = ghostFlights.filter(g => {
+             if(!g.departureTime) return false;
+             return Date.parse(g.departureTime) <= nowMs;
+          });
+          return ghostsNow.map(g => {
+             const dep = g.departureTime ? new Date(g.departureTime) : null;
+             const arr = g.arrivalTime ? new Date(g.arrivalTime) : null;
+             return {
+                 uniqueKey: `ghost-${g.id}`,
+                 segmentId: g.id,
+                 flightId: g.id,
+                 origen: g.origin,
+                 destino: g.destination,
+                 pedidos: [],
+                 hora: dep ? dep.toLocaleTimeString('es-PE', { timeZone: 'UTC', hour12: false, hour: '2-digit', minute: '2-digit' }) : '--:--',
+                 horaLlegada: arr ? arr.toLocaleTimeString('es-PE', { timeZone: 'UTC', hour12: false, hour: '2-digit', minute: '2-digit' }) : '--:--',
+                 fecha: dep ? dep.toLocaleDateString('es-PE', { timeZone: 'UTC', day: '2-digit', month: 'short' }) : '--/--',
+                 departureUtc: g.departureTime,
+                 arrivalUtc: g.arrivalTime
+             };
+          });
+      }
+  }, [activeSegments, ghostFlights, simClock, tipoVueloSidebar]);
   const handleSelectAirport = (airportId: string | null) => {
     if (!airportId) {
-      setSelectedAirportIds(null);
+      onSelectAirport(null);
       return;
     }
     const current = new Set(selectedAirportIds ?? []);
@@ -120,11 +140,9 @@ export function OperacionSidebar({
       current.add(airportId);
     }
     const next = Array.from(current);
-    setSelectedAirportIds(next.length > 0 ? next : null);
+    onSelectAirport(next.length > 0 ? next : null);
   };
-
   const isRealtimeDisabled = status === 'buffering' || isReplanning || !isRealtime;
-
   const mapEstado = (s: OrderStatusDetail['status']) => {
     switch (s) {
       case 'IN_FLIGHT': return 'En vuelo';
@@ -134,9 +152,6 @@ export function OperacionSidebar({
       default: return s;
     }
   };
-
-  // --- FILTRADO DE DATOS (TEXTO Y ESTADO) ---
-
   const filteredOrders = useMemo(() => {
     return orderStatusList.filter((o) => {
       if (filtroTexto) {
@@ -157,27 +172,14 @@ export function OperacionSidebar({
       return true;
     });
   }, [orderStatusList, filtroTexto, filtroHub, filtroEstado]);
-
-  // Filtramos vuelos por texto (Importante: Código B no tenía esto)
   const vuelosFiltrados = useMemo<FlightGroup[]>(() => {
         const term = filtroTexto.toLowerCase();
         if (!term) return flightGroups;
-
-        return flightGroups.filter(v => {
-          return (
-            v.flightId.toLowerCase().includes(term) ||
-            v.origen.toLowerCase().includes(term) ||
-            v.destino.toLowerCase().includes(term) ||
-            v.pedidos.some(p => p.toLowerCase().includes(term))
-          );
-        });
+        return flightGroups.filter(v => v.origen.toLowerCase().includes(term));
     }, [flightGroups, filtroTexto]);
-
-    // Filtramos aeropuertos por texto (Importante: Código B no tenía esto)
     const aeropuertosFiltrados = useMemo(() => {
         const term = filtroTexto.toLowerCase();
         if (!term) return aeropuertos;
-
         return aeropuertos.filter(a => {
           const nameMatch = a.name?.toLowerCase().includes(term);
           const cityMatch = (a as any).city?.toLowerCase().includes(term);
@@ -185,11 +187,8 @@ export function OperacionSidebar({
           return nameMatch || cityMatch || codeMatch;
         });
     }, [aeropuertos, filtroTexto]);
-
-
   return (
     <div className={`max-w-full flex flex-col bg-base-100 z-20 h-full max-h-full shrink-0 border-r border-base-300 shadow-lg transition-all overflow-hidden ${collapsed ? 'w-9' : 'w-80'}`}>
-      {/* HEADER */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-base-300 bg-base-100">
         {!collapsed && (
           <div className="flex items-center gap-2">
@@ -207,8 +206,6 @@ export function OperacionSidebar({
           {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
         </button>
       </div>
-
-      {/* ESTADO COLAPSADO */}
       {collapsed && (
         <div className="flex flex-col items-center gap-2 py-3 bg-base-100">
           <div className="tooltip tooltip-right" data-tip="Ejecutar planificador">
@@ -225,8 +222,6 @@ export function OperacionSidebar({
           </div>
         </div>
       )}
-
-      {/* CONTENIDO PRINCIPAL */}
       {!collapsed && (
       <>
         {/* CONTROL DE TIEMPO */}
@@ -292,7 +287,6 @@ export function OperacionSidebar({
               </div>
             </>
           )}
-
           {timeCollapsed && (
             <div className="flex items-center justify-between text-xs text-base-content/70 border border-base-300 rounded-lg px-2 py-1">
               <span className="font-mono">{getInputValue()}</span>
@@ -304,19 +298,11 @@ export function OperacionSidebar({
                 >
                   <RefreshCw size={12} />
                 </button>
-                <button
-                  onClick={() => actions.planificar()}
-                  disabled={isRealtimeDisabled}
-                  className="btn btn-primary btn-xs btn-square"
-                >
-                  {isReplanning ? <span className="loading loading-spinner loading-2xs"></span> : <Server size={12} />}
-                </button>
               </div>
             </div>
           )}
         </div>
-
-        {/* COMPONENTE DE FILTROS */}
+        {/* FILTROS */}
         <SidebarFilters
           ordenesParaSimular={[]}
           startDate={startDate}
@@ -336,8 +322,9 @@ export function OperacionSidebar({
           setFiltroEstado={setFiltroEstado}
           vistaPanel={vistaPanel === 'pedidos' ? 'envios' : vistaPanel}
           hideDateSection
+          tipoVuelo={tipoVueloSidebar}
+          setTipoVuelo={setTipoVueloSidebar}
         />
-
         <SidebarTabs
           activeKey={vistaPanel}
           onChange={(key) => setVistaPanel(key as typeof vistaPanel)}
@@ -347,10 +334,7 @@ export function OperacionSidebar({
             { key: 'aeropuertos', label: (<>Aeropuertos</>) },
           ]}
         />
-
         <div ref={panelScrollRef} className="flex-1 overflow-y-auto p-3 space-y-3 bg-base-200 scrollbar-thin scrollbar-thumb-base-300">
-
-          {/* VISTA DE PEDIDOS */}
           {vistaPanel === 'pedidos' && (
             <>
               {filteredOrders.length === 0 ? (
@@ -388,14 +372,13 @@ export function OperacionSidebar({
                     progressPct: order.progress,
                     rutas,
                   };
-
                   return (
                     <PedidoCard
                       key={order.orderId}
                       data={cardData}
                       isSelected={false}
                       hasSelection={false}
-                      currentTime={simClock} // Necesario para la barra de progreso
+                      currentTime={simClock}
                       onSelect={() => {}}
                     />
                   );
@@ -403,25 +386,23 @@ export function OperacionSidebar({
               )}
             </>
           )}
-
-          {/* VISTA DE VUELOS */}
           {vistaPanel === 'vuelos' && (
             <SidebarVuelosPanel
-              vuelosFiltrados={vuelosFiltrados} // Pasamos la lista filtrada por texto
+              vuelosFiltrados={vuelosFiltrados}
               vuelosTotal={flightGroups.length}
               vuelosEnMovimiento={vuelosEnMovimiento}
               selectedFlightId={selectedFlightId}
-              onSelectFlight={setSelectedFlightId}
+              onSelectFlight={onSelectFlight}
               scrollParent={panelScrollRef.current}
               selectedOrders={null}
               selectedAirportIds={selectedAirportIds}
+              currentTime={simClock}
+              tipoVuelo={tipoVueloSidebar}
             />
           )}
-
-          {/* VISTA DE AEROPUERTOS */}
           {vistaPanel === 'aeropuertos' && (
             <SidebarAeropuertosPanel
-              aeropuertos={aeropuertosFiltrados} // Pasamos la lista filtrada por texto
+              aeropuertos={aeropuertosFiltrados}
               activeAirports={activeAirports}
               activeSegments={activeSegments}
               selectedAirportIds={selectedAirportIds}
@@ -429,7 +410,7 @@ export function OperacionSidebar({
               selectedOrders={null}
               scrollParent={panelScrollRef.current}
               onSelectOrders={undefined}
-              onSelectFlight={setSelectedFlightId}
+              onSelectFlight={onSelectFlight}
             />
           )}
         </div>
