@@ -41,7 +41,7 @@ export function OperacionSidebar({
   activeAirports,
   vuelosEnMovimiento,
   orderStatusList,
-  metrics,
+  //metrics,
   status,
   simClock,
   isRealtime,

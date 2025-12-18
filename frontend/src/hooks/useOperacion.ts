@@ -7,7 +7,7 @@ import { operationService } from '../services/operationService';
 import { aeropuertoService } from '../services/aeropuertoService';
 import type { Airport } from '../types/airport';
 import type { CurrentPlanResponse } from '../types/plan';
-import type { ActiveAirportTick, SimulationMessage, OrderStatusDetail } from '../types/simulation';
+import type { SimulationMessage } from '../types/simulation';
 
 // --- TIPOS (Mantenidos de versión A para soporte completo de Mapa) ---
 
@@ -33,7 +33,7 @@ export interface VueloEnMovimiento {
     latActual: number;
     lonActual: number;
     progreso: number;
-    estadoVisual: 'en curso' | 'retrasado' | 'completado';
+    estadoVisual: 'en curso' | 'completado';
     origenCode: string;
     destinoCode: string;
     salidaProgramada: string;
@@ -60,6 +60,31 @@ export interface OperationMetrics {
     delayedOrders: number;
 }
 
+export interface OrderStatusDetail {
+    currentFlightId: string;
+    orderId: string;
+    status: 'WAITING' | 'IN_FLIGHT' | 'LAYOVER' | 'COMPLETED';
+    finalDestination: string;
+    originAirport: string;
+    quantity: number;
+    slackMinutes?: number;
+    progress: number;
+    isDelayed: boolean;
+    departureTime: string;
+    arrivalTime: string;
+    routesDetail: Array<{
+        routeIndex: number;
+        segments: Array<{
+            flightId: string;
+            origin: string;
+            destination: string;
+            departureUtc: string;
+            arrivalUtc: string;
+            quantity: number;
+        }>;
+    }>;
+}
+
 // Interfaz rica para stocks (Código A)
 interface AirportLiveStatus {
     currentLoad: number;
@@ -72,10 +97,10 @@ export const useOperacion = () => {
     const [isReplanning, setIsReplanning] = useState(false);
     const [isClearingPlan, setIsClearingPlan] = useState(false);
     const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-    const [planCache, setPlanCache] = useState<Record<string, { quantity: number; routesDetail: OrderStatusDetail['routesDetail']; slackMinutes?: number }>>({});
+    const [, setPlanCache] = useState<Record<string, { quantity: number; routesDetail: OrderStatusDetail['routesDetail']; slackMinutes?: number }>>({});
 
     // Paginación y Estado de Pedidos
-    const [ordersPage, setOrdersPage] = useState<{ total: number; page: number; size: number; items: OrderStatusDetail[] }>({
+    const [, setOrdersPage] = useState<{ total: number; page: number; size: number; items: OrderStatusDetail[] }>({
         total: 0,
         page: 0,
         size: 10,
@@ -228,56 +253,58 @@ export const useOperacion = () => {
             }
         });
 
-        const calculated = activeSegments.map((seg, index) => {
-            const origen = coordsMap.get(seg.origin);
-            const destino = coordsMap.get(seg.destination);
-            if (!origen || !destino) return null;
+        const calculated = activeSegments
+            .map((seg, index) => {
+                const origen = coordsMap.get(seg.origin);
+                const destino = coordsMap.get(seg.destination);
+                if (!origen || !destino) return null;
 
-            const horaSalida = Date.parse(seg.departureUtc);
-            const horaLlegada = Date.parse(seg.arrivalUtc);
-            const duracion = horaLlegada - horaSalida;
-            if (nowMs < horaSalida) return null;
+                const horaSalida = Date.parse(seg.departureUtc);
+                const horaLlegada = Date.parse(seg.arrivalUtc);
+                const duracion = horaLlegada - horaSalida;
+                if (nowMs < horaSalida) return null;
 
-            let progreso = 0;
-            let lat = origen[0];
-            let lon = origen[1];
-            let estado: 'en curso' | 'retrasado' | 'completado' = 'en curso';
+                let progreso = 0;
+                let lat = origen[0];
+                let lon = origen[1];
+                let estado: 'en curso' | 'completado' = 'en curso';
 
-            if (nowMs >= horaLlegada) {
-                progreso = 100;
-                estado = 'completado';
-                lat = destino[0];
-                lon = destino[1];
-            } else if (duracion > 0) {
-                progreso = ((nowMs - horaSalida) / duracion) * 100;
-                const ratio = progreso / 100;
-                const offsetLat = ((index % 5) - 2) * 0.15;
-                lat = origen[0] + (destino[0] - origen[0]) * ratio + offsetLat;
-                lon = origen[1] + (destino[1] - origen[1]) * ratio;
-            }
+                if (nowMs >= horaLlegada) {
+                    progreso = 100;
+                    estado = 'completado';
+                    lat = destino[0];
+                    lon = destino[1];
+                } else if (duracion > 0) {
+                    progreso = ((nowMs - horaSalida) / duracion) * 100;
+                    const ratio = progreso / 100;
+                    const offsetLat = ((index % 5) - 2) * 0.15;
+                    lat = origen[0] + (destino[0] - origen[0]) * ratio + offsetLat;
+                    lon = origen[1] + (destino[1] - origen[1]) * ratio;
+                }
 
-            return {
-                id: seg.id,
-                orderId: seg.orderIds.join(','),
-                flightId: seg.flightId,
-                latActual: lat,
-                lonActual: lon,
-                progreso: Math.max(0, Math.min(100, progreso)),
-                estadoVisual: estado,
-                origenCode: seg.origin,
-                destinoCode: seg.destination,
-                salidaProgramada: seg.departureUtc,
-                llegadaProgramada: seg.arrivalUtc,
-                capacidadTotal: seg.capacityTotal || 0,
-                capacidadUsada: seg.capacityUsed || 0,
-                pedidos: (seg.orderLoads || []).map(ol => ({
-                    orderId: ol.orderId,
-                    cantidad: ol.quantity,
-                    cliente: "---",
-                    fechaCreacion: "---"
-                }))
-            };
-        }).filter((v): v is VueloEnMovimiento => v !== null);
+                return {
+                    id: seg.id,
+                    orderId: seg.orderIds.join(','),
+                    flightId: seg.flightId,
+                    latActual: lat,
+                    lonActual: lon,
+                    progreso: Math.max(0, Math.min(100, progreso)),
+                    estadoVisual: estado,
+                    origenCode: seg.origin,
+                    destinoCode: seg.destination,
+                    salidaProgramada: seg.departureUtc,
+                    llegadaProgramada: seg.arrivalUtc,
+                    capacidadTotal: seg.capacityTotal || 0,
+                    capacidadUsada: seg.capacityUsed || 0,
+                    pedidos: (seg.orderLoads || []).map(ol => ({
+                        orderId: ol.orderId,
+                        cantidad: ol.quantity,
+                        cliente: "---",
+                        fechaCreacion: "---"
+                    }))
+                };
+            })
+            .filter((v): v is VueloEnMovimiento => v !== null);
 
         setVuelosEnMovimiento(calculated);
     }, [activeSegments, simClock, aeropuertos]);

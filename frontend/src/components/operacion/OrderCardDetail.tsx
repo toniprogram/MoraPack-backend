@@ -21,13 +21,13 @@ interface OrderCardProps {
 export function OrderCardDetail({ order, formatDateTime, currentTime }: OrderCardProps) {
 
     // Determinar si mostramos un vuelo específico o "Vuelo Dividido"
-    const displayFlightId = (() => {
+    /*const displayFlightId = (() => {
         if (order.currentFlightId) return order.currentFlightId;
         if (order.status === 'IN_FLIGHT' && order.routesDetail && order.routesDetail.length > 0) {
             return "VUELO DIVIDIDO";
         }
         return "---";
-    })();
+    })();*/
 
     const getStatusColor = (s: string, delayed: boolean) => {
         if (delayed) return 'border-l-4 border-l-red-500 bg-neutral-800';
