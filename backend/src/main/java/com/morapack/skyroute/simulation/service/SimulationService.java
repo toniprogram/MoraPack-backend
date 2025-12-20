@@ -366,10 +366,24 @@ public class SimulationService {
                 long targetStart = scheduleStartMillis + batchIndex * 30_000L; // cada 30s de reloj real
                 long targetEnd = targetStart + 15_000L; // GA con presupuesto de 15s
                 if (targetEnd <= now) {
-                    log.warn("[SIM:{}] GA schedule drifted (now={} ms past target end); resetting slot to now", session.id, now - targetEnd);
-                    targetStart = now;
-                    targetEnd = now + 15_000L;
-                    scheduleStartMillis = now; // resync cadence
+                    long driftMs = now - targetEnd;
+                    log.warn("[SIM:{}] GA schedule drifted {} ms past target end; pausing simulation time to realign", session.id, driftMs);
+                    boolean tickerWasRunning = session.ticker != null && !session.ticker.isCancelled();
+                    if (tickerWasRunning) {
+                        stopTicker(session);
+                    }
+                    try {
+                        Thread.sleep(driftMs);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                    }
+                    if (tickerWasRunning && !session.cancelled.get()) {
+                        startTicker(session);
+                    }
+                    scheduleStartMillis += driftMs; // desplaza la cadencia futura
+                    targetStart = scheduleStartMillis + batchIndex * 30_000L;
+                    targetEnd = targetStart + 15_000L;
+                    now = System.currentTimeMillis();
                 }
                 long waitMs = targetStart - now;
                 while (waitMs > 0 && !session.cancelled.get()) {
