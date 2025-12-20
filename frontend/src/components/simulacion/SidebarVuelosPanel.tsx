@@ -1,4 +1,4 @@
-import { Plane, Box, Clock } from 'lucide-react'; // Eliminado Wind si no se usa en iconos de tarjeta
+import { Plane, Box, Clock } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { VueloEnMovimiento } from '../../hooks/useSimulacion';
 import type { FlightGroup } from '../../types/simulacionUI';
@@ -189,7 +189,7 @@ export function SidebarVuelosPanel({
                   {!isVacio && vuelo.pedidos.length > 0 && (
                     <div className="mt-1 pt-2 border-t border-base-200 mb-1">
                         <p className="text-[10px] font-bold text-base-content/60 mb-1 uppercase tracking-wide flex items-center gap-1">
-                           <Box size={10}/> Carga ({vuelo.pedidos.length})
+                           <Box size={10}/> Pedidos ({vuelo.pedidos.length})
                         </p>
                         <OrdersList items={pedidosList} />
                     </div>

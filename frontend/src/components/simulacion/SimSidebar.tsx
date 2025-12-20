@@ -1,4 +1,4 @@
-import { Package, Plane, ChevronLeft, ChevronRight, Play, Pause, XCircle } from 'lucide-react';
+import { Package, Plane, ChevronLeft, ChevronRight, Play, Pause, XCircle, Building } from 'lucide-react'; // Agregué Building para icono aeropuertos
 import { SidebarFilters } from './SidebarFilters';
 import { useState, useRef } from 'react';
 import { SidebarEnviosPanel } from './SidebarEnviosPanel';
@@ -57,6 +57,7 @@ interface SimSidebarProps {
   onSelectAirport: (airportId: string | null) => void;
   animPaused: boolean;
   status: string;
+  currentTime?: Date | null;
 }
 
 export function SimSidebar({
@@ -102,16 +103,20 @@ export function SimSidebar({
   onSelectAirport,
   animPaused,
   status,
+  currentTime
 }: SimSidebarProps) {
-  const [collapsed, setCollapsed] = useState(true);
+  const [collapsed, setCollapsed] = useState(true); // Estaba en true por defecto
   const enviosToShow = enviosFiltrados;
   const vuelosToShow = vuelosFiltrados;
   const scrollRef = useRef<HTMLDivElement>(null);
   const controlIsDisabled = estaSincronizando || isStarting;
   const terminarDisabled = isStarting ? true : (!estaActivo && !estaVisualizando);
   const isPaused = animPaused || status === 'paused';
+
   return (
     <div className={`bg-base-100 shadow-lg flex flex-col border-r border-base-300 transition-all ${collapsed ? 'w-9' : 'w-80'}`}>
+
+      {/* HEADER */}
       <div className="flex items-center justify-between px-2 py-1 border-b border-base-300">
         <div className={`flex items-center gap-2 ${collapsed ? 'hidden' : ''}`}>
           <span className="font-semibold text-xs ml-1 tracking-wide">Parámetros de simulación</span>
@@ -124,6 +129,8 @@ export function SimSidebar({
           {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
         </button>
       </div>
+
+      {/* CONTROLES MINIATURA */}
       {collapsed && (
         <div className="flex flex-col items-center gap-2 pb-2 pt-2">
           <button
@@ -150,6 +157,8 @@ export function SimSidebar({
           </button>
         </div>
       )}
+
+      {/* FILTROS Y CONTROLES GRANDES */}
       {!collapsed && (
       <>
         <SidebarFilters
@@ -188,6 +197,7 @@ export function SimSidebar({
       </>
       )}
 
+      {/* TABS DE NAVEGACIÓN */}
       {!collapsed && (
       <div className="flex border-b border-base-300 bg-base-200">
         <button
@@ -220,11 +230,13 @@ export function SimSidebar({
           }`}
           onClick={() => setVistaPanel('aeropuertos')}
         >
+          <Building size={16} className="inline mr-1" />
           Aeropuertos
         </button>
       </div>
       )}
 
+      {/* CONTENIDO SCROLLEABLE */}
       <div ref={scrollRef} className={`flex-1 overflow-y-auto p-3 space-y-2 bg-base-100 ${collapsed ? 'p-0' : ''}`}>
         { !collapsed && vistaPanel === 'envios' && (
           <SidebarEnviosPanel
@@ -236,6 +248,7 @@ export function SimSidebar({
             onOrdersPageChange={onOrdersPageChange}
             selectedOrders={selectedOrderIds}
             onSelectOrders={onSelectOrders}
+            currentTime={currentTime}
           />
         )}
 
@@ -248,7 +261,7 @@ export function SimSidebar({
             onSelectFlight={onSelectFlight}
             selectedOrders={selectedOrderIds}
             selectedAirportIds={selectedAirportIds}
-            currentTime={new Date()}
+            currentTime={currentTime || new Date()}
           />
         )}
 
