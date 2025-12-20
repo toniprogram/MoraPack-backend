@@ -359,6 +359,7 @@ export default function SimulacionPage() {
 
   useEffect(() => {
     if (!simulationId) return;
+    lastSimulationIdRef.current = simulationId;
     const url = new URL(window.location.href);
     url.searchParams.set('simId', simulationId);
     window.history.replaceState({}, '', url.toString());
