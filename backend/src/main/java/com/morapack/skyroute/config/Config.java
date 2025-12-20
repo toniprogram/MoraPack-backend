@@ -18,7 +18,7 @@ public class Config {
     public static final Path DIR_EXPORTS = Paths.get("exports");
 
     // GA
-    public static final int POP_SIZE = 15; // bajar costo por generación manteniendo diversidad moderada
+    public static final int POP_SIZE = 8; // menor población para acelerar simulación semanal
     public static final int MAX_GEN = 1_000_000;
     // Número de generaciones para ejecución operativa (planificador diario)
     public static final int OPERATION_MAX_GEN = 30;

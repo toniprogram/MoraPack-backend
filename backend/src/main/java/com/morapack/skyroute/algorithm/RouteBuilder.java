@@ -24,13 +24,17 @@ import com.morapack.skyroute.models.*;
 class RouteBuilder {
     private static final List<String> PRODUCTION_HUBS = List.of("SPIM", "EBCI", "UBBB");
     private static final int MAX_HOPS = 8;
-    private static final int MAX_DAY_LOOKAHEAD = 7;
+    private static final int MAX_DAY_LOOKAHEAD = 3;
 
     private final Flights flights;
     private final Airports airports;
     private final FlightSchedule flightSchedule;
     private final AirportSchedule airportSchedule;
     private final Map<String, List<String>> reverseGraph;
+    // Cache de distancias geográficas por destino -> origen para evitar recalcular haversine
+    private final Map<String, Map<String, Double>> distanceCache = new HashMap<>();
+    // Cache de candidatos ordenados por (origen, destinoFinal); no depende de estado mutable
+    private final Map<String, Map<String, List<Flight>>> sortedCandidatesCache = new HashMap<>();
     private final Random rnd;
     private final SelectionMode mode;
 
@@ -85,8 +89,7 @@ class RouteBuilder {
                 return null;
             }
 
-            int currentDist = distances.getOrDefault(current, Integer.MAX_VALUE);
-            List<Flight> candidates = rankCandidates(options, currentDist, destination, distances, visited);
+            List<Flight> candidates = rankCandidates(options, current, destination, distances, visited);
             boolean reserved = false;
 
             for (Flight candidate : candidates) {
@@ -185,7 +188,7 @@ class RouteBuilder {
     }
 
     private List<Flight> rankCandidates(List<Flight> options,
-                                        int currentDist,
+                                        String currentOrigin,
                                         String destination,
                                         Map<String, Integer> distances,
                                         Set<String> visited) {
@@ -215,14 +218,32 @@ class RouteBuilder {
             return prioritized;
         }
 
-        List<Flight> prioritized = new ArrayList<>(options);
+        List<Flight> sorted = getSortedCandidates(currentOrigin, destination, options, distances);
+        List<Flight> prioritized = new ArrayList<>(sorted);
         prioritized.removeIf(f -> visited.contains(f.getDestinationCode()));
-        if (prioritized.isEmpty()) prioritized.addAll(options);
-
-        prioritized.sort((a, b) -> Double.compare(
-                slackScore(a, destination, distances),
-                slackScore(b, destination, distances)));
+        if (prioritized.isEmpty()) prioritized.addAll(sorted);
         return prioritized;
+    }
+
+    private List<Flight> getSortedCandidates(String origin,
+                                             String destination,
+                                             List<Flight> options,
+                                             Map<String, Integer> distances) {
+        Map<String, List<Flight>> byDest = sortedCandidatesCache.computeIfAbsent(origin, k -> new HashMap<>());
+        List<Flight> cached = byDest.get(destination);
+        if (cached != null && cached.size() == options.size()) {
+            return cached;
+        }
+        List<Flight> sorted = new ArrayList<>(options);
+        sorted.sort((a, b) -> {
+            int cmp = Double.compare(
+                    slackScore(a, destination, distances),
+                    slackScore(b, destination, distances));
+            if (cmp != 0) return cmp;
+            return a.getId().compareTo(b.getId());
+        });
+        byDest.put(destination, sorted);
+        return sorted;
     }
 
     private double slackScore(Flight flight,
@@ -230,21 +251,11 @@ class RouteBuilder {
                               Map<String, Integer> distances) {
         double geoDistance = distanceToDestination(flight.getDestinationCode(), destination);
         int directBonus = flight.getDestinationCode().equals(destination) ? -10 : 0;
-        double continentPenalty = continentPenalty(flight.getDestinationCode(), destination);
-        return geoDistance + continentPenalty + directBonus;
+        return geoDistance + directBonus;
     }
 
     private double continentPenalty(String airportCode, String destinationCode) {
-        Airport target = airports.get(destinationCode);
-        Airport candidate = airports.get(airportCode);
-        if (target == null || candidate == null) {
-            return 0;
-        }
-        if (Objects.equals(target.getContinent(), candidate.getContinent())) {
-            return 0;
-        }
-        // penalización suave para preferir mismo continente
-        return 5_000;
+        return 0; // sin sesgo por continente; lo decidirá el fitness
     }
 
     private boolean reserveSegment(Route route, Flight flight, LocalDate date, int quantity, boolean finalLeg, Instant dueInstant) {
@@ -293,12 +304,24 @@ class RouteBuilder {
     }
 
     private double distanceToDestination(String airportCode, String destinationCode) {
-        Airport origin = airports.get(airportCode);
-        Airport destination = airports.get(destinationCode);
-        if (origin == null || destination == null) {
+        if (airportCode == null || destinationCode == null) {
             return Double.MAX_VALUE / 2;
         }
-        return haversineKm(origin.getLatitude(), origin.getLongitude(), destination.getLatitude(), destination.getLongitude());
+        Map<String, Double> cacheForDest = distanceCache.computeIfAbsent(destinationCode, k -> new HashMap<>());
+        Double cached = cacheForDest.get(airportCode);
+        if (cached != null) {
+            return cached;
+        }
+        Airport origin = airports.get(airportCode);
+        Airport destination = airports.get(destinationCode);
+        double value;
+        if (origin == null || destination == null) {
+            value = Double.MAX_VALUE / 2;
+        } else {
+            value = haversineKm(origin.getLatitude(), origin.getLongitude(), destination.getLatitude(), destination.getLongitude());
+        }
+        cacheForDest.put(airportCode, value);
+        return value;
     }
 
     private double haversineKm(double lat1, double lon1, double lat2, double lon2) {

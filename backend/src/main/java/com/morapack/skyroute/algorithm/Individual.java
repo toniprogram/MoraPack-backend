@@ -55,7 +55,7 @@ public class Individual {
         // Punto de partida: copiar planes de A
         List<OrderPlan> plans = deepCopyPlans(parentA.plans);
         // Seleccionamos un subconjunto para intentar mejorar con orígenes de B
-        int tweakCount = Math.max(1, orders.size() / 4);
+        int tweakCount = Math.max(1, orders.size() / 2);
         Set<String> tweakIds = selectOrderIds(orders, tweakCount, rnd);
 
         for (String orderId : tweakIds) {
@@ -233,35 +233,52 @@ public class Individual {
     }
 
     private void evaluate() {
-        double total = 0;
         this.slaViolations = 0;
+        double positiveSlackSum = 0;
+        int positiveSlackCount = 0;
+        double lateMinutesSum = 0;
+
+        double totalFlightMinutes = 0;
+
         for (OrderPlan plan : plans) {
             long slackMinutes = plan.getSlack().toMinutes();
             if (slackMinutes < 0) {
                 slaViolations++;
-                // Penalización proporcional al retraso: cada minuto tarde resta mucho al fitness.
-                double tardinessPenalty = Math.abs(slackMinutes) * 1_000_000d;
-                total -= tardinessPenalty;
+                lateMinutesSum += Math.abs(slackMinutes);
             } else {
-                total += slackMinutes;
+                positiveSlackSum += slackMinutes;
+                positiveSlackCount++;
             }
-        }
-
-        // Penalización suave por uso de tiempo de vuelo y cantidad de vuelos distintos.
-        double totalFlightMinutes = 0;
-        Set<String> flightsUsed = new HashSet<>();
-        for (OrderPlan plan : plans) {
             for (Route route : plan.getRoutes()) {
                 for (RouteSegment segment : route.getSegments()) {
                     totalFlightMinutes += segment.getFlight().getFlightDuration().toMinutes();
-                    flightsUsed.add(segment.getFlight().getId());
                 }
             }
         }
-        // factor pequeño para no eclipsar la holgura, pero suficiente para preferir rutas cortas y reutilizar aviones
-        total -= totalFlightMinutes * 0.1;
-        total -= flightsUsed.size() * 10.0;
-        this.fitness = total;
+
+        double avgSlack = positiveSlackCount > 0 ? positiveSlackSum / positiveSlackCount : 0;
+        double targetSlack = Duration.ofDays(3).toMinutes(); // holgura “ideal”
+        double slackNorm = clamp(avgSlack / targetSlack, 0.0, 1.0); // 1 si alcanza o supera 3 días
+
+        double costPerOrder = totalFlightMinutes / Math.max(1, plans.size()); // minutos de vuelo promedio por pedido
+        double costRef = 12 * 60.0; // 12h como referencia de costo por pedido
+        double costNorm = clamp(costPerOrder / costRef, 0.0, 1.0); // 0 = gratis, 1 = caro
+
+        // Peso adaptativo: mucha holgura -> prioriza ahorro (costo), poca holgura -> prioriza slack
+        double weightCost = clamp(avgSlack / targetSlack, 0.0, 1.0);
+
+        double fitness;
+        if (lateMinutesSum > 0) {
+            // Si hay tardanza, ignoramos costo operativo: priorizar recuperar slack
+            double tardinessNorm = lateMinutesSum / targetSlack;
+            double tardinessPenalty = tardinessNorm * tardinessNorm * 10.0; // castigo fuerte pero no plano
+            fitness = slackNorm - tardinessPenalty;
+        } else {
+            fitness = (1 - weightCost) * slackNorm
+                    + weightCost * (1 - costNorm);
+        }
+
+        this.fitness = fitness;
     }
 
     Individual deepCopy() {
@@ -364,6 +381,10 @@ public class Individual {
             return null;
         }
         return segments.get(segments.size() - 1);
+    }
+
+    private static double clamp(double value, double min, double max) {
+        return Math.max(min, Math.min(max, value));
     }
 
     private static Duration computeSlack(World world, Order order, RouteSegment lastSegment, Duration sla) {
