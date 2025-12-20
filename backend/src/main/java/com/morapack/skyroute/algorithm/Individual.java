@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -12,12 +13,16 @@ import java.util.Random;
 import java.util.Set;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 import com.morapack.skyroute.config.*;
 import com.morapack.skyroute.io.Airports;
 import com.morapack.skyroute.models.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class Individual {
+    private static final Logger log = LoggerFactory.getLogger(Individual.class);
     private final List<OrderPlan> plans;
     private final FlightSchedule flightSchedule;
     private final AirportSchedule airportSchedule;
@@ -51,11 +56,14 @@ public class Individual {
         FlightSchedule flightSchedule = parentA.flightSchedule.copy();
         AirportSchedule airportSchedule = parentA.airportSchedule.copy();
         RouteBuilder builder = new RouteBuilder(world, flightSchedule, airportSchedule, rnd, RouteBuilder.SelectionMode.HEURISTIC_APPROACH);
+        int tweakCount = Math.max(1, orders.size() / 2);
+        String logTag = newLogTag("crossover");
+        log.debug("[IND:{}] Heuristic build start (source=crossover orders={} tweakIds={} schedules={})",
+                logTag, orders.size(), tweakCount, snapshotSchedules(flightSchedule, airportSchedule));
 
         // Punto de partida: copiar planes de A
         List<OrderPlan> plans = deepCopyPlans(parentA.plans);
         // Seleccionamos un subconjunto para intentar mejorar con orígenes de B
-        int tweakCount = Math.max(1, orders.size() / 2);
         Set<String> tweakIds = selectOrderIds(orders, tweakCount, rnd);
 
         for (String orderId : tweakIds) {
@@ -78,6 +86,8 @@ public class Individual {
 
         Individual child = new Individual(plans, flightSchedule, airportSchedule);
         child.evaluate();
+        log.debug("[IND:{}] Heuristic build end (source=crossover fitness={} slaViolations={} schedules={})",
+                logTag, child.getFitness(), child.getSlaViolations(), snapshotSchedules(flightSchedule, airportSchedule));
         return child;
     }
 
@@ -86,8 +96,10 @@ public class Individual {
         FlightSchedule flightSchedule = parent.flightSchedule.copy();
         AirportSchedule airportSchedule = parent.airportSchedule.copy();
         RouteBuilder builder = new RouteBuilder(world, flightSchedule, airportSchedule, rnd, RouteBuilder.SelectionMode.HEURISTIC_APPROACH);
-
         int mutateCount = Math.max(1, orders.size() / 5);
+        String logTag = newLogTag("mutate");
+        log.debug("[IND:{}] Heuristic build start (source=mutate orders={} mutateIds={} schedules={})",
+                logTag, orders.size(), mutateCount, snapshotSchedules(flightSchedule, airportSchedule));
         Set<String> mutateIds = selectOrderIds(orders, mutateCount, rnd);
 
         // Liberar reservas de los planes a mutar
@@ -116,6 +128,8 @@ public class Individual {
 
         Individual mutant = new Individual(plans, flightSchedule, airportSchedule);
         mutant.evaluate();
+        log.debug("[IND:{}] Heuristic build end (source=mutate fitness={} slaViolations={} schedules={})",
+                logTag, mutant.getFitness(), mutant.getSlaViolations(), snapshotSchedules(flightSchedule, airportSchedule));
         return mutant;
     }
 
@@ -131,18 +145,27 @@ public class Individual {
         FlightSchedule scheduleCopy = flightSchedule.copy();
         AirportSchedule airportCopy = airportSchedule.copy();
         RouteBuilder builder = new RouteBuilder(world, scheduleCopy, airportCopy, rnd, RouteBuilder.SelectionMode.HEURISTIC_APPROACH);
+        String logTag = newLogTag("insert-one");
+        log.debug("[IND:{}] Heuristic build start (source=tryInsertOrder order={} schedules={})",
+                logTag, newOrder.getId(), snapshotSchedules(scheduleCopy, airportCopy));
 
         try {
             OrderPlan newPlan = buildPlanForOrder(newOrder, builder, world, rnd);
             if (newPlan.getSlack() == null || newPlan.getSlack().isNegative()) {
+                log.debug("[IND:{}] Heuristic build end (source=tryInsertOrder result=invalid slack schedules={})",
+                        logTag, snapshotSchedules(scheduleCopy, airportCopy));
                 return null;
             }
             List<OrderPlan> planCopies = deepCopyPlans(this.plans);
             planCopies.add(newPlan);
             Individual patched = new Individual(planCopies, scheduleCopy, airportCopy);
             patched.evaluate();
+            log.debug("[IND:{}] Heuristic build end (source=tryInsertOrder fitness={} slaViolations={} schedules={})",
+                    logTag, patched.getFitness(), patched.getSlaViolations(), snapshotSchedules(scheduleCopy, airportCopy));
             return patched;
         } catch (IllegalStateException ex) {
+            log.debug("[IND:{}] Heuristic build end (source=tryInsertOrder result=failure reason={} schedules={})",
+                    logTag, ex.getMessage(), snapshotSchedules(scheduleCopy, airportCopy));
             return null;
         }
     }
@@ -155,6 +178,9 @@ public class Individual {
         AirportSchedule airportCopy = airportSchedule.copy();
         RouteBuilder builder = new RouteBuilder(world, scheduleCopy, airportCopy, rnd, RouteBuilder.SelectionMode.HEURISTIC_APPROACH);
         List<OrderPlan> planCopies = deepCopyPlans(this.plans);
+        String logTag = newLogTag("insert-batch");
+        log.debug("[IND:{}] Heuristic build start (source=tryInsertOrders orders={} schedules={})",
+                logTag, newOrders.size(), snapshotSchedules(scheduleCopy, airportCopy));
         try {
             for (Order order : newOrders) {
                 OrderPlan newPlan = buildPlanForOrder(order, builder, world, rnd);
@@ -162,8 +188,12 @@ public class Individual {
             }
             Individual patched = new Individual(planCopies, scheduleCopy, airportCopy);
             patched.evaluate();
+            log.debug("[IND:{}] Heuristic build end (source=tryInsertOrders fitness={} slaViolations={} schedules={})",
+                    logTag, patched.getFitness(), patched.getSlaViolations(), snapshotSchedules(scheduleCopy, airportCopy));
             return patched;
         } catch (IllegalStateException ex) {
+            log.debug("[IND:{}] Heuristic build end (source=tryInsertOrders result=failure reason={} schedules={})",
+                    logTag, ex.getMessage(), snapshotSchedules(scheduleCopy, airportCopy));
             return null;
         }
     }
@@ -237,6 +267,7 @@ public class Individual {
         double positiveSlackSum = 0;
         int positiveSlackCount = 0;
         double lateMinutesSum = 0;
+        double worstLateMinutes = 0;
 
         double totalFlightMinutes = 0;
 
@@ -245,13 +276,14 @@ public class Individual {
             if (slackMinutes < 0) {
                 slaViolations++;
                 lateMinutesSum += Math.abs(slackMinutes);
+                worstLateMinutes = Math.max(worstLateMinutes, Math.abs(slackMinutes));
             } else {
                 positiveSlackSum += slackMinutes;
                 positiveSlackCount++;
             }
             for (Route route : plan.getRoutes()) {
                 for (RouteSegment segment : route.getSegments()) {
-                    totalFlightMinutes += segment.getFlight().getFlightDuration().toMinutes();
+                    totalFlightMinutes += segment.getFlightMinutes();
                 }
             }
         }
@@ -264,15 +296,17 @@ public class Individual {
         double costRef = 12 * 60.0; // 12h como referencia de costo por pedido
         double costNorm = clamp(costPerOrder / costRef, 0.0, 1.0); // 0 = gratis, 1 = caro
 
-        // Peso adaptativo: mucha holgura -> prioriza ahorro (costo), poca holgura -> prioriza slack
-        double weightCost = clamp(avgSlack / targetSlack, 0.0, 1.0);
+        // Peso adaptativo no lineal: refuerza la prioridad en slack cuando la holgura es baja
+        double slackRatio = clamp(avgSlack / targetSlack, 0.0, 1.0);
+        double weightCost = slackRatio * slackRatio; // crece lento al inicio, acelera con más holgura
 
         double fitness;
         if (lateMinutesSum > 0) {
             // Si hay tardanza, ignoramos costo operativo: priorizar recuperar slack
-            double tardinessNorm = lateMinutesSum / targetSlack;
-            double tardinessPenalty = tardinessNorm * tardinessNorm * 10.0; // castigo fuerte pero no plano
-            fitness = slackNorm - tardinessPenalty;
+            double worstNorm = worstLateMinutes / targetSlack;
+            double tardinessPenalty = (worstNorm * worstNorm * 100.0) // castigo principal por el peor atraso
+                    + (lateMinutesSum / targetSlack) * 10.0;        // castigo acumulativo por todos los atrasos
+            fitness = -tardinessPenalty;
         } else {
             fitness = (1 - weightCost) * slackNorm
                     + weightCost * (1 - costNorm);
@@ -368,6 +402,14 @@ public class Individual {
         return null;
     }
 
+    private static String snapshotSchedules(FlightSchedule flightSchedule, AirportSchedule airportSchedule) {
+        return "flight=" + flightSchedule.debugSnapshot() + " airport=" + airportSchedule.debugSnapshot();
+    }
+
+    private static String newLogTag(String prefix) {
+        return prefix + "-" + UUID.randomUUID().toString().substring(0, 8);
+    }
+
     private static String extractOrigin(Route route) {
         if (route.getSegments().isEmpty()) {
             return null;
@@ -438,10 +480,10 @@ public class Individual {
                                                Random rnd) {
         OrderPlan plan = new OrderPlan(order.getId());
         int remaining = order.getQuantity();
-        int stagnation = 0;
+        List<String> hubs = new ArrayList<>(builder.productionHubs());
+        hubs.sort(Comparator.comparingDouble(h -> builder.distanceToDestination(h, order.getDestinationCode())));
+
         while (remaining > 0) {
-            List<String> hubs = new ArrayList<>(builder.productionHubs());
-            Collections.shuffle(hubs, rnd);
             boolean built = false;
             for (String origin : hubs) {
                 Route route = builder.buildRoute(order, origin, remaining);
@@ -457,8 +499,6 @@ public class Individual {
                 plan.setSlack(Duration.ofMinutes(-10_000));
                 plan.getRoutes().clear();
                 remaining = 0;
-            } else {
-                stagnation = 0;
             }
         }
         plan.setSlack(determinePlanSlack(world, order, plan));

@@ -43,7 +43,7 @@ backend/src/main/java/com/morapack/skyroute/config/Config.java
     - public static final Path DIR_LOGS = Paths.get("logs");
     - public static final Path DIR_EXPORTS = Paths.get("exports");
     - public static final int POP_SIZE = 40;
-    - public static final int MAX_GEN = 80;
+    - public static final int MAX_GEN = 3;
     - public static final double P_CROSS = 0.75;
     - public static final double P_MUT = 0.35;
 

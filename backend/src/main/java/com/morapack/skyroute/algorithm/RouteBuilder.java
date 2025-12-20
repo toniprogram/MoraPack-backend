@@ -14,6 +14,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.PriorityQueue;
 import java.util.Random;
 import java.util.Set;
 
@@ -23,8 +24,9 @@ import com.morapack.skyroute.models.*;
 
 class RouteBuilder {
     private static final List<String> PRODUCTION_HUBS = List.of("SPIM", "EBCI", "UBBB");
-    private static final int MAX_HOPS = 8;
+    private static final int MAX_HOPS = 3;
     private static final int MAX_DAY_LOOKAHEAD = 3;
+    private static final int TOP_K_CANDIDATES = 5;
 
     private final Flights flights;
     private final Airports airports;
@@ -67,8 +69,6 @@ class RouteBuilder {
         Duration overallSla = Duration.ZERO;
         Instant dueInstant = null;
         LocalDateTime readyTime = LocalDateTime.ofInstant(order.getCreationUtc(), currentAirport.getZoneOffset());
-        Map<String, Integer> distances = computeHopDistances(destination);
-
         String current = originHub;
         Set<String> visited = new HashSet<>();
         visited.add(current);
@@ -77,9 +77,10 @@ class RouteBuilder {
         int currentRouteQty = quantity;
 
         while (!current.equals(destination) && hops < MAX_HOPS) {
-            if (dueInstant == null) {
-                Duration hopSla = slaFor(originHub, destination);
-                overallSla = overallSla.compareTo(hopSla) > 0 ? overallSla : hopSla;
+            // Ajusta SLA si el tramo actual cruza continente; eleva a intercontinental cuando aplica
+            Duration hopSla = slaFor(current, destination);
+            if (dueInstant == null || hopSla.compareTo(overallSla) > 0) {
+                overallSla = hopSla;
                 dueInstant = order.getCreationUtc().plus(overallSla);
             }
 
@@ -89,31 +90,26 @@ class RouteBuilder {
                 return null;
             }
 
-            List<Flight> candidates = rankCandidates(options, current, destination, distances, visited);
+            List<Flight> candidates = rankCandidates(options, current, destination, visited, readyTime);
             boolean reserved = false;
 
-            for (Flight candidate : candidates) {
-                LocalDate date = readyTime.toLocalDate();
-                int attempts = 0;
-                while (attempts < MAX_DAY_LOOKAHEAD) {
+            // Intento horizontal: probar todos los vuelos disponibles por día antes de pasar al siguiente día
+            LocalDate baseDate = readyTime.toLocalDate();
+            for (int dayOffset = 0; dayOffset < MAX_DAY_LOOKAHEAD && !reserved; dayOffset++) {
+                LocalDate date = baseDate.plusDays(dayOffset);
+                for (Flight candidate : candidates) {
                     LocalDateTime departureLocal = toLocal(candidate.getDepartureInstant(date), currentAirport.getZoneOffset());
-                    if (departureLocal.isBefore(readyTime)) {
-                        date = date.plusDays(1);
-                        attempts++;
-                        continue;
+                    if (dayOffset == 0 && departureLocal.isBefore(readyTime)) {
+                        continue; // ese vuelo ya pasó para el día base
                     }
 
                     int availableFlight = flightSchedule.getRemainingCapacity(candidate, date);
                     if (availableFlight <= 0) {
-                        date = date.plusDays(1);
-                        attempts++;
                         continue;
                     }
 
                     int sendQty = Math.min(currentRouteQty, availableFlight);
                     if (sendQty <= 0) {
-                        date = date.plusDays(1);
-                        attempts++;
                         continue;
                     }
 
@@ -128,12 +124,6 @@ class RouteBuilder {
                         reserved = true;
                         break;
                     }
-
-                    date = date.plusDays(1);
-                    attempts++;
-                }
-                if (reserved) {
-                    break;
                 }
             }
 
@@ -159,25 +149,6 @@ class RouteBuilder {
         return Collections.unmodifiableList(PRODUCTION_HUBS);
     }
 
-    private Map<String, Integer> computeHopDistances(String destination) {
-        // Conservamos la función para compatibilidad, aunque la prioridad ahora es por distancia geográfica.
-        Map<String, Integer> distances = new HashMap<>();
-        Deque<String> queue = new ArrayDeque<>();
-        distances.put(destination, 0);
-        queue.add(destination);
-        while (!queue.isEmpty()) {
-            String current = queue.poll();
-            int base = distances.get(current);
-            for (String origin : reverseGraph.getOrDefault(current, List.of())) {
-                if (!distances.containsKey(origin)) {
-                    distances.put(origin, base + 1);
-                    queue.add(origin);
-                }
-            }
-        }
-        return distances;
-    }
-
     private Map<String, List<String>> buildReverseGraph() {
         Map<String, List<String>> reverse = new HashMap<>();
         for (Flight flight : flights.getAll()) {
@@ -190,8 +161,8 @@ class RouteBuilder {
     private List<Flight> rankCandidates(List<Flight> options,
                                         String currentOrigin,
                                         String destination,
-                                        Map<String, Integer> distances,
-                                        Set<String> visited) {
+                                        Set<String> visited,
+                                        LocalDateTime readyTime) {
         if (mode == SelectionMode.RANDOM_APPROACH) {
             List<Flight> prioritized = new ArrayList<>();
             for (Flight option : options) {
@@ -218,41 +189,59 @@ class RouteBuilder {
             return prioritized;
         }
 
-        List<Flight> sorted = getSortedCandidates(currentOrigin, destination, options, distances);
-        List<Flight> prioritized = new ArrayList<>(sorted);
-        prioritized.removeIf(f -> visited.contains(f.getDestinationCode()));
-        if (prioritized.isEmpty()) prioritized.addAll(sorted);
+        List<Flight> prioritized = getTopCandidates(currentOrigin, destination, options, readyTime, visited);
+        if (prioritized.isEmpty()) {
+            prioritized = new ArrayList<>(options);
+        }
         return prioritized;
     }
 
-    private List<Flight> getSortedCandidates(String origin,
-                                             String destination,
-                                             List<Flight> options,
-                                             Map<String, Integer> distances) {
-        Map<String, List<Flight>> byDest = sortedCandidatesCache.computeIfAbsent(origin, k -> new HashMap<>());
-        List<Flight> cached = byDest.get(destination);
-        if (cached != null && cached.size() == options.size()) {
-            return cached;
-        }
-        List<Flight> sorted = new ArrayList<>(options);
-        sorted.sort((a, b) -> {
-            int cmp = Double.compare(
-                    slackScore(a, destination, distances),
-                    slackScore(b, destination, distances));
+    private List<Flight> getTopCandidates(String origin,
+                                          String destination,
+                                          List<Flight> options,
+                                          LocalDateTime readyTime,
+                                          Set<String> visited) {
+        PriorityQueue<FlightScore> pq = new PriorityQueue<>((a, b) -> {
+            int cmp = Double.compare(b.score, a.score); // max-heap on score
             if (cmp != 0) return cmp;
-            return a.getId().compareTo(b.getId());
+            return b.flight.getId().compareTo(a.flight.getId());
         });
-        byDest.put(destination, sorted);
-        return sorted;
+
+        for (Flight flight : options) {
+            if (visited.contains(flight.getDestinationCode())) continue;
+            double score = slackScore(flight, destination, readyTime);
+            pq.offer(new FlightScore(flight, score));
+            if (pq.size() > TOP_K_CANDIDATES) {
+                pq.poll(); // descarta el peor
+            }
+        }
+
+        List<FlightScore> best = new ArrayList<>(pq);
+        best.sort((a, b) -> {
+            int cmp = Double.compare(a.score, b.score);
+            if (cmp != 0) return cmp;
+            return a.flight.getId().compareTo(b.flight.getId());
+        });
+        List<Flight> result = new ArrayList<>(best.size());
+        for (FlightScore fs : best) {
+            result.add(fs.flight);
+        }
+        return result;
     }
 
     private double slackScore(Flight flight,
                               String destination,
-                              Map<String, Integer> distances) {
+                              LocalDateTime readyTime) {
         double geoDistance = distanceToDestination(flight.getDestinationCode(), destination);
-        int directBonus = flight.getDestinationCode().equals(destination) ? -10 : 0;
-        return geoDistance + directBonus;
+        LocalDate dateEstimate = readyTime != null ? readyTime.toLocalDate() : LocalDate.now();
+        double flightUtil = flightSchedule.utilizationRatio(flight, dateEstimate);
+        double airportUtil = airportSchedule.utilizationRatio(flight.getDestinationCode(), readyTime != null ? readyTime : LocalDateTime.now());
+        double congestion = flightUtil + airportUtil;
+        double hubPenalty = PRODUCTION_HUBS.contains(flight.getDestinationCode()) ? 0.3 : 0.0;
+        return geoDistance * (1.0 + congestion + hubPenalty);
     }
+
+    private record FlightScore(Flight flight, double score) {}
 
     private double continentPenalty(String airportCode, String destinationCode) {
         return 0; // sin sesgo por continente; lo decidirá el fitness
@@ -303,7 +292,7 @@ class RouteBuilder {
         return LocalDateTime.ofInstant(instant, offset);
     }
 
-    private double distanceToDestination(String airportCode, String destinationCode) {
+    public double distanceToDestination(String airportCode, String destinationCode) {
         if (airportCode == null || destinationCode == null) {
             return Double.MAX_VALUE / 2;
         }

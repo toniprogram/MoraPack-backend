@@ -36,6 +36,8 @@ public class Flight {
     private LocalTime arrLocal;
     private int dailyCapacity;
     private Duration flightDuration = Duration.ZERO;
+    @Transient
+    private long cachedFlightMinutes = -1;
 
     @Transient
     private Set<LocalDate> cancelledDates = Set.of();
@@ -120,6 +122,14 @@ public class Flight {
         }
         Instant departureInstant = getDepartureInstant(date);
         return departureInstant.plus(flightDuration);
+    }
+
+    public long getFlightMinutes() {
+        if (cachedFlightMinutes >= 0) {
+            return cachedFlightMinutes;
+        }
+        cachedFlightMinutes = flightDuration != null ? flightDuration.toMinutes() : 0;
+        return cachedFlightMinutes;
     }
 
     @PostLoad

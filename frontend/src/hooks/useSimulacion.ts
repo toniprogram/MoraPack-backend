@@ -852,6 +852,6 @@ export const useSimulacion = () => {
     orderPlansPage,
     orderPlansPageSize: ORDER_PLANS_PAGE_SIZE,
     setOrderPlansPage,
+    setOrderPlansStatuses,
   };
 };
-bu

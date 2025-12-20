@@ -138,7 +138,11 @@ public class GeneticAlgorithm {
             }
             List<Individual> nextGen = new ArrayList<>();
             // Elitismo: conservar el mejor de la generación previa
-            nextGen.add(best);
+            try {
+                nextGen.add(best.copy());
+            } catch (Exception ex) {
+                nextGen.add(best);
+            }
 
             while (nextGen.size() < populationSize) {
                 if (System.nanoTime() >= deadlineNanos) {

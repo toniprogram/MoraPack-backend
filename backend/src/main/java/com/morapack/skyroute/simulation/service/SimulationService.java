@@ -352,26 +352,15 @@ public class SimulationService {
         Duration windowDuration = Duration.ofSeconds(windowSeconds);
         int batchesProcessed = 0;
         Instant cursorStart = windowStart;
-        long scheduleStartMillis = 0L;
         Future<List<Order>> prefetchFuture = null;
+        long nextSlotStartMillis = System.currentTimeMillis();
         try {
             log.info("[SIM:{}] Starting batched simulation (window={} seconds)", session.id, windowSeconds);
             int batchIndex = 0;
             List<Order> batch = initialOrders;
             while (true) {
-                long now = System.currentTimeMillis();
-                if (scheduleStartMillis == 0L) {
-                    scheduleStartMillis = now;
-                }
-                long targetStart = scheduleStartMillis + batchIndex * 30_000L; // cada 30s de reloj real
-                long targetEnd = targetStart + 15_000L; // GA con presupuesto de 15s
-                if (targetEnd <= now) {
-                    log.warn("[SIM:{}] GA schedule drifted (now={} ms past target end); resetting slot to now", session.id, now - targetEnd);
-                    targetStart = now;
-                    targetEnd = now + 15_000L;
-                    scheduleStartMillis = now; // resync cadence
-                }
-                long waitMs = targetStart - now;
+                long slotStart = nextSlotStartMillis;
+                long waitMs = slotStart - System.currentTimeMillis();
                 while (waitMs > 0 && !session.cancelled.get()) {
                     waitIfPaused(session);
                     long step = Math.min(200L, waitMs);
@@ -383,11 +372,8 @@ public class SimulationService {
                     }
                     waitMs -= step;
                 }
-                waitIfPaused(session);
-                if (session.cancelled.get()) {
-                    log.warn("[SIM:{}] Simulation cancelled before batch {}", session.id, batchIndex + 1);
-                    break;
-                }
+                long gaDeadline = slotStart + 15_000L;
+                long prepDeadline = slotStart + 30_000L;
                 Instant windowEnd = cursorStart.plus(windowDuration);
                 if (rangeEnd != null && windowEnd.isAfter(rangeEnd)) {
                     windowEnd = rangeEnd;
@@ -417,7 +403,7 @@ public class SimulationService {
                 log.debug("[SIM:{}] Processing batch {} ({} orders)", session.id, batchIndex + 1, batch.size());
                 Instant snapshotInstant = windowEnd;
                 log.info("[SIM:{}] Invoking processBatch for batch {} (orders so far={})", session.id, batchIndex + 1, demand.size());
-                previousBest = processBatch(session, world, previousBest, demand, batch, session.totalOrders, snapshotInstant, useHeuristicSeed, targetEnd);
+                previousBest = processBatch(session, world, previousBest, demand, batch, session.totalOrders, snapshotInstant, useHeuristicSeed, gaDeadline);
                 batchesProcessed++;
                 log.info("[SIM:{}] Finished batch {} (demand size={}, processed total={})",
                         session.id, batchIndex + 1, demand.size(), session.processed.get());
@@ -446,7 +432,50 @@ public class SimulationService {
                 if (rangeEnd != null && !cursorStart.isBefore(rangeEnd)) {
                     break;
                 }
+                // Post-GA: asegurar duración fija del slot (30s total)
+                long nowPost = System.currentTimeMillis();
+                if (nowPost < prepDeadline) {
+                    long sleepMs = prepDeadline - nowPost;
+                    try {
+                        Thread.sleep(sleepMs);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                    }
+                } else if (nowPost > prepDeadline) {
+                    long driftMs = nowPost - prepDeadline;
+                    if (driftMs > 10_000L) {
+                        String msg = "Drift exceeded 10s (drift=" + driftMs + "ms); cancelling simulation";
+                        log.error("[SIM:{}] {}", session.id, msg);
+                        session.error(msg);
+                        cancel(session.id);
+                        break;
+                    }
+                    log.warn("[SIM:{}] Post-GA phase exceeded slot by {} ms; pausing ticker to realign", session.id, driftMs);
+                    boolean wasPaused = session.paused.get();
+                    if (!wasPaused) {
+                        session.pause();
+                    }
+                    boolean tickerWasRunning = session.ticker != null && !session.ticker.isCancelled();
+                    if (tickerWasRunning) {
+                        stopTicker(session);
+                    }
+                    try {
+                        Thread.sleep(driftMs);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                    }
+                    if (tickerWasRunning && !session.cancelled.get()) {
+                        startTicker(session);
+                    }
+                    if (!wasPaused) {
+                        session.resume();
+                    }
+                    // reanclar siguiente slot a 30s después de esta corrección
+                    nextSlotStartMillis = System.currentTimeMillis() + 30_000L;
+                }
+
                 batchIndex++;
+                nextSlotStartMillis = prepDeadline + Math.max(0L, System.currentTimeMillis() - prepDeadline);
                 batch = null; // será provisto por prefetchFuture o fetch sincrónico
             }
 
@@ -488,7 +517,6 @@ public class SimulationService {
             if (useHeuristicSeed && heuristicSeed != null) {
                 Individual patched = heuristicSeed.tryInsertOrder(world, order, random);
                 if (patched != null) {
-                    patched.applyToWorld(world);
                     heuristicSeed = patched;
                     log.debug("[SIM:{}] Order {} patched via heuristic (seed updated)", session.id, order.getId());
                 }
@@ -687,14 +715,19 @@ public class SimulationService {
             }
         }
         if (negativeSlackPlan != null) {
-            session.markCollapsed("Colapso logístico: slack negativo en pedido " + negativeSlackPlan.getOrderId());
-            log.warn("[SIM:{}] Logistic collapse detected due to negative slack in order {}", session.id, negativeSlackPlan.getOrderId());
+            long slackMinutes = negativeSlackPlan.getSlack() != null ? negativeSlackPlan.getSlack().toMinutes() : Long.MIN_VALUE;
+            session.markCollapsed("Colapso logístico: slack negativo en pedido " + negativeSlackPlan.getOrderId() + " (" + slackMinutes + " min)");
+            log.warn("[SIM:{}] Logistic collapse: negative slack order={} slackMinutes={} routes={}",
+                    session.id,
+                    negativeSlackPlan.getOrderId(),
+                    slackMinutes,
+                    negativeSlackPlan.getRoutes() != null ? negativeSlackPlan.getRoutes().size() : 0);
         } else {
             Set<String> plannedIds = best.getPlans().stream().map(OrderPlan::getOrderId).collect(Collectors.toSet());
             for (Order o : demand) {
                 if (!plannedIds.contains(o.getId())) {
                     session.markCollapsed("Colapso logístico: no se pudo planificar el pedido " + o.getId());
-                    log.warn("[SIM:{}] Logistic collapse detected at order {}", session.id, o.getId());
+                    log.warn("[SIM:{}] Logistic collapse: missing plan for order {}", session.id, o.getId());
                     break;
                 }
             }

@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.NavigableMap;
 import java.util.Objects;
 import java.util.TreeMap;
+import java.util.stream.Collectors;
 
 public class AirportSchedule {
     private final Map<String, Integer> capacityByAirport;
@@ -131,7 +132,11 @@ public class AirportSchedule {
     }
 
     public AirportSchedule copy() {
-        return new AirportSchedule(capacityByAirport, transitDeltas, finalDeltas, true);
+        return new AirportSchedule(
+                capacityByAirport,
+                new TreeMap<>(transitDeltas),
+                new TreeMap<>(finalDeltas),
+                false);
     }
 
     public synchronized void applyFrom(AirportSchedule other) {
@@ -141,6 +146,17 @@ public class AirportSchedule {
         transitDeltas.putAll(other.transitDeltas);
         finalDeltas.putAll(other.finalDeltas);
         shared = false;
+    }
+
+    /**
+     * Fracción de capacidad ocupada en un aeropuerto en un instante dado.
+     * 0.0 libre, 1.0 lleno o sobrecapacidad.
+     */
+    public synchronized double utilizationRatio(String airportId, LocalDateTime instant) {
+        Integer capacity = capacityByAirport.get(airportId);
+        if (capacity == null || capacity <= 0) return 1.0;
+        int occ = getOccupied(airportId, instant);
+        return Math.min(1.0, Math.max(0.0, occ / (double) capacity));
     }
 
     private void cleanupMapUntil(Map<Key, Integer> map, String airportId, LocalDateTime instant) {
@@ -172,6 +188,22 @@ public class AirportSchedule {
             occupancy.put(airportId, updated);
         }
         return false;
+    }
+
+    public synchronized String debugSnapshot() {
+        String transit = formatDeltas(transitDeltas);
+        String finals = formatDeltas(finalDeltas);
+        return "transit=" + transit + " final=" + finals + " shared=" + shared;
+    }
+
+    private String formatDeltas(Map<Key, Integer> map) {
+        if (map.isEmpty()) {
+            return "[]";
+        }
+        return map.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .map(e -> e.getKey().airportId + "@" + e.getKey().instant + ":" + e.getValue())
+                .collect(Collectors.joining(", ", "[", "]"));
     }
 
     private static final class Key implements Comparable<Key> {

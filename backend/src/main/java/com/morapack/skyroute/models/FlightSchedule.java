@@ -4,6 +4,7 @@ import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.stream.Collectors;
 
 public class FlightSchedule {
     private Map<Key, Integer> remainingCapacity = new HashMap<>();
@@ -71,24 +72,53 @@ public class FlightSchedule {
     }
 
     public void purgeBefore(LocalDate limitDate) {
+        ensureMutable();
         remainingCapacity.keySet().removeIf(key -> key.date.isBefore(limitDate));
     }
 
     public void purgeBefore(Flight flight, LocalDate limitDate) {
         Objects.requireNonNull(flight, "flight");
         Objects.requireNonNull(limitDate, "limitDate");
+        ensureMutable();
         remainingCapacity.keySet().removeIf(key ->
                 key.flightId.equals(flight.getId()) && key.date.isBefore(limitDate));
     }
 
     public void applyFrom(FlightSchedule other) {
+        ensureMutable();
         remainingCapacity.clear();
         remainingCapacity.putAll(other.remainingCapacity);
         shared = false;
     }
 
+    /**
+     * Fracción de capacidad ya usada para un vuelo en una fecha.
+     * 0.0 libre, 1.0 lleno.
+     */
+    public double utilizationRatio(Flight flight, LocalDate date) {
+        int capacity = flight.getDailyCapacity();
+        if (capacity <= 0) return 1.0;
+        int remaining = getRemainingCapacity(flight, date);
+        int used = capacity - remaining;
+        return Math.min(1.0, Math.max(0.0, used / (double) capacity));
+    }
+
     public FlightSchedule copy() {
-        return new FlightSchedule(this.remainingCapacity, true);
+        return new FlightSchedule(new HashMap<>(this.remainingCapacity), false);
+    }
+
+    public String debugSnapshot() {
+        String contents = remainingCapacity.isEmpty()
+                ? "{}"
+                : remainingCapacity.entrySet().stream()
+                .sorted((a, b) -> {
+                    int cmp = a.getKey().flightId.compareTo(b.getKey().flightId);
+                    if (cmp != 0) return cmp;
+                    return a.getKey().date.compareTo(b.getKey().date);
+                })
+                .map(e -> e.getKey().flightId + "@" + e.getKey().date + "=" + e.getValue())
+                .collect(Collectors.joining(", ", "{", "}"));
+        return contents + " shared=" + shared;
     }
 
     private record Key(String flightId, LocalDate date) {}

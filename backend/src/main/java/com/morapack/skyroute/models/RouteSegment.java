@@ -78,4 +78,11 @@ public class RouteSegment{
     public void setSlack(Duration slack) {
         this.slack = slack;
     }
+
+    public long getFlightMinutes() {
+        if (flight == null) {
+            return 0;
+        }
+        return flight.getFlightMinutes();
+    }
 }
