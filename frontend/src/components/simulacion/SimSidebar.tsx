@@ -43,6 +43,10 @@ interface SimSidebarProps {
   activeSegments: SegmentoVuelo[];
   filtroHub: string;
   setFiltroHub: Dispatch<SetStateAction<string>>;
+  ordersTotal: number;
+  ordersPage: number;
+  ordersPageSize: number;
+  onOrdersPageChange: (page: number) => void;
   selectedOrderIds: string[] | null;
   onSelectOrders: (orderIds: string[] | null) => void;
   clearSelectedOrders: () => void;
@@ -84,6 +88,10 @@ export function SimSidebar({
   activeSegments,
   filtroHub,
   setFiltroHub,
+  ordersTotal,
+  ordersPage,
+  ordersPageSize,
+  onOrdersPageChange,
   selectedOrderIds,
   onSelectOrders,
   clearSelectedOrders,
@@ -191,7 +199,7 @@ export function SimSidebar({
           onClick={() => setVistaPanel('envios')}
         >
           <Package size={16} className="inline mr-1" />
-          Peds. ({enviosFiltrados.length})
+          Peds. ({ordersTotal})
         </button>
         <button
           className={`flex-1 py-2 text-sm font-medium transition-colors ${
@@ -222,6 +230,10 @@ export function SimSidebar({
           <SidebarEnviosPanel
             enviosFiltrados={enviosToShow}
             ordenesParaSimular={ordenesParaSimular}
+            ordersTotal={ordersTotal}
+            ordersPage={ordersPage}
+            ordersPageSize={ordersPageSize}
+            onOrdersPageChange={onOrdersPageChange}
             selectedOrders={selectedOrderIds}
             onSelectOrders={onSelectOrders}
           />

@@ -84,34 +84,44 @@ public class SimulationOrderPlanReadWriter {
         int sanitizedSize = Math.min(Math.max(1, size), 200);
         int offset = sanitizedPage * sanitizedSize;
 
-        StringBuilder sql = new StringBuilder("""
-                select order_id, status, slack_minutes, routes, creation_utc
-                  from simulation_order_plan_read
-                 where simulation_id = ?
+        StringBuilder base = new StringBuilder("""
+                from simulation_order_plan_read
+               where simulation_id = ?
                 """);
         List<Object> args = new ArrayList<>();
         args.add(simulationId);
 
         if (statuses != null && !statuses.isEmpty()) {
             String inClause = statuses.stream().map(s -> "?").collect(Collectors.joining(","));
-            sql.append(" and status in (").append(inClause).append(")");
+            base.append(" and status in (").append(inClause).append(")");
             args.addAll(statuses);
         }
         if (search != null && !search.isBlank()) {
-            sql.append(" and order_id ilike ?");
+            base.append(" and order_id ilike ?");
             args.add("%" + search + "%");
         }
-        sql.append(" order by order_id asc limit ? offset ?");
-        args.add(sanitizedSize);
-        args.add(offset);
 
-        List<SimulationOrderPlanItem> items = jdbcTemplate.query(sql.toString(), args.toArray(), new ReadRowMapper());
+        String selectSql = "select order_id, status, slack_minutes, routes, creation_utc " + base + " order by order_id asc limit ? offset ?";
+        List<Object> selectArgs = new ArrayList<>(args);
+        selectArgs.add(sanitizedSize);
+        selectArgs.add(offset);
 
-        Long total = jdbcTemplate.queryForObject(
-                "select count(*) from simulation_order_plan_read where simulation_id = ?",
-                Long.class,
-                simulationId
-        );
+        List<SimulationOrderPlanItem> items = jdbcTemplate.query(selectSql, selectArgs.toArray(), new ReadRowMapper());
+
+        StringBuilder countBase = new StringBuilder("""
+                from simulation_order_plan_read
+               where simulation_id = ?
+                """);
+        List<Object> countArgs = new ArrayList<>();
+        countArgs.add(simulationId);
+        if (statuses != null && !statuses.isEmpty()) {
+            String inClause = statuses.stream().map(s -> "?").collect(Collectors.joining(","));
+            countBase.append(" and status in (").append(inClause).append(")");
+            countArgs.addAll(statuses);
+        }
+
+        String countSql = "select count(*) " + countBase;
+        Long total = jdbcTemplate.queryForObject(countSql, countArgs.toArray(), Long.class);
 
         return new SimulationOrderPlanPage(
                 total != null ? total : 0L,

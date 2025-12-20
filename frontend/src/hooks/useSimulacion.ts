@@ -105,6 +105,10 @@ export const useSimulacion = () => {
   const [orderPlansLive, setOrderPlansLive] = useState<SimulationOrderPlan[]>([]);
   const [orderPlansDb, setOrderPlansDb] = useState<SimulationOrderPlanItem[]>([]);
   const [orderStatusesDb, setOrderStatusesDb] = useState<OrderStatusTick[]>([]);
+  const [orderPlansTotal, setOrderPlansTotal] = useState(0);
+  const [orderPlansPage, setOrderPlansPage] = useState(0);
+  const [orderPlansStatuses, setOrderPlansStatuses] = useState<string[] | undefined>(undefined);
+  const ORDER_PLANS_PAGE_SIZE = 10;
   const [animPaused, setAnimPaused] = useState(false);
   const firstSimTickMsRef = useRef<number | null>(null);
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -383,11 +387,24 @@ export const useSimulacion = () => {
     let cancelled = false;
     let interval: ReturnType<typeof setInterval> | null = null;
 
-    const fetchPlans = async () => {
+    const fetchPlans = async (pageToLoad: number) => {
       try {
-        const page = await simulacionService.getOrderPlans(simulationId, 0, 500, undefined, undefined);
+        const statusesParam = orderPlansStatuses?.join(',');
+        const page = await simulacionService.getOrderPlans(
+          simulationId,
+          pageToLoad,
+          ORDER_PLANS_PAGE_SIZE,
+          undefined,
+          statusesParam
+        );
         if (cancelled) return;
+        const effectiveSize = page.size ?? ORDER_PLANS_PAGE_SIZE;
+        const total = page.total ?? page.items.length;
+        const lastPage = Math.max(0, Math.ceil(total / effectiveSize) - 1);
+        const currentPage = Math.min(page.page ?? pageToLoad, lastPage);
         setOrderPlansDb(page.items);
+        setOrderPlansTotal(total);
+        setOrderPlansPage(currentPage);
         const statusTicks: OrderStatusTick[] = page.items.map(p => ({
           orderId: p.orderId,
           status: p.status,
@@ -402,14 +419,14 @@ export const useSimulacion = () => {
       }
     };
 
-    fetchPlans();
-    interval = setInterval(fetchPlans, 5000);
+    fetchPlans(orderPlansPage);
+    interval = setInterval(() => fetchPlans(orderPlansPage), 5000);
 
     return () => {
       cancelled = true;
       if (interval) clearInterval(interval);
     };
-  }, [simulationId]);
+  }, [simulationId, orderPlansPage, orderPlansStatuses]);
 
   // Usar buffer de ticks para actualizar el frame actual/objetivo
   useEffect(() => {
@@ -723,6 +740,10 @@ export const useSimulacion = () => {
     setPrewarmToken(null);
     prewarmRequested.current = false;
     setOrderPlansLive([]);
+    setOrderPlansDb([]);
+    setOrderPlansTotal(0);
+    setOrderPlansPage(0);
+    setOrderPlansStatuses(undefined);
   }, [stompClient, simulationId]);
 
   const conectarSimulacion = useCallback((simId: string) => {
@@ -781,6 +802,10 @@ export const useSimulacion = () => {
     plannedRef.current.clear();
     setPlannedLog([]);
     setDeliveredPage(null);
+    setOrderPlansDb([]);
+    setOrderPlansTotal(0);
+    setOrderPlansPage(0);
+    setOrderPlansStatuses(undefined);
   };
 
   return {
@@ -823,5 +848,10 @@ export const useSimulacion = () => {
     deliveredLoading,
     fetchDeliveries,
     orderPlansDb,
+    orderPlansTotal,
+    orderPlansPage,
+    orderPlansPageSize: ORDER_PLANS_PAGE_SIZE,
+    setOrderPlansPage,
+    setOrderPlansStatuses,
   };
 };

@@ -62,8 +62,7 @@ class RouteBuilder {
 
         Duration overallSla = Duration.ZERO;
         Instant dueInstant = null;
-        LocalDateTime readyTime = LocalDateTime.ofInstant(order.getCreationUtc(), currentAirport.getZoneOffset())
-                .plus(Config.WAREHOUSE_DWELL);
+        LocalDateTime readyTime = LocalDateTime.ofInstant(order.getCreationUtc(), currentAirport.getZoneOffset());
         Map<String, Integer> distances = computeHopDistances(destination);
 
         String current = originHub;

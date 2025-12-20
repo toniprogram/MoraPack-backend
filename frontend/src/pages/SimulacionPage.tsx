@@ -34,6 +34,11 @@ export default function SimulacionPage() {
       orderStatuses,
       orderPlans,
       orderPlansDb,
+      orderPlansTotal,
+      orderPlansPage,
+      orderPlansPageSize,
+      setOrderPlansPage,
+      setOrderPlansStatuses,
       simulationId,
       startRealMs,
       elapsedRealMs,
@@ -71,6 +76,18 @@ export default function SimulacionPage() {
   const [filtroTexto, setFiltroTexto] = useState<string>('');
   const [deliveredPageIndex, setDeliveredPageIndex] = useState(0);
   const mostrandoOverlay = estaActivo && !hasSnapshots;
+
+  useEffect(() => {
+    // Ajusta el filtro de estados que consulta el hook según la pestaña seleccionada
+    setOrderPlansPage(0);
+    if (filtroEstado === 'planificados') {
+      setOrderPlansStatuses(['WAITING']);
+    } else if (filtroEstado === 'entregados') {
+      setOrderPlansStatuses(['DELIVERED']);
+    } else {
+      setOrderPlansStatuses(['IN_TRANSIT']);
+    }
+  }, [filtroEstado, setOrderPlansPage, setOrderPlansStatuses]);
 
   useEffect(() => {
     statusRef.current = status;
@@ -505,6 +522,10 @@ export default function SimulacionPage() {
           activeSegments={activeSegments}
           filtroHub={filtroHub}
           setFiltroHub={setFiltroHub}
+          ordersTotal={orderPlansTotal}
+          ordersPage={orderPlansPage}
+          ordersPageSize={orderPlansPageSize}
+          onOrdersPageChange={(page) => setOrderPlansPage(page)}
           selectedOrderIds={selectedOrderIds}
           onSelectOrders={handleSelectOrders}
           clearSelectedOrders={clearSelectedOrders}

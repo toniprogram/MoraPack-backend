@@ -1,10 +1,14 @@
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, useMemo } from 'react';
 import type { EnvioInfo } from '../../types/simulacionUI';
 import { Plane } from 'lucide-react';
 
 interface SidebarEnviosPanelProps {
   enviosFiltrados: EnvioInfo[];
   ordenesParaSimular: unknown[];
+  ordersTotal: number;
+  ordersPage: number;
+  ordersPageSize: number;
+  onOrdersPageChange: (page: number) => void;
   selectedOrders: string[] | null;
   onSelectOrders: (orderIds: string[] | null) => void;
 }
@@ -12,26 +16,25 @@ interface SidebarEnviosPanelProps {
 export function SidebarEnviosPanel({
   enviosFiltrados,
   ordenesParaSimular,
+  ordersTotal,
+  ordersPage,
+  ordersPageSize,
+  onOrdersPageChange,
   selectedOrders,
   onSelectOrders,
 }: SidebarEnviosPanelProps) {
-  const PAGE_SIZE = 10;
   const sorted = useMemo(() => {
     return [...enviosFiltrados].sort((a, b) => (a.creationMs ?? 0) - (b.creationMs ?? 0));
   }, [enviosFiltrados]);
-  const [page, setPage] = useState(1);
-  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
-
-  useEffect(() => {
-    if (page > totalPages) {
-      setPage(totalPages);
-    }
-  }, [page, totalPages]);
+  const pageSize = ordersPageSize || 10;
+  const page = Math.max(1, ordersPage + 1);
+  const totalPages = Math.max(1, Math.ceil((ordersTotal || sorted.length) / pageSize));
 
   const visible = useMemo(() => {
-    const start = (page - 1) * PAGE_SIZE;
-    return sorted.slice(start, start + PAGE_SIZE);
-  }, [sorted, page]);
+    if (sorted.length <= pageSize) return sorted;
+    const start = (page - 1) * pageSize;
+    return sorted.slice(start, start + pageSize);
+  }, [sorted, page, pageSize]);
 
   return (
     <>
@@ -53,11 +56,11 @@ export function SidebarEnviosPanel({
         />
       ))}
 
-      {enviosFiltrados.length > PAGE_SIZE && (
+      {(ordersTotal > pageSize || enviosFiltrados.length > pageSize) && (
         <div className="mt-3 flex items-center justify-between">
           <button
             className="btn btn-xs"
-            onClick={() => setPage(p => Math.max(1, p - 1))}
+            onClick={() => onOrdersPageChange(Math.max(0, page - 2))}
             disabled={page === 1}
           >
             « Anterior
@@ -67,7 +70,7 @@ export function SidebarEnviosPanel({
           </span>
           <button
             className="btn btn-xs"
-            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+            onClick={() => onOrdersPageChange(Math.min(totalPages - 1, page))}
             disabled={page === totalPages}
           >
             Siguiente »
