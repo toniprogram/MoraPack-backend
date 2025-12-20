@@ -41,52 +41,43 @@ const estadoBadgeClass = (estado: string) => {
   const e = estado.toLowerCase();
   if (e.includes('transit') || e.includes('vuelo')) return 'badge-info';
   if (e.includes('entregado') || e.includes('completado') || e.includes('llego')) return 'badge-success';
-  if (e.includes('planific')) return 'badge-warning';
+  if (e.includes('planific') || e.includes('espera') || e.includes('waiting')) return 'badge-warning';
   return 'badge-neutral';
 };
 
 // --- FUNCIONES DE FORMATO ---
-
 const formatDate = (ms?: number) => {
   if (!ms || Number.isNaN(ms)) return 'N/A';
-  return new Date(ms).toLocaleDateString('es-PE', {
-    timeZone: 'UTC',
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric'
-  });
+  return new Date(ms).toLocaleDateString('es-PE', { timeZone: 'UTC', day: '2-digit', month: 'short', year: 'numeric' });
 };
 
 const formatTime = (ms?: number) => {
   if (!ms || Number.isNaN(ms)) return 'N/A';
-  return new Date(ms).toLocaleTimeString('es-PE', {
-    timeZone: 'UTC',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false
-  });
+  return new Date(ms).toLocaleTimeString('es-PE', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit', hour12: false });
 };
 
-// Formateador para fecha completa (Fecha + Hora) desde ISO string
 const formatDateTimeUTC = (isoStr?: string) => {
   if (!isoStr) return '--';
   try {
     const d = new Date(isoStr);
-    return d.toLocaleString('es-PE', {
-      timeZone: 'UTC',
-      month: 'short',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false
-    });
-  } catch (e) {
-    return '--';
-  }
+    return d.toLocaleString('es-PE', { timeZone: 'UTC', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+  } catch (e) { return '--'; }
 };
 
-// Helper para estado
-const getSegmentStatus = (departure: string | undefined, arrival: string | undefined, now?: Date) => {
+const getSegmentStatus = (departure: string | undefined, arrival: string | undefined, now?: Date, orderStatus: string = '') => {
+  const st = orderStatus.toUpperCase();
+
+  // 1. Si el pedido ya se entregó, todos sus tramos históricos están completados
+  if (st.includes('ENTREGADO') || st.includes('COMPLETED') || st.includes('DELIVERED')) {
+      return 'DONE';
+  }
+
+  // 2. Si el pedido está solo planificado, nada ha volado aún
+  if (st.includes('PLANIFICADO') || st.includes('PLANNED') || st.includes('WAITING')) {
+      return 'PENDING';
+  }
+
+  // 3. Si está en tránsito, comparamos fechas con el reloj simulado
   if (!departure || !arrival || !now) return 'PENDING';
 
   const dep = new Date(departure).getTime();
@@ -94,8 +85,8 @@ const getSegmentStatus = (departure: string | undefined, arrival: string | undef
   const current = now.getTime();
 
   if (current < dep) return 'PENDING';
-  if (current >= dep && current <= arr) return 'FLYING';
-  return 'DONE';
+  if (current >= dep && current <= arr) return 'FLYING'; // Está ocurriendo AHORA
+  return 'DONE'; // Ya pasó
 };
 
 export const PedidoCard = memo(({ data, isSelected, hasSelection, onSelect, currentTime }: PedidoCardProps) => {
@@ -116,20 +107,28 @@ export const PedidoCard = memo(({ data, isSelected, hasSelection, onSelect, curr
   const dimmed = hasSelection && !isSelected;
   const handleClick = () => onSelect(isSelected ? null : [orderId]);
 
+  // Fallback visual para vuelo actual
   const displayFlightId = currentFlightId
     ? currentFlightId
-    : (estado.toLowerCase().includes('vuelo') && rutas.length > 0 ? "VUELO DIVIDIDO" : "--");
+    : (rutas.length > 0 && rutas[0].segments.length > 0
+        ? rutas[0].segments[0].flightId
+        : "--");
 
   return (
     <div
-      className={`card bg-base-200 border-l-4 shadow-sm hover:shadow-md transition-shadow ${dimmed ? 'opacity-40' : ''} ${isSelected ? 'ring-2 ring-primary' : ''} ${
+      className={`card bg-base-200 border-l-4 shadow-sm ... ${
+        // Lógica para color AZUL (En tránsito)
         estado.toLowerCase().includes('transit') || estado.toLowerCase().includes('vuelo')
-          ? 'border-info'
-          : estado.toLowerCase().includes('entregado') || estado.toLowerCase().includes('completado')
+          ? 'border-primary'
+          :
+        // Lógica para color VERDE (Entregado)
+        estado.toLowerCase().includes('entregado') || estado.toLowerCase().includes('completado')
             ? 'border-success'
-            : estado.toLowerCase().includes('planific')
-              ? 'border-warning'
-              : 'border-base-300'
+            :
+        // Lógica para color NARANJA/AMARILLO (Planificado)
+        estado.toLowerCase().includes('planific') || estado.toLowerCase().includes('espera')
+              ? 'border-warning' // <--- ESTE ES EL COLOR NARANJA
+              : 'border-neutral'
       }`}
       onClick={handleClick}
     >
@@ -151,8 +150,8 @@ export const PedidoCard = memo(({ data, isSelected, hasSelection, onSelect, curr
           <span className={`badge badge-sm ${estadoBadgeClass(estado)}`}>{estado}</span>
         </div>
 
-        {/* INFO FECHA DE REGISTRO */}
-        {creationMs && creationMs > 0 && (
+        {/* INFO FECHA */}
+        {creationMs && creationMs > 0 ? (
             <div className="mt-2 pt-2 border-t border-base-300">
             <p className="text-[10px] text-base-content/60 mb-1">Fecha de Registro (UTC):</p>
             <div className="flex gap-3 text-xs">
@@ -160,19 +159,19 @@ export const PedidoCard = memo(({ data, isSelected, hasSelection, onSelect, curr
                 <div><span className="text-base-content/70">🕒</span> {formatTime(creationMs)}</div>
             </div>
             </div>
-        )}
+        ) : null}
 
-        {/* VUELO ACTUAL */}
+        {/* VUELO INFO */}
         <div className="flex justify-between items-start mt-2">
           <span className="text-base-content/70">Vuelo actual:</span>
           <div className="text-right">
             {displayFlightId !== "--" ? (
               <div className="flex flex-col gap-0.5 items-end">
-                <span className={`font-bold flex items-center gap-1 ${displayFlightId === 'VUELO DIVIDIDO' ? 'text-warning text-[10px]' : 'text-secondary'}`}>
+                <span className="font-bold text-secondary flex items-center gap-1">
                   {displayFlightId}
                   <Plane size={12} className="rotate-45" />
                 </span>
-                {typeof progressPct === 'number' && displayFlightId !== 'VUELO DIVIDIDO' && (
+                {typeof progressPct === 'number' && progressPct > 0 && (
                   <span className="text-[10px] text-base-content/60">{Math.round(progressPct)}%</span>
                 )}
               </div>
@@ -182,17 +181,14 @@ export const PedidoCard = memo(({ data, isSelected, hasSelection, onSelect, curr
           </div>
         </div>
 
-        {/* ORIGEN / DESTINO */}
         <div className="text-xs mt-2 space-y-1">
           <div className="flex justify-between items-start">
-            <span className="text-base-content/70">Origen:</span>
-            <span className="font-semibold">{origen || 'N/A'}</span>
+            <span className="text-base-content/70">Origen:</span><span className="font-semibold">{origen || 'N/A'}</span>
           </div>
           <div className="flex justify-between items-start">
-            <span className="text-base-content/70">Destino:</span>
-            <span className="font-semibold">{destino || 'N/A'}</span>
+            <span className="text-base-content/70">Destino:</span><span className="font-semibold">{destino || 'N/A'}</span>
           </div>
-          {arrivalMs && (
+          {arrivalMs !== undefined && arrivalMs > 0 && (
             <div className="flex justify-between items-start">
               <span className="text-base-content/70">ETA (UTC):</span>
               <span className="font-semibold">{formatDateTimeUTC(new Date(arrivalMs).toISOString())}</span>
@@ -200,7 +196,7 @@ export const PedidoCard = memo(({ data, isSelected, hasSelection, onSelect, curr
           )}
         </div>
 
-        {/* RUTAS Y VUELOS CON FECHAS EN UTC */}
+        {/* RUTAS Y ESTADOS */}
         {rutas.length > 0 && (
           <div className="mt-2 pt-2 border-t border-base-300">
             <p className="text-xs font-semibold text-base-content/70 mb-1">Rutas y vuelos</p>
@@ -208,17 +204,18 @@ export const PedidoCard = memo(({ data, isSelected, hasSelection, onSelect, curr
               <div key={ruta.routeIndex} className="border border-base-300 rounded bg-base-100/70 p-2 space-y-1 mb-1 last:mb-0">
                 <div className="text-[10px] font-semibold text-base-content/70">Ruta {ruta.routeIndex}</div>
                 {ruta.segments.map((seg, idx) => {
-                  const status = getSegmentStatus(seg.departureUtc, seg.arrivalUtc, currentTime);
+                  // ✅ AQUÍ USAMOS LA LÓGICA MEJORADA CON EL ESTADO DEL PEDIDO
+                  const status = getSegmentStatus(seg.departureUtc, seg.arrivalUtc, currentTime, estado);
 
                   let statusIcon = <Clock size={10} className="text-base-content/40"/>;
-                  let rowClass = "opacity-60 grayscale";
+                  let rowClass = "opacity-60 grayscale"; // ESPERA
 
                   if (status === 'FLYING') {
                     statusIcon = <Plane size={10} className="text-info animate-pulse"/>;
-                    rowClass = "bg-info/10 border-info/30 ring-1 ring-info/20";
+                    rowClass = "bg-info/10 border-info/30 ring-1 ring-info/20"; // VOLANDO
                   } else if (status === 'DONE') {
                     statusIcon = <CheckCircle size={10} className="text-success"/>;
-                    rowClass = "opacity-70 bg-base-200/50";
+                    rowClass = "opacity-70 bg-base-200/50"; // LLEGÓ
                   }
 
                   return (
@@ -240,9 +237,7 @@ export const PedidoCard = memo(({ data, isSelected, hasSelection, onSelect, curr
                         </div>
                         <div className="flex flex-col items-center justify-center w-8">
                             <ArrowRight size={10} className="opacity-30" />
-                            {seg.quantity !== undefined && (
-                                <span className="text-[8px] opacity-60">{seg.quantity} un.</span>
-                            )}
+                            {seg.quantity !== undefined && <span className="text-[8px] opacity-60">{seg.quantity} un.</span>}
                         </div>
                         <div className="text-right">
                           <div className="font-bold">{seg.destination}</div>

@@ -2,52 +2,24 @@ import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useSimulacion } from '../hooks/useSimulacion';
 import { MapaVuelos } from '../components/mapas/MapaVuelos';
 import type { OrderRequest } from '../types/orderRequest';
-//import type { SimulationOrderPlan } from '../types/simulation';
 import { SimTopBar } from '../components/simulacion/SimTopBar';
 import { SimSidebar } from '../components/simulacion/SimSidebar';
 import type { EnvioInfo, FlightGroup } from '../types/simulacionUI';
 import { useLocation } from 'react-router-dom';
 import { simulacionService } from '../services/simulacionService';
 
+// ✅ ESTA LÍNEA ES CRUCIAL: "export default"
 export default function SimulacionPage() {
   const {
       aeropuertos,
       activeSegments,
-      reloj,
-      isLoading,
-      isStarting,
-      isError,
-      estaActivo,
-      estaVisualizando,
-      iniciar,
-      pausar,
-      terminar,
-      vuelosEnMovimiento,
-      hasSnapshots,
-      tiempoSimulado,
-      engineSpeed,
-      status,
-      resetVisual,
-      activeAirports,
-      deliveredOrders,
-      inTransitOrders,
-      orderStatuses,
-      orderPlans,
-      orderPlansDb,
-      orderPlansTotal,
-      orderPlansPage,
-      orderPlansPageSize,
-      setOrderPlansPage,
-      setOrderPlansStatuses,
-      simulationId,
-      startRealMs,
-      elapsedRealMs,
-      conectarSimulacion,
-      notificacion,
-      setNotificacion,
-      plannedLog: plannedLogState = [],
-      deliveredPage,
-      fetchDeliveries,
+      reloj, isLoading, isStarting, isError, estaActivo, estaVisualizando,
+      iniciar, pausar, terminar, vuelosEnMovimiento, hasSnapshots, tiempoSimulado, engineSpeed, status,
+      resetVisual, activeAirports, deliveredOrders, inTransitOrders, orderPlansDb,
+      orderPlansTotal, orderPlansPage, orderPlansPageSize, setOrderPlansPage, setOrderPlansStatuses,
+      simulationId, startRealMs, elapsedRealMs, conectarSimulacion, notificacion, setNotificacion,
+      deliveredPage, fetchDeliveries,
+      getOrderDetails, fetchMissingOrder,
   } = useSimulacion();
   const location = useLocation();
 
@@ -60,10 +32,8 @@ export default function SimulacionPage() {
   const startedHereRef = useRef(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [toastError, setToastError] = useState(false);
-
   const [filtroHub, setFiltroHub] = useState<string>('');
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[] | null>(null);
-  const [orderIdFilter] = useState<string>('');
   const [selectedFlightId, setSelectedFlightId] = useState<string | null>(null);
   const [selectedAirportIds, setSelectedAirportIds] = useState<string[] | null>(null);
   const [dialogInfo, setDialogInfo] = useState<{ titulo: string; mensaje: string } | null>(null);
@@ -72,69 +42,74 @@ export default function SimulacionPage() {
   const [downloadingReport, setDownloadingReport] = useState(false);
   const lastSimulationIdRef = useRef<string | null>(null);
   const [filtroEstado, setFiltroEstado] = useState<'enproceso' | 'planificados' | 'entregados'>('enproceso');
-
   const [filtroTexto, setFiltroTexto] = useState<string>('');
   const [deliveredPageIndex, setDeliveredPageIndex] = useState(0);
   const mostrandoOverlay = estaActivo && !hasSnapshots;
 
-  useEffect(() => {
-    // Ajusta el filtro de estados que consulta el hook según la pestaña seleccionada
-    setOrderPlansPage(0);
-    if (filtroEstado === 'planificados') {
-      setOrderPlansStatuses(['WAITING']);
-    } else if (filtroEstado === 'entregados') {
-      setOrderPlansStatuses(['DELIVERED']);
-    } else {
-      setOrderPlansStatuses(['IN_TRANSIT']);
-    }
-  }, [filtroEstado, setOrderPlansPage, setOrderPlansStatuses]);
+  // --- OPTIMIZACIÓN: ESTADO LENTO PARA EL SIDEBAR ---
+  const [activeSegmentsSlow, setActiveSegmentsSlow] = useState(activeSegments);
+  const lastUpdateRef = useRef(0);
 
   useEffect(() => {
-    statusRef.current = status;
-  }, [status]);
+    const now = Date.now();
+    if (now - lastUpdateRef.current > 1000 || Math.abs(activeSegments.length - activeSegmentsSlow.length) > 2) {
+        setActiveSegmentsSlow(activeSegments);
+        lastUpdateRef.current = now;
+    }
+  }, [activeSegments, activeSegmentsSlow.length]);
+  // --------------------------------------------------
+
+  useEffect(() => {
+    setOrderPlansPage(0);
+    if (filtroEstado === 'planificados') setOrderPlansStatuses(['WAITING']);
+    else if (filtroEstado === 'entregados') setOrderPlansStatuses(['DELIVERED']);
+    else setOrderPlansStatuses(['IN_TRANSIT']);
+  }, [filtroEstado, setOrderPlansPage, setOrderPlansStatuses]);
+
+  useEffect(() => { statusRef.current = status; }, [status]);
 
   useEffect(() => {
     if (!mostrandoOverlay) return undefined;
     setOverlayCountdown(60);
-    const id = setInterval(() => {
-      setOverlayCountdown(prev => (prev > 0 ? prev - 1 : 0));
-    }, 1000);
+    const id = setInterval(() => setOverlayCountdown(prev => (prev > 0 ? prev - 1 : 0)), 1000);
     return () => clearInterval(id);
   }, [mostrandoOverlay]);
 
-  const ensureSeconds = (value?: string) => {
-    if (!value) return undefined;
-    return value.length === 16 ? `${value}:00` : value;
-  };
+  const ensureSeconds = (value?: string) => (!value ? undefined : value.length === 16 ? `${value}:00` : value);
 
-  // Conectar si ya viene una simulación en la URL
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const simIdParam = params.get('simId');
     if (simIdParam && !simulationId) {
-      simulacionService.getStatus(simIdParam)
-        .then(statusResp => {
-          if (statusResp.cancelled || statusResp.completed) {
-            setToastMsg('La simulación especificada ya finalizó o fue cancelada.');
-            const url = new URL(window.location.href);
-            url.searchParams.delete('simId');
-            window.history.replaceState({}, '', url.toString());
-          } else {
-            conectarSimulacion(simIdParam);
-          }
-        })
-        .catch(() => {
-          setToastMsg('No se pudo cargar la simulación indicada.');
+      simulacionService.getStatus(simIdParam).then(statusResp => {
+        if (statusResp.cancelled || statusResp.completed) {
+          setToastMsg('La simulación especificada ya finalizó o fue cancelada.');
           const url = new URL(window.location.href);
           url.searchParams.delete('simId');
           window.history.replaceState({}, '', url.toString());
-        });
+        } else {
+          conectarSimulacion(simIdParam);
+        }
+      }).catch(() => {
+        setToastMsg('No se pudo cargar la simulación indicada.');
+        const url = new URL(window.location.href);
+        url.searchParams.delete('simId');
+        window.history.replaceState({}, '', url.toString());
+      });
     }
   }, [location.search, simulationId, conectarSimulacion]);
 
-  const enviosHistoricos = useRef<Map<string, EnvioInfo>>(new Map());
+  useEffect(() => {
+    if (selectedOrderIds && selectedOrderIds.length > 0) {
+      selectedOrderIds.forEach(id => {
+        const details = getOrderDetails(id);
+        if (!details) {
+          fetchMissingOrder(id);
+        }
+      });
+    }
+  }, [selectedOrderIds, getOrderDetails, fetchMissingOrder]);
 
-  // Mapas auxiliares para selección cruzada
   const flightById = useMemo(() => {
     const map = new Map<string, typeof activeSegments[number]>();
     activeSegments.forEach(seg => map.set(seg.id, seg));
@@ -176,64 +151,74 @@ export default function SimulacionPage() {
     return map;
   }, [airportToOrders]);
 
-  // --- LÓGICA DE FILTRADO Y ORDEN PARA LOS PANELES ---
   const enviosCalc = useMemo(() => {
     const term = (filtroTexto || '').toLowerCase();
     const next = new Map<string, EnvioInfo>();
+
+    const processAndAdd = (p: any, forced: boolean) => {
+        const statusUpper = (p.status || 'IN_TRANSIT').toUpperCase();
+        const statusNorm = statusUpper === 'WAITING' ? 'PLANNED' : statusUpper;
+
+        if (!forced) {
+            const includeEstado =
+              filtroEstado === 'planificados'
+                ? statusNorm === 'PLANNED'
+                : filtroEstado === 'entregados'
+                  ? statusNorm === 'DELIVERED'
+                  : statusNorm !== 'PLANNED' && statusNorm !== 'DELIVERED';
+            if (!includeEstado) return;
+
+            const matchSearch = term === '' || p.orderId.toLowerCase().includes(term);
+            if (!matchSearch) return;
+        }
+
+        let estado: EnvioInfo['estado'] = 'Planificado';
+        if (statusNorm === 'READY_PICKUP' || statusNorm === 'IN_TRANSIT') {
+          estado = 'En tránsito';
+        } else if (statusNorm === 'DELIVERED') {
+          estado = 'Entregado';
+        }
+
+        next.set(p.orderId, {
+          plan: {
+            orderId: p.orderId,
+            creationUtc: p.creationUtc ?? new Date().toISOString(),
+            slackMinutes: p.slackMinutes ?? 0,
+            routes: p.routes ?? [],
+          },
+          estado,
+          creationMs: p.creationUtc ? Date.parse(p.creationUtc) : 0,
+          arrivalMs: 0,
+        });
+    };
+
     const plans = orderPlansDb ?? [];
     plans.forEach(p => {
-      const statusUpper = (p.status || '').toUpperCase();
-      const statusNorm = statusUpper === 'WAITING' ? 'PLANNED' : statusUpper;
-      const includeEstado =
-        filtroEstado === 'planificados'
-          ? statusNorm === 'PLANNED'
-          : filtroEstado === 'entregados'
-            ? statusNorm === 'DELIVERED'
-            : statusNorm !== 'PLANNED' && statusNorm !== 'DELIVERED';
-      if (!includeEstado) return;
-
-      const matchSearch = term === '' || p.orderId.toLowerCase().includes(term);
-      if (!matchSearch) return;
-      if (selectedOrderIds && !selectedOrderIds.includes(p.orderId)) return;
-
-      let estado: EnvioInfo['estado'] = 'Planificado';
-      if (statusNorm === 'READY_PICKUP' || statusNorm === 'IN_TRANSIT') {
-        estado = 'En tránsito';
-      } else if (statusNorm === 'DELIVERED') {
-        estado = 'Entregado';
-      }
-
-      next.set(p.orderId, {
-        plan: {
-          orderId: p.orderId,
-          creationUtc: p.creationUtc ?? null,
-          slackMinutes: p.slackMinutes,
-          routes: p.routes ?? [],
-        },
-        estado,
-        creationMs: p.creationUtc ? Date.parse(p.creationUtc) : 0,
-        arrivalMs: 0,
-      });
+      const isSelected = selectedOrderIds?.includes(p.orderId) ?? false;
+      if (selectedOrderIds && selectedOrderIds.length > 0 && !isSelected) return;
+      processAndAdd(p, isSelected);
     });
 
-    let lista: EnvioInfo[] = Array.from(next.values());
-    if (term) {
-       lista = lista.filter(item => item.plan.orderId.toLowerCase().includes(term));
-    }
     if (selectedOrderIds && selectedOrderIds.length > 0) {
-      lista = lista.filter(item => selectedOrderIds.includes(item.plan.orderId));
+        selectedOrderIds.forEach(id => {
+            if (next.has(id)) return;
+            const details = getOrderDetails(id);
+            if (details) {
+                processAndAdd(details, true);
+            }
+        });
     }
+
+    let lista: EnvioInfo[] = Array.from(next.values());
     const stats = { entregas: 0, retrasados: 0 };
     lista.forEach(info => {
       if (info.estado === 'En tránsito') stats.retrasados += 1;
     });
     return { lista, stats };
-  }, [orderStatuses, selectedOrderIds, orderPlans, orderIdFilter, filtroTexto, filtroEstado, plannedLogState, deliveredPage]);
+  }, [selectedOrderIds, orderPlansDb, filtroTexto, filtroEstado, deliveredPage, getOrderDetails]);
 
-  // KPIs basados en lo que se muestra actualmente
   const enviosFiltrados = enviosCalc.lista;
 
-  // ----- SELECCIÓN CRUZADA -----
   const handleSelectFlight = useCallback((flightId: string | null) => {
     if (!flightId) {
       setSelectedFlightId(null);
@@ -288,29 +273,20 @@ export default function SimulacionPage() {
     setSelectedFlightId(firstFlight);
   }, [orderToAirports, orderToFlights]);
 
-  // Vuelos en vivo desde los ticks (preferidos)
   const vuelosLive: FlightGroup[] = useMemo(() => {
-    return activeSegments.map(seg => {
+    return activeSegmentsSlow.map(seg => {
       const dep = new Date(seg.departureUtc);
       const arr = new Date(seg.arrivalUtc);
       const fecha = dep.toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });
       const hora = dep.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
       const horaLlegada = arr.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
       return {
-        uniqueKey: seg.id,
-        segmentId: seg.id,
-        flightId: seg.flightId,
-        origen: seg.origin,
-        destino: seg.destination,
-        pedidos: seg.orderIds ?? [],
-        hora,
-        fecha,
-        departureUtc: seg.departureUtc,
-        arrivalUtc: seg.arrivalUtc,
-        horaLlegada,
+        uniqueKey: seg.id, segmentId: seg.id, flightId: seg.flightId, origen: seg.origin,
+        destino: seg.destination, pedidos: seg.orderIds ?? [], hora, fecha,
+        departureUtc: seg.departureUtc, arrivalUtc: seg.arrivalUtc, horaLlegada,
       };
     }).filter(vuelo => filtroHub === '' || vuelo.origen === filtroHub);
-  }, [activeSegments, filtroHub]);
+  }, [activeSegmentsSlow, filtroHub]);
 
   const vuelosFiltrados = useMemo<FlightGroup[]>(() => {
         const term = filtroTexto.toLowerCase();
@@ -328,22 +304,20 @@ export default function SimulacionPage() {
   const { capacidadUsadaFlota, capacidadTotalFlota } = useMemo(() => {
     let totalUsed = 0;
     let totalCapacity = 0;
-    activeSegments.forEach(seg => {
+    activeSegmentsSlow.forEach(seg => {
       totalUsed += seg.capacityUsed ?? 0;
       totalCapacity += seg.capacityTotal ?? 0;
     });
     return { capacidadUsadaFlota: totalUsed, capacidadTotalFlota: totalCapacity };
-  }, [activeSegments]);
+  }, [activeSegmentsSlow]);
 
   const aeropuertosFiltrados = useMemo(() => {
         const term = filtroTexto.toLowerCase();
         return aeropuertos.filter(a => {
           if (!term) return true;
-
           const nameMatch = a.name?.toLowerCase().includes(term);
           const cityMatch = (a as any).city?.toLowerCase().includes(term);
           const codeMatch = (a.code || a.id)?.toLowerCase().includes(term);
-
           return nameMatch || cityMatch || codeMatch;
         });
     }, [aeropuertos, filtroTexto]);
@@ -351,37 +325,25 @@ export default function SimulacionPage() {
   const handleIniciarSimulacion = () => {
     const startUtc = ensureSeconds(startDate);
     const endUtc = hastaColapso ? undefined : ensureSeconds(endDate);
-    enviosHistoricos.current = new Map();
     setSelectedOrderIds(null);
     setSelectedFlightId(null);
     setSelectedAirportIds(null);
     setFiltroTexto('');
-    const payload = {
-      startDate: startUtc,
-      endDate: endUtc,
-      windowMinutes: 180,
-    };
+    const payload = { startDate: startUtc, endDate: endUtc, windowMinutes: 180 };
     startedHereRef.current = true;
     iniciar(payload);
   };
 
   const handleTerminarSimulacion = async () => {
     const simIdActual = simulationId ?? lastSimulationIdRef.current;
-    if (simIdActual) {
-      lastSimulationIdRef.current = simIdActual;
-    }
+    if (simIdActual) lastSimulationIdRef.current = simIdActual;
     await terminar();
-    enviosHistoricos.current = new Map();
     setSelectedOrderIds(null);
     setSelectedFlightId(null);
     setSelectedAirportIds(null);
     resetVisual();
     setFiltroTexto('');
-    setDialogInfo({
-      titulo: 'Simulación terminada',
-      mensaje: 'Se detuvo la simulación actual. Puedes descargar el reporte o iniciar una nueva corrida.',
-    });
-    // limpiar URL
+    setDialogInfo({ titulo: 'Simulación terminada', mensaje: 'Se detuvo la simulación actual.' });
     const url = new URL(window.location.href);
     url.searchParams.delete('simId');
     window.history.replaceState({}, '', url.toString());
@@ -391,14 +353,10 @@ export default function SimulacionPage() {
 
   useEffect(() => {
     if (status === 'completed' && inTransitOrders === 0 && activeSegments.length === 0) {
-      setDialogInfo({
-        titulo: 'Simulación terminada',
-        mensaje: 'La simulación finalizó correctamente. Puedes ajustar parámetros o comenzar otra simulación.',
-      });
+      setDialogInfo({ titulo: 'Simulación terminada', mensaje: 'La simulación finalizó correctamente.' });
     }
   }, [status, inTransitOrders, activeSegments.length]);
 
-  // Actualiza URL con simId y ofrece link para compartir
   useEffect(() => {
     if (!simulationId) return;
     const url = new URL(window.location.href);
@@ -424,17 +382,12 @@ export default function SimulacionPage() {
   }, [notificacion, setNotificacion]);
 
   useEffect(() => {
-    if (filtroEstado !== 'entregados') {
-      return;
-    }
+    if (filtroEstado !== 'entregados') return;
     if (!simulationId) return;
     fetchDeliveries({ page: deliveredPageIndex, size: 20, search: filtroTexto || undefined });
   }, [filtroEstado, simulationId, filtroTexto, deliveredPageIndex, fetchDeliveries]);
 
-  useEffect(() => {
-    // reset paginación al cambiar de filtro
-    setDeliveredPageIndex(0);
-  }, [filtroEstado]);
+  useEffect(() => setDeliveredPageIndex(0), [filtroEstado]);
 
   const handleDescargarReporte = useCallback(async () => {
     const targetId = simulationId ?? lastSimulationIdRef.current;
@@ -468,17 +421,9 @@ export default function SimulacionPage() {
     return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
   };
 
-  if (isLoading) {
-    return <div className="p-6 text-center">Cargando datos base...</div>;
-  }
-  if (isError) {
-    return <div className="p-6 text-center text-red-500">Error al cargar datos.</div>;
-  }
-  const clearSelectedOrders = () => {
-    setSelectedOrderIds(null);
-    setSelectedFlightId(null);
-    setSelectedAirportIds(null);
-  };
+  if (isLoading) return <div className="p-6 text-center">Cargando datos base...</div>;
+  if (isError) return <div className="p-6 text-center text-red-500">Error al cargar datos.</div>;
+  const clearSelectedOrders = () => { setSelectedOrderIds(null); setSelectedFlightId(null); setSelectedAirportIds(null); };
 
   return (
     <>
@@ -490,101 +435,55 @@ export default function SimulacionPage() {
       </div>
     )}
     <div className="flex h-[calc(100vh-3rem)] min-h-[calc(100vh-3rem)] w-full bg-base-200 text-base-content">
-
       <SimSidebar
-          ordenesParaSimular={ordenesParaSimular}
-          startDate={startDate}
-          endDate={endDate}
-          setStartDate={setStartDate}
-          setEndDate={setEndDate}
-          hastaColapso={hastaColapso}
-          setHastaColapso={setHastaColapso}
-          estaActivo={estaActivo}
-          estaVisualizando={estaVisualizando}
-          status={status}
-          isStarting={isStarting}
-          estaSincronizando={estaSincronizando}
-          onIniciar={handleIniciarSimulacion}
-          onTerminar={handleTerminarSimulacion}
-          onPausar={pausar}
-          vistaPanel={vistaPanel}
-          setVistaPanel={setVistaPanel}
-          filtroEstado={filtroEstado}
-          setFiltroEstado={setFiltroEstado}
-          filtroTexto={filtroTexto}
-          setFiltroTexto={setFiltroTexto}
-          enviosFiltrados={enviosFiltrados}
+          ordenesParaSimular={ordenesParaSimular} startDate={startDate} endDate={endDate} setStartDate={setStartDate} setEndDate={setEndDate}
+          hastaColapso={hastaColapso} setHastaColapso={setHastaColapso} estaActivo={estaActivo} estaVisualizando={estaVisualizando}
+          status={status} isStarting={isStarting} estaSincronizando={estaSincronizando} onIniciar={handleIniciarSimulacion} onTerminar={handleTerminarSimulacion}
+          onPausar={pausar} vistaPanel={vistaPanel} setVistaPanel={setVistaPanel} filtroEstado={filtroEstado} setFiltroEstado={setFiltroEstado}
+          filtroTexto={filtroTexto} setFiltroTexto={setFiltroTexto} enviosFiltrados={enviosFiltrados} currentTime={tiempoSimulado}
+
+          // ✅ LISTA LENTA PARA EL SIDEBAR (1 FPS)
           vuelosFiltrados={vuelosFiltrados}
-          aeropuertos={aeropuertosFiltrados}
           vuelosTotal={vuelosLive.length}
-         //aeropuertos={aeropuertos}
-          activeAirports={activeAirports}
-          activeSegments={activeSegments}
-          filtroHub={filtroHub}
-          setFiltroHub={setFiltroHub}
-          ordersTotal={orderPlansTotal}
-          ordersPage={orderPlansPage}
-          ordersPageSize={orderPlansPageSize}
-          onOrdersPageChange={(page) => setOrderPlansPage(page)}
-          selectedOrderIds={selectedOrderIds}
-          onSelectOrders={handleSelectOrders}
+
+          aeropuertos={aeropuertosFiltrados}
+          activeAirports={activeAirports} activeSegments={activeSegmentsSlow}
+          filtroHub={filtroHub} setFiltroHub={setFiltroHub} ordersTotal={orderPlansTotal} ordersPage={orderPlansPage} ordersPageSize={orderPlansPageSize}
+          onOrdersPageChange={(page) => setOrderPlansPage(page)} selectedOrderIds={selectedOrderIds} onSelectOrders={handleSelectOrders}
           clearSelectedOrders={clearSelectedOrders}
           vuelosEnMovimiento={vuelosEnMovimiento}
-          selectedFlightId={selectedFlightId}
-          onSelectFlight={handleSelectFlight}
-          selectedAirportIds={selectedAirportIds}
-          onSelectAirport={handleSelectAirport} animPaused={false}      />
-
-      {/* ========== ÁREA DEL MAPA ========== */}
+          selectedFlightId={selectedFlightId} onSelectFlight={handleSelectFlight}
+          selectedAirportIds={selectedAirportIds} onSelectAirport={handleSelectAirport} animPaused={false}
+      />
       <div className="flex-1 flex flex-col min-h-0">
         <div className="flex-1 relative min-h-0">
           <div className="absolute top-0 left-0 right-0 z-30 pointer-events-none">
             <div className="pointer-events-none">
               <SimTopBar
-                entregados={deliveredOrders}
-                enTransito={inTransitOrders}
-                vuelosActivos={activeSegments.length}
-                reloj={reloj}
-                tiempoSimulado={tiempoSimulado}
-                estaActivo={estaActivo}
-                engineSpeed={engineSpeed}
-                startRealMs={startRealMs}
-                elapsedRealMs={elapsedRealMs}
-                formatElapsed={formatElapsed}
-                capacidadUsadaFlota={capacidadUsadaFlota}
-                capacidadTotalFlota={capacidadTotalFlota}
-                startDateString={startDate}
+                entregados={deliveredOrders} enTransito={inTransitOrders}
+                vuelosActivos={activeSegments.length} // CONTADOR RÁPIDO (60 FPS)
+                reloj={reloj} tiempoSimulado={tiempoSimulado}
+                estaActivo={estaActivo} engineSpeed={engineSpeed} startRealMs={startRealMs} elapsedRealMs={elapsedRealMs} formatElapsed={formatElapsed}
+                capacidadUsadaFlota={capacidadUsadaFlota} capacidadTotalFlota={capacidadTotalFlota} startDateString={startDate}
               />
             </div>
           </div>
-
-          {/* Mostramos overlay de carga mientras el GA prepara el primer plan */}
           {mostrandoOverlay && (
             <div className="absolute top-0 left-0 w-full h-full bg-base-300/80 z-[1000] flex items-center justify-center text-base-content p-8">
               <div className="text-center space-y-4">
-                <div
-                  className="animate-spin rounded-full h-24 w-24 border-8 border-primary border-t-transparent mx-auto"
-                ></div>
+                <div className="animate-spin rounded-full h-24 w-24 border-8 border-primary border-t-transparent mx-auto"></div>
                 <h2 className="text-2xl font-semibold">Iniciando simulación</h2>
-                <p className="text-lg text-base-content/90">
-                  Arrancando en {overlayCountdown}s
-                </p>
+                <p className="text-lg text-base-content/90">Arrancando en {overlayCountdown}s</p>
               </div>
             </div>
           )}
           <MapaVuelos
             aeropuertos={aeropuertos}
-            activeSegments={activeSegments}
+            activeSegments={activeSegments} // ✅ EL MAPA SÍ RECIBE LOS RÁPIDOS (60 FPS)
             isLoading={isLoading || isStarting}
             vuelosEnMovimiento={vuelosEnMovimiento}
-            filtroHubActivo={filtroHub}
-            activeAirports={activeAirports}
-            onSelectOrders={handleSelectOrders}
-            selectedFlightId={selectedFlightId}
-            onSelectFlight={handleSelectFlight}
-            selectedAirportIds={selectedAirportIds}
-            onSelectAirport={handleSelectAirport}
-            selectedOrders={selectedOrderIds}
+            filtroHubActivo={filtroHub} activeAirports={activeAirports} onSelectOrders={handleSelectOrders} selectedFlightId={selectedFlightId}
+            onSelectFlight={handleSelectFlight} selectedAirportIds={selectedAirportIds} onSelectAirport={handleSelectAirport} selectedOrders={selectedOrderIds}
           />
         </div>
       </div>
@@ -596,20 +495,14 @@ export default function SimulacionPage() {
           <p className="text-base-content/80">{dialogInfo.mensaje}</p>
           <div className="modal-action">
             {(simulationId || lastSimulationIdRef.current) && (
-              <button
-                className="btn btn-primary"
-                onClick={handleDescargarReporte}
-                disabled={downloadingReport}
-              >
+              <button className="btn btn-primary" onClick={handleDescargarReporte} disabled={downloadingReport}>
                 {downloadingReport ? 'Generando...' : 'Descargar reporte'}
               </button>
             )}
             <button className="btn" onClick={handleCerrarDialogo}>Aceptar</button>
           </div>
         </div>
-        <form method="dialog" className="modal-backdrop">
-          <button onClick={handleCerrarDialogo}>close</button>
-        </form>
+        <form method="dialog" className="modal-backdrop"><button onClick={handleCerrarDialogo}>close</button></form>
       </dialog>
     )}
     </>

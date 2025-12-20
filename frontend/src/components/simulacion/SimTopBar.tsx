@@ -40,7 +40,7 @@ export function SimTopBar({
             <span className="text-[10px] font-bold text-base-content/70 uppercase tracking-wide mr-1">
               Simulación:
             </span>
-    
+
             <div className="tooltip tooltip-bottom pointer-events-auto" data-tip="Fecha de la simulación">
               <div className="badge badge-neutral text-white text-[11px] font-mono shadow-sm border-base-content/10 whitespace-nowrap">
                 📅 {tiempoSimulado.toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })}
@@ -131,7 +131,7 @@ export function SimTopBar({
                 {tiempoEjecucionSim && (
                   <div className="tooltip tooltip-bottom pointer-events-auto" data-tip="Tiempo transcurrido simulado">
                     <div className="badge badge-ghost bg-base-100/60 backdrop-blur-sm text-[10px] font-mono whitespace-nowrap border-base-content/10">
-                      ⏳ Simulado: {tiempoEjecucionSim}
+                      ⏳ {tiempoEjecucionSim}
                     </div>
                   </div>
                 )}
@@ -153,7 +153,7 @@ export function SimTopBar({
             <span className="badge badge-sm badge-outline font-mono">{engineSpeed}x</span>
           </div>
 
-          <div className="text-[10px] bg-base-100/50 px-2 py-1 rounded text-base-content/40 font-mono tooltip tooltip-left" data-tip="Pedidos procesados por el Backend">
+          <div className="text-[10px] bg-base-100/50 px-2 py-1 rounded text-base-content/40 font-mono tooltip tooltip-left" data-tip="Demanda procesada por el Backend">
             {reloj}
           </div>
         </div>
