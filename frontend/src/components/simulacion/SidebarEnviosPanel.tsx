@@ -67,16 +67,12 @@ export function SidebarEnviosPanel({
           }))
         })).filter(r => r.segments.length > 0);
 
-        // 2. Calcular datos resumen
         const flatSegments = plan.routes?.flatMap(r => r.segments ?? []) ?? [];
         const primer = flatSegments[0];
         const ultimo = flatSegments[flatSegments.length - 1];
         const cantidadTotal = plan.routes?.reduce((acc, r) => acc + (r.quantity ?? 0), 0) ?? 0;
 
-        // ✅ 3. Lógica CORREGIDA para detectar vuelo actual o asignado
         let activeFlightId: string | undefined = undefined;
-
-        // A. Intentar buscar por hora actual (Si está volando ahora mismo)
         if (currentTime) {
             const nowMs = currentTime.getTime();
             const activeSeg = flatSegments.find(s => {
@@ -87,11 +83,18 @@ export function SidebarEnviosPanel({
             if (activeSeg) activeFlightId = activeSeg.flightId;
         }
 
-        // B. Fallback: Si no hay vuelo activo por hora, pero tiene ruta asignada...
+        // B. Si no está volando
         if (!activeFlightId && flatSegments.length > 0) {
-            const est = estado.toLowerCase();
-            // Si está en tránsito, planificado o esperando, mostramos el primer vuelo como "Asignado"
-            if (est.includes('tránsito') || est.includes('planific') || est.includes('waiting') || est.includes('espera')) {
+            if (currentTime) {
+                const nowMs = currentTime.getTime();
+                const nextSeg = flatSegments.find(s => Date.parse(s.arrivalUtc) > nowMs);
+
+                if (nextSeg) {
+                    activeFlightId = nextSeg.flightId;
+                } else {
+                    activeFlightId = flatSegments[flatSegments.length - 1].flightId;
+                }
+            } else {
                 activeFlightId = flatSegments[0].flightId;
             }
         }
@@ -106,7 +109,7 @@ export function SidebarEnviosPanel({
           origen: primer?.origin,
           destino: ultimo?.destination,
           rutas: rutas,
-          currentFlightId: activeFlightId, // Pasamos el ID calculado
+          currentFlightId: activeFlightId,
           progressPct: undefined
         };
 

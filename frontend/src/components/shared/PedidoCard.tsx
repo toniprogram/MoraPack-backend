@@ -39,9 +39,9 @@ interface PedidoCardProps {
 
 const estadoBadgeClass = (estado: string) => {
   const e = estado.toLowerCase();
-  if (e.includes('transit') || e.includes('vuelo')) return 'badge-info';
-  if (e.includes('entregado') || e.includes('completado') || e.includes('llego')) return 'badge-success';
-  if (e.includes('planific') || e.includes('espera') || e.includes('waiting')) return 'badge-warning';
+  if (e.includes('En tránsito')) return 'badge-info';
+  if (e.includes('Entregado')) return 'badge-success';
+  if (e.includes('Planificado')) return 'badge-warning';
   return 'badge-neutral';
 };
 
@@ -66,27 +66,20 @@ const formatDateTimeUTC = (isoStr?: string) => {
 
 const getSegmentStatus = (departure: string | undefined, arrival: string | undefined, now?: Date, orderStatus: string = '') => {
   const st = orderStatus.toUpperCase();
-
-  // 1. Si el pedido ya se entregó, todos sus tramos históricos están completados
-  if (st.includes('ENTREGADO') || st.includes('COMPLETED') || st.includes('DELIVERED')) {
+  if (st.includes('ENTREGADO') || st.includes('DELIVERED')) {
       return 'DONE';
   }
-
-  // 2. Si el pedido está solo planificado, nada ha volado aún
-  if (st.includes('PLANIFICADO') || st.includes('PLANNED') || st.includes('WAITING')) {
+  if (st.includes('PLANIFICADO') || st.includes('PLANNED')) {
       return 'PENDING';
   }
-
-  // 3. Si está en tránsito, comparamos fechas con el reloj simulado
   if (!departure || !arrival || !now) return 'PENDING';
 
   const dep = new Date(departure).getTime();
   const arr = new Date(arrival).getTime();
   const current = now.getTime();
-
-  if (current < dep) return 'PENDING';
-  if (current >= dep && current <= arr) return 'FLYING'; // Está ocurriendo AHORA
-  return 'DONE'; // Ya pasó
+  if (current > arr) return 'DONE';
+  if (current >= dep && current <= arr) return 'FLYING';
+  return 'PENDING';
 };
 
 export const PedidoCard = memo(({ data, isSelected, hasSelection, onSelect, currentTime }: PedidoCardProps) => {

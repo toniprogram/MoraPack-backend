@@ -26,7 +26,7 @@ export interface VueloEnMovimiento {
   latActual: number;
   lonActual: number;
   progreso: number;
-  heading: number; // Ángulo de rotación
+  heading: number;
   estadoVisual: 'en curso' | 'retrasado' | 'completado';
   origen?: string;
   destino?: string;
@@ -60,7 +60,6 @@ export interface SegmentoVuelo {
   capacityUsed?: number;
   capacityTotal?: number;
   orderLoads?: { orderId: string; quantity: number }[];
-  // Coordenadas directas del backend
   lat?: number;
   lon?: number;
   progressPct?: number;
@@ -185,8 +184,6 @@ export const useSimulacion = () => {
           const simMessage: SimulationMessage = JSON.parse(message.body);
           if (simMessage.snapshot) {
               console.log("SNAPSHOT RECIBIDO:", simMessage.snapshot);
-              // Busca en la consola del navegador qué propiedades tiene.
-              // Deberías ver: { totalOrders: 150, processedOrders: 150, ... }
           }
           const tick: SimulationTick | null | undefined = simMessage.tick;
           if (tick?.simTime) {
@@ -344,7 +341,6 @@ export const useSimulacion = () => {
 
     const rawSegments = renderTick.activeSegments || [];
 
-    // Mapeo de segmentos (Incluyendo datos optimizados del backend)
     const mapped: SegmentoVuelo[] = rawSegments.map((seg: ActiveSegmentTick) => ({
       id: seg.id,
       flightId: seg.flightId,
@@ -358,7 +354,7 @@ export const useSimulacion = () => {
       capacityUsed: seg.capacityUsed,
       capacityTotal: seg.capacityTotal,
       orderLoads: seg.orderLoads ?? seg.orderIds?.map(id => ({ orderId: id, quantity: seg.capacityUsed })) ?? [],
-      // Datos del backend para optimización
+
       lat: seg.lat,
       lon: seg.lon,
       progressPct: seg.progressPct
@@ -392,13 +388,11 @@ export const useSimulacion = () => {
       const destino = coordsAeropuertos.get(segmento.destination);
       if (!origen || !destino) return;
 
-      // 1. Usar coordenadas del backend si existen (OPTIMIZACIÓN)
       let latActual = segmento.lat;
       let lonActual = segmento.lon;
       let progreso = segmento.progressPct ?? 0;
       let estadoVisual: VueloEnMovimiento['estadoVisual'] = segmento.retrasado ? 'retrasado' : 'en curso';
 
-      // 2. Si no, calcular (Fallback para compatibilidad)
       if (latActual === undefined || lonActual === undefined) {
           const horaSalida = Date.parse(segmento.departureUtc);
           const horaLlegada = Date.parse(segmento.arrivalUtc);
@@ -479,7 +473,7 @@ export const useSimulacion = () => {
     setDeliveredPage(null);
     extraOrdersRef.current.clear();
     setExtraOrdersVersion(0);
-    fetchingIdsRef.current.clear(); // Limpiar semáforo
+    fetchingIdsRef.current.clear();
     const enriched: SimulationStartRequest = { ...payload, prewarmToken: prewarmToken || undefined };
     simulationMutation.mutate(enriched, { onSuccess: () => { setPrewarmToken(null); prewarmRequested.current = false; } });
   }, [simulationMutation, prewarmToken]);
@@ -555,14 +549,10 @@ export const useSimulacion = () => {
 
   const resetVisual = () => { /* Cubierto en terminar */ };
 
-  // ===== ESTRATEGIA DE DATOS: FETCH ON DEMAND (PROTEGIDO) =====
   const fetchMissingOrder = useCallback(async (orderId: string) => {
     if (!simulationId) return;
-    // Chequeos de seguridad: ¿Ya lo tengo? ¿Ya lo estoy buscando?
     if (extraOrdersRef.current.has(orderId)) return;
     if (fetchingIdsRef.current.has(orderId)) return;
-
-    // Bloquear ID
     fetchingIdsRef.current.add(orderId);
 
     try {
@@ -577,7 +567,7 @@ export const useSimulacion = () => {
       if (page.items && page.items.length > 0) {
         const found = page.items.find(p => p.orderId === orderId);
         if (found) {
-          console.log(`[FETCH] ✅ Pedido encontrado: ${orderId}`);
+          console.log(`[FETCH] Pedido encontrado: ${orderId}`);
           extraOrdersRef.current.set(orderId, { ...found, source: 'api_fetch' });
           setExtraOrdersVersion(v => v + 1);
         }
@@ -585,7 +575,6 @@ export const useSimulacion = () => {
     } catch (error) {
       console.error(`[FETCH] Error al buscar pedido ${orderId}`, error);
     } finally {
-        // Desbloquear ID
         fetchingIdsRef.current.delete(orderId);
     }
   }, [simulationId]);
@@ -603,7 +592,7 @@ export const useSimulacion = () => {
   return {
     aeropuertos,
     vuelosEnMovimiento,
-    activeSegments: segmentosTick, // ✅ Variable correcta
+    activeSegments: segmentosTick,
     isLoading: isLoadingAeropuertos,
     isStarting: simulationMutation.isPending,
     isError: status === 'error',

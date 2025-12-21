@@ -87,8 +87,6 @@ export function SimTopBar({
   }, [tiempoSimulado, startDateString]);
 
   return (
-      // CONTENEDOR PRINCIPAL: Cubre toda la parte superior, pero deja pasar clicks (pointer-events-none)
-      // Z-Index alto para asegurar que los tooltips se vean sobre el mapa
       <div className="absolute top-0 left-0 w-full p-2 z-[1000] pointer-events-none flex justify-between items-start">
 
         {/* === IZQUIERDA: KPIs (Entregados, Tránsito, Capacidad) === */}
@@ -118,10 +116,10 @@ export function SimTopBar({
           </div>
         </div>
 
-        {/* === CENTRO: TIEMPOS (POSICIÓN ATLÁNTICO) === */}
+        {/* === CENTRO: TIEMPOS === */}
           <div className="absolute left-[40%] -translate-x-1/2 top-2 flex items-center gap-2 pointer-events-auto">
 
-            {/* Bloque 1: Fecha y Hora (Con fondo) */}
+            {/* Bloque 1: Fecha y Hora */}
             <div className="flex items-center gap-2 bg-base-100/40 backdrop-blur-md px-2 py-1 rounded-xl border border-base-content/5 shadow-sm">
                {badgesTiempo}
             </div>

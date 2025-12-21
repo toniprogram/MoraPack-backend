@@ -8,7 +8,6 @@ import type { EnvioInfo, FlightGroup } from '../types/simulacionUI';
 import { useLocation } from 'react-router-dom';
 import { simulacionService } from '../services/simulacionService';
 
-// ✅ ESTA LÍNEA ES CRUCIAL: "export default"
 export default function SimulacionPage() {
   const {
       aeropuertos,
@@ -46,7 +45,6 @@ export default function SimulacionPage() {
   const [deliveredPageIndex, setDeliveredPageIndex] = useState(0);
   const mostrandoOverlay = estaActivo && !hasSnapshots;
 
-  // --- OPTIMIZACIÓN: ESTADO LENTO PARA EL SIDEBAR ---
   const [activeSegmentsSlow, setActiveSegmentsSlow] = useState(activeSegments);
   const lastUpdateRef = useRef(0);
 
@@ -57,7 +55,6 @@ export default function SimulacionPage() {
         lastUpdateRef.current = now;
     }
   }, [activeSegments, activeSegmentsSlow.length]);
-  // --------------------------------------------------
 
   useEffect(() => {
     setOrderPlansPage(0);
@@ -156,29 +153,30 @@ export default function SimulacionPage() {
     const next = new Map<string, EnvioInfo>();
 
     const processAndAdd = (p: any, forced: boolean) => {
-        const statusUpper = (p.status || 'IN_TRANSIT').toUpperCase();
-        const statusNorm = statusUpper === 'WAITING' ? 'PLANNED' : statusUpper;
-
+        const statusRaw = (p.status || 'PLANNED').toUpperCase();
+        // 2. Lógica de Filtrado
         if (!forced) {
-            const includeEstado =
-              filtroEstado === 'planificados'
-                ? statusNorm === 'PLANNED'
-                : filtroEstado === 'entregados'
-                  ? statusNorm === 'DELIVERED'
-                  : statusNorm !== 'PLANNED' && statusNorm !== 'DELIVERED';
+            let includeEstado = false;
+            if (filtroEstado === 'planificados') {
+                includeEstado = statusRaw === 'WAITING';
+            } else if (filtroEstado === 'entregados') {
+                includeEstado = statusRaw === 'DELIVERED';
+            } else {
+                includeEstado = statusRaw === 'IN_TRANSIT';
+            }
             if (!includeEstado) return;
-
             const matchSearch = term === '' || p.orderId.toLowerCase().includes(term);
             if (!matchSearch) return;
         }
-
+        // 3. Etiqueta Visual
         let estado: EnvioInfo['estado'] = 'Planificado';
-        if (statusNorm === 'READY_PICKUP' || statusNorm === 'IN_TRANSIT') {
-          estado = 'En tránsito';
-        } else if (statusNorm === 'DELIVERED') {
+        if (statusRaw === 'DELIVERED') {
           estado = 'Entregado';
+        } else if (statusRaw === 'IN_TRANSIT') {
+          estado = 'En tránsito';
+        } else {
+          estado = 'Planificado';
         }
-
         next.set(p.orderId, {
           plan: {
             orderId: p.orderId,
@@ -443,7 +441,6 @@ export default function SimulacionPage() {
           onPausar={pausar} vistaPanel={vistaPanel} setVistaPanel={setVistaPanel} filtroEstado={filtroEstado} setFiltroEstado={setFiltroEstado}
           filtroTexto={filtroTexto} setFiltroTexto={setFiltroTexto} enviosFiltrados={enviosFiltrados} currentTime={tiempoSimulado}
 
-          // ✅ LISTA LENTA PARA EL SIDEBAR (1 FPS)
           vuelosFiltrados={vuelosFiltrados}
           vuelosTotal={vuelosLive.length}
 
@@ -462,7 +459,7 @@ export default function SimulacionPage() {
             <div className="pointer-events-none">
               <SimTopBar
                 entregados={deliveredOrders} enTransito={inTransitOrders}
-                vuelosActivos={activeSegments.length} // CONTADOR RÁPIDO (60 FPS)
+                vuelosActivos={activeSegments.length}
                 reloj={reloj} tiempoSimulado={tiempoSimulado}
                 estaActivo={estaActivo} engineSpeed={engineSpeed} startRealMs={startRealMs} elapsedRealMs={elapsedRealMs} formatElapsed={formatElapsed}
                 capacidadUsadaFlota={capacidadUsadaFlota} capacidadTotalFlota={capacidadTotalFlota} startDateString={startDate}
@@ -480,7 +477,7 @@ export default function SimulacionPage() {
           )}
           <MapaVuelos
             aeropuertos={aeropuertos}
-            activeSegments={activeSegments} // ✅ EL MAPA SÍ RECIBE LOS RÁPIDOS (60 FPS)
+            activeSegments={activeSegments}
             isLoading={isLoading || isStarting}
             vuelosEnMovimiento={vuelosEnMovimiento}
             filtroHubActivo={filtroHub} activeAirports={activeAirports} onSelectOrders={handleSelectOrders} selectedFlightId={selectedFlightId}

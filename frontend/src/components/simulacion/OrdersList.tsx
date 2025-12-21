@@ -9,9 +9,10 @@ interface OrdersListProps {
   items: OrderLoadView[];
   selectedOrders?: string[] | null;
   onSelectOrder?: (orderId: string) => void;
+  className?: string;
 }
 
-export function OrdersList({ items, selectedOrders, onSelectOrder }: OrdersListProps) {
+export function OrdersList({ items, selectedOrders, onSelectOrder, className }: OrdersListProps) {
   if (!items.length) {
     return <div className="text-xs text-base-content/60 px-3 py-2">Sin pedidos dentro</div>;
   }
@@ -19,12 +20,12 @@ export function OrdersList({ items, selectedOrders, onSelectOrder }: OrdersListP
   const isSelected = (id: string) => !!selectedOrders?.includes(id);
 
   return (
-    <div className="max-h-40 overflow-y-auto scrollbar-thin bg-base-100">
-      <table className="table table-xs table-pin-rows w-full">
-        <thead className="bg-base-200">
+    <div className={`overflow-y-auto scrollbar-thin bg-base-100 ${className || 'max-h-40'}`}>
+        <table className="table table-xs table-pin-rows w-full">
+        <thead>
           <tr>
-            <th className="pl-3">Pedido</th>
-            <th className="text-right pr-3">Carga</th>
+            <th className="bg-base-200 pl-3 z-10">Pedido</th>
+            <th className="bg-base-200 text-right pr-3 z-10">Carga</th>
           </tr>
         </thead>
         <tbody>

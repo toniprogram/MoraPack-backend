@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { VueloEnMovimiento } from '../../hooks/useSimulacion';
 import type { FlightGroup } from '../../types/simulacionUI';
 import { OrdersList, type OrderLoadView } from './OrdersList';
+
 interface SidebarVuelosPanelProps {
   vuelosFiltrados: FlightGroup[];
   vuelosTotal: number;
@@ -15,8 +16,10 @@ interface SidebarVuelosPanelProps {
   tipoVuelo?: 'ocupados' | 'vacios';
   currentTime: Date;
 }
+
 const ITEM_HEIGHT = 185;
 const BUFFER_ITEMS = 10;
+
 export function SidebarVuelosPanel({
   vuelosFiltrados,
   vuelosTotal,
@@ -24,8 +27,6 @@ export function SidebarVuelosPanel({
   selectedFlightId,
   onSelectFlight,
   scrollParent,
-  //selectedOrders,
-  //selectedAirportIds,
   tipoVuelo,
   currentTime
 }: SidebarVuelosPanelProps) {
@@ -41,10 +42,12 @@ export function SidebarVuelosPanel({
 
   const [windowStart, setWindowStart] = useState(0);
   const [windowEnd, setWindowEnd] = useState(Math.min(orderedFlights.length, 20));
+
   useEffect(() => {
     setWindowStart(0);
     setWindowEnd(Math.min(orderedFlights.length, 20));
   }, [orderedFlights.length, selectedFlightId]);
+
   useEffect(() => {
     if (!scrollParent) return;
     let ticking = false;
@@ -66,12 +69,15 @@ export function SidebarVuelosPanel({
     scrollParent.addEventListener('scroll', handler);
     return () => scrollParent.removeEventListener('scroll', handler);
   }, [scrollParent, orderedFlights.length]);
+
   const vuelosVentana = orderedFlights.slice(windowStart, windowEnd);
+
   useEffect(() => {
     if (selectedFlightId && scrollParent) {
       scrollParent.scrollTo({ top: 0, behavior: 'smooth' });
     }
   }, [selectedFlightId, scrollParent]);
+
   return (
     <div className="space-y-3 pb-4">
       {vuelosTotal === 0 && (
@@ -92,32 +98,61 @@ export function SidebarVuelosPanel({
             const flightKey = vuelo.uniqueKey ?? vuelo.segmentId ?? vuelo.flightId ?? vuelo.departureUtc;
             const isVacio = tipoVuelo === 'vacios';
             const isSelected = !isVacio && selectedFlightId === flightKey;
-            /*const shouldHighlight = !isVacio && (isSelected || (
-                selectedFlightId === null &&
-                ((selectedAirportIds?.includes(vuelo.origen) || selectedAirportIds?.includes(vuelo.destino)))
-            ));*/
             const isDimmed = !isVacio && selectedFlightId && !isSelected;
+
+            // --- CÁLCULO DE ESTADO Y CAPACIDAD ---
             const vueloEnCurso = vuelosEnMovimiento.find(v => v.id === (vuelo.segmentId ?? vuelo.departureUtc));
-            let progreso = 0;
+
+            // Estado del vuelo (tiempo/progreso)
+            let progresoVuelo = 0;
             let statusLabel = 'Programado';
+
             if (vueloEnCurso) {
-                progreso = vueloEnCurso.progreso;
-                statusLabel = progreso >= 100 ? 'Aterrizado' : 'En Vuelo';
+                progresoVuelo = vueloEnCurso.progreso;
+                statusLabel = progresoVuelo >= 100 ? 'Aterrizado' : 'En Vuelo';
             } else {
                 const nowMs = currentTime.getTime();
                 const startMs = Date.parse(vuelo.departureUtc);
                 const endMs = Date.parse(vuelo.arrivalUtc);
                 const total = endMs - startMs;
                 if (nowMs >= endMs) {
-                    progreso = 100;
+                    progresoVuelo = 100;
                     statusLabel = 'Aterrizado';
                 } else if (nowMs > startMs && total > 0) {
-                    progreso = ((nowMs - startMs) / total) * 100;
+                    progresoVuelo = ((nowMs - startMs) / total) * 100;
                     statusLabel = 'En Ruta';
                 } else {
                     statusLabel = 'En Espera';
                 }
             }
+
+            // Capacidad de Bodega
+            let capacidadUsada = 0;
+            let capacidadTotal = 0;
+            let porcentajeOcupacion = 0;
+
+            if (vueloEnCurso) {
+                capacidadUsada = vueloEnCurso.capacidadUsada;
+                capacidadTotal = vueloEnCurso.capacidadTotal;
+            } else {
+                capacidadUsada = vuelo.pedidos.length;
+            }
+
+            if (capacidadTotal > 0) {
+                porcentajeOcupacion = (capacidadUsada / capacidadTotal) * 100;
+            }
+
+            let barColorClass = 'bg-success';
+            let textColorClass = 'text-success';
+
+            if (porcentajeOcupacion >= 20) {
+                barColorClass = 'bg-error';
+                textColorClass = 'text-error';
+            } else if (porcentajeOcupacion >= 10) {
+                barColorClass = 'bg-warning';
+                textColorClass = 'text-warning';
+            }
+
             const pedidosList: OrderLoadView[] = vueloEnCurso?.pedidos?.map(p => ({ orderId: p.orderId, cantidad: p.cantidad }))
               ?? vuelo.pedidos.map(pid => ({ orderId: pid, cantidad: 1 }));
 
@@ -125,12 +160,11 @@ export function SidebarVuelosPanel({
             const borderColor = isSelected
                 ? 'border-primary ring-1 ring-primary'
                 : 'border-base-300';
-            // Background
             const bgClass = isSelected ? 'bg-base-200/40' : 'bg-base-100';
-            // Clases de interacción
             const interactionClasses = isVacio
                 ? 'cursor-default opacity-80'
                 : `cursor-pointer hover:shadow-md hover:border-primary/40 ${isDimmed ? 'opacity-40 grayscale-[0.5]' : 'opacity-100'}`;
+
             return (
               <div
                 key={`${flightKey}-${absoluteIndex}`}
@@ -155,13 +189,14 @@ export function SidebarVuelosPanel({
                       </span>
                     </div>
                     <span className={`badge badge-xs font-semibold border-none ${
-                        progreso >= 100
+                        progresoVuelo >= 100
                           ? 'bg-base-200 text-base-content/60'
-                          : (isVacio ? 'badge-neutral text-neutral-content opacity-70' : 'badge-success text-success-content')
+                          : (isVacio ? 'badge-neutral text-neutral-content opacity-70' : 'badge-info text-info-content')
                     }`}>
                         {statusLabel}
                     </span>
                   </div>
+
                   {/* SUB-HEADER: ID Y FECHA */}
                   <div className="flex justify-between items-center mb-2">
                     <div className="text-xs font-mono text-base-content/70 flex items-center gap-1.5">
@@ -174,7 +209,8 @@ export function SidebarVuelosPanel({
                         {vuelo.fecha}
                     </div>
                   </div>
-                  {/* TIEMPOS (Bloque Gris Sólido) */}
+
+                  {/* TIEMPOS */}
                   <div className="grid grid-cols-2 gap-px bg-base-300 rounded overflow-hidden border border-base-300 mb-2">
                     <div className="bg-base-200/50 p-1.5 flex flex-col items-center">
                         <span className="text-[9px] uppercase font-bold text-base-content/40 block">Salida</span>
@@ -185,32 +221,36 @@ export function SidebarVuelosPanel({
                         <span className="text-xs font-mono font-semibold text-base-content/80">{vuelo.horaLlegada}</span>
                     </div>
                   </div>
+
                   {/* PEDIDOS */}
                   {!isVacio && vuelo.pedidos.length > 0 && (
                     <div className="mt-1 pt-2 border-t border-base-200 mb-1">
                         <p className="text-[10px] font-bold text-base-content/60 mb-1 uppercase tracking-wide flex items-center gap-1">
                            <Box size={10}/> Pedidos ({vuelo.pedidos.length})
                         </p>
-                        <OrdersList items={pedidosList} />
-                    </div>
-                  )}
-                  {/* BARRA DE PROGRESO */}
-                  <div className="mt-2">
-                    <div className="w-full bg-base-300 rounded-full h-1.5 overflow-hidden">
-                        <div
-                          className={`h-1.5 rounded-full transition-all duration-500 ${
-                            isVacio ? 'bg-neutral opacity-50' : 'bg-success'
-                          }`}
-                          style={{ width: `${Math.min(progreso, 100)}%` }}
+                        <OrdersList
+                            items={pedidosList}
+                            className="max-h-28"
                         />
                     </div>
-                    <div className="flex justify-between items-center mt-1">
-                        <span className="text-[9px] text-base-content/40 font-mono font-bold">
-                            {Math.round(progreso)}%
+                  )}
+
+                  {/* BARRA DE CAPACIDAD */}
+                  <div className="mt-2">
+                    <div className="flex justify-between items-end mb-1">
+                        <span className="text-[9px] font-bold uppercase text-base-content/50">Capacidad de Bodega</span>
+                        <span className={`text-[10px] font-mono font-bold ${textColorClass}`}>
+                            {Math.round(porcentajeOcupacion)}%
                         </span>
-                        {progreso < 100 && (
-                            <Clock size={10} className={`animate-pulse ${isVacio ? 'text-neutral' : 'text-success'}`} />
-                        )}
+                    </div>
+                    <div className="w-full bg-base-300 rounded-full h-2 overflow-hidden">
+                        <div
+                          className={`h-2 rounded-full transition-all duration-500 ${barColorClass}`}
+                          style={{ width: `${Math.min(porcentajeOcupacion, 100)}%` }}
+                        />
+                    </div>
+                    <div className="text-[9px] text-right mt-0.5 text-base-content/40">
+                        {capacidadUsada} / {capacidadTotal} un.
                     </div>
                   </div>
                 </div>
