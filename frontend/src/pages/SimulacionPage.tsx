@@ -319,6 +319,12 @@ export default function SimulacionPage() {
           return nameMatch || cityMatch || codeMatch;
         });
     }, [aeropuertos, filtroTexto]);
+  const isLoadingSelection = useMemo(() => {
+      if (!selectedOrderIds || selectedOrderIds.length === 0) return false;
+      const loadedCount = selectedOrderIds.filter(id => getOrderDetails(id)).length;
+      const minimumNeeded = Math.min(orderPlansPageSize, selectedOrderIds.length);
+      return loadedCount < minimumNeeded;
+  }, [selectedOrderIds, getOrderDetails, orderPlansPageSize]);
 
   const handleIniciarSimulacion = () => {
     const startUtc = ensureSeconds(startDate);
@@ -332,16 +338,32 @@ export default function SimulacionPage() {
     iniciar(payload);
   };
 
+  // --- Solo pausa y muestra diálogo ---
   const handleTerminarSimulacion = async () => {
+    if (estaActivo || isStarting) {
+        try {
+            await pausar();
+        } catch(e) { console.warn("No se pudo pausar al terminar", e); }
+    }
+    setDialogInfo({
+        titulo: 'Simulación Detenida',
+        mensaje: 'La simulación se ha detenido. Puede descargar el reporte ahora.'
+    });
+  };
+
+  // --- Ejecuta el borrado real al confirmar ---
+  const handleConfirmarYBorrar = async () => {
     const simIdActual = simulationId ?? lastSimulationIdRef.current;
     if (simIdActual) lastSimulationIdRef.current = simIdActual;
     await terminar();
+
     setSelectedOrderIds(null);
     setSelectedFlightId(null);
     setSelectedAirportIds(null);
     resetVisual();
     setFiltroTexto('');
-    setDialogInfo({ titulo: 'Simulación terminada', mensaje: 'Se detuvo la simulación actual.' });
+    setDialogInfo(null);
+
     const url = new URL(window.location.href);
     url.searchParams.delete('simId');
     window.history.replaceState({}, '', url.toString());
@@ -439,7 +461,7 @@ export default function SimulacionPage() {
           hastaColapso={hastaColapso} setHastaColapso={setHastaColapso} estaActivo={estaActivo} estaVisualizando={estaVisualizando}
           status={status} isStarting={isStarting} estaSincronizando={estaSincronizando} onIniciar={handleIniciarSimulacion} onTerminar={handleTerminarSimulacion}
           onPausar={pausar} vistaPanel={vistaPanel} setVistaPanel={setVistaPanel} filtroEstado={filtroEstado} setFiltroEstado={setFiltroEstado}
-          filtroTexto={filtroTexto} setFiltroTexto={setFiltroTexto} enviosFiltrados={enviosFiltrados} currentTime={tiempoSimulado}
+          filtroTexto={filtroTexto} setFiltroTexto={setFiltroTexto} enviosFiltrados={enviosFiltrados} currentTime={tiempoSimulado} isLoadingOrders={isLoadingSelection}
 
           vuelosFiltrados={vuelosFiltrados}
           vuelosTotal={vuelosLive.length}
@@ -497,7 +519,7 @@ export default function SimulacionPage() {
                 {downloadingReport ? 'Generando...' : 'Descargar reporte'}
               </button>
             )}
-            <button className="btn" onClick={handleCerrarDialogo}>Aceptar</button>
+            <button className="btn" onClick={handleConfirmarYBorrar}>Aceptar</button>
           </div>
         </div>
         <form method="dialog" className="modal-backdrop"><button onClick={handleCerrarDialogo}>close</button></form>

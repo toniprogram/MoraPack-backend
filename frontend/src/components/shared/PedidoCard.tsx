@@ -39,10 +39,9 @@ interface PedidoCardProps {
 
 const estadoBadgeClass = (estado: string) => {
   const e = estado.toLowerCase();
-  if (e.includes('en tránsito') || e.includes('transit')) return 'badge-info';
+  if (e.includes('en tránsito') || e.includes('in_transit')) return 'badge-info';
   if (e.includes('entregado') || e.includes('delivered')) return 'badge-success';
-  // Planificado / En espera -> Warning (Naranja/Amarillo)
-  if (e.includes('planificado') || e.includes('planned') || e.includes('espera')) return 'badge-warning';
+  if (e.includes('planificado') || e.includes('waiting') || e.includes('espera')) return 'badge-warning';
   return 'badge-neutral';
 };
 
@@ -67,37 +66,15 @@ const formatDateTimeUTC = (isoStr?: string) => {
 
 /**
  * Determina el estado visual de un segmento (tramo) específico.
- * CORRECCIÓN: Se eliminó el bloqueo de "Planificado". Ahora se basa en el tiempo.
  */
 const getSegmentStatus = (departure: string | undefined, arrival: string | undefined, now?: Date, orderStatus: string = '') => {
   const st = orderStatus.toUpperCase();
-
-  // 1. Si el pedido ya se entregó por completo, todo tramo es DONE.
-  if (st.includes('ENTREGADO') || st.includes('DELIVERED') || st.includes('COMPLETADO')) {
+  if (st.includes('ENTREGADO')) {
       return 'DONE';
   }
-
-  // 2. Si faltan datos, asumimos pendiente.
-  if (!departure || !arrival || !now) return 'PENDING';
-
-  const dep = new Date(departure).getTime();
-  const arr = new Date(arrival).getTime();
-  const current = now.getTime();
-
-  // 3. Lógica Temporal (La fuente de la verdad visual):
-
-  // Si la hora actual es mayor a la llegada, el vuelo YA ATERRIZÓ -> DONE (Verde)
-  if (current > arr) {
-      return 'DONE';
-  }
-
-  // Si estamos entre la salida y la llegada -> FLYING (Azul palpitante)
-  if (current >= dep && current <= arr) {
+  if (st.includes('EN TRÁNSITO')){
       return 'FLYING';
   }
-
-  // Si aún no ha salido -> PENDING (Gris)
-  return 'PENDING';
 };
 
 export const PedidoCard = memo(({ data, isSelected, hasSelection, onSelect, currentTime }: PedidoCardProps) => {
@@ -118,19 +95,17 @@ export const PedidoCard = memo(({ data, isSelected, hasSelection, onSelect, curr
   const dimmed = hasSelection && !isSelected;
   const handleClick = () => onSelect(isSelected ? null : [orderId]);
 
-  // CORRECCIÓN: Si no hay vuelo actual (está en espera), mostramos "--"
-  // para evitar mostrar datos viejos del primer tramo.
   const displayFlightId = currentFlightId ? currentFlightId : "--";
 
   return (
     <div
       className={`card bg-base-200 border-l-4 shadow-sm cursor-pointer hover:bg-base-300/50 transition-colors ${dimmed ? 'opacity-40' : ''} ${
         // Borde Azul: En tránsito / Volando
-        estado.toLowerCase().includes('transit') || estado.toLowerCase().includes('vuelo')
-          ? 'border-primary'
+        estado.toLowerCase().includes('en tránsito')
+          ? 'border-info'
           :
         // Borde Verde: Entregado
-        estado.toLowerCase().includes('entregado') || estado.toLowerCase().includes('completado')
+        estado.toLowerCase().includes('entregado')
             ? 'border-success'
             :
         // Borde Naranja: Planificado / En espera

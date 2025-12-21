@@ -1,4 +1,4 @@
-import { Package, Plane, ChevronLeft, ChevronRight, Play, Pause, XCircle, Building } from 'lucide-react'; // Agregué Building para icono aeropuertos
+import { Package, Plane, ChevronLeft, ChevronRight, Play, Pause, XCircle, Building, Loader2 } from 'lucide-react';
 import { SidebarFilters } from './SidebarFilters';
 import { useState, useRef } from 'react';
 import { SidebarEnviosPanel } from './SidebarEnviosPanel';
@@ -58,6 +58,7 @@ interface SimSidebarProps {
   animPaused: boolean;
   status: string;
   currentTime?: Date | null;
+  isLoadingOrders?: boolean;
 }
 
 export function SimSidebar({
@@ -103,7 +104,8 @@ export function SimSidebar({
   onSelectAirport,
   animPaused,
   status,
-  currentTime
+  currentTime,
+  isLoadingOrders = false
 }: SimSidebarProps) {
   const [collapsed, setCollapsed] = useState(true); // Estaba en true por defecto
   const enviosToShow = enviosFiltrados;
@@ -239,17 +241,24 @@ export function SimSidebar({
       {/* CONTENIDO SCROLLEABLE */}
       <div ref={scrollRef} className={`flex-1 overflow-y-auto p-3 space-y-2 bg-base-100 ${collapsed ? 'p-0' : ''}`}>
         { !collapsed && vistaPanel === 'envios' && (
-          <SidebarEnviosPanel
-            enviosFiltrados={enviosToShow}
-            ordenesParaSimular={ordenesParaSimular}
-            ordersTotal={ordersTotal}
-            ordersPage={ordersPage}
-            ordersPageSize={ordersPageSize}
-            onOrdersPageChange={onOrdersPageChange}
-            selectedOrders={selectedOrderIds}
-            onSelectOrders={onSelectOrders}
-            currentTime={currentTime}
-          />
+          isLoadingOrders ? (
+             <div className="flex flex-col items-center justify-center h-48 gap-3 text-base-content/60">
+                <Loader2 size={32} className="animate-spin text-primary" />
+                <span className="text-sm font-medium">Cargando pedidos...</span>
+             </div>
+          ) : (
+            <SidebarEnviosPanel
+              enviosFiltrados={enviosToShow}
+              ordenesParaSimular={ordenesParaSimular}
+              ordersTotal={ordersTotal}
+              ordersPage={ordersPage}
+              ordersPageSize={ordersPageSize}
+              onOrdersPageChange={onOrdersPageChange}
+              selectedOrders={selectedOrderIds}
+              onSelectOrders={onSelectOrders}
+              currentTime={currentTime}
+            />
+          )
         )}
 
         { !collapsed && vistaPanel === 'vuelos' && (
