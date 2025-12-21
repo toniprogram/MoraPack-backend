@@ -5,6 +5,7 @@ import com.morapack.skyroute.models.OrderScope;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
 import java.time.Instant;
@@ -35,4 +36,7 @@ public interface OrderRepository extends JpaRepository<Order, String> {
     long countByScope(OrderScope scope);
 
     long countByScopeAndCreationUtcBetween(OrderScope scope, Instant start, Instant end);
+
+    @Query("select o from Order o where o.scope = :scope and o.creationUtc > :start and o.creationUtc <= :end order by o.creationUtc asc")
+    List<Order> findAllByScopeAndCreationUtcExclusiveLower(OrderScope scope, Instant start, Instant end);
 }

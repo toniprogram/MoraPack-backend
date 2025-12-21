@@ -415,7 +415,7 @@ public class SimulationService {
                         }
                     }
                     if (batch == null) {
-                        List<Order> fetched = orderRepository.findAllByScopeAndCreationUtcBetweenOrderByCreationUtcAsc(
+                        List<Order> fetched = orderRepository.findAllByScopeAndCreationUtcExclusiveLower(
                                 OrderScope.PROJECTED,
                                 cursorStart,
                                 windowEnd
@@ -450,7 +450,7 @@ public class SimulationService {
                         ? rangeEnd
                         : nextWindowStart.plus(windowDuration);
                 prefetchFuture = executorService.submit(() -> {
-                    List<Order> fetched = orderRepository.findAllByScopeAndCreationUtcBetweenOrderByCreationUtcAsc(
+                    List<Order> fetched = orderRepository.findAllByScopeAndCreationUtcExclusiveLower(
                             OrderScope.PROJECTED,
                             nextWindowStart,
                             nextWindowEnd
@@ -751,6 +751,7 @@ public class SimulationService {
                 session.complete();
                 SimulationSnapshot finalSnapshot = session.lastSnapshot;
                 log.info("[SIM:{}] Simulation completed after deliveries. Processed {}/{} orders. GA runs={}", session.id, session.processed.get(), session.totalOrders, session.gaRuns.get());
+                flushPendingStatuses(session);
                 // Persistimos modelo final completo (desactivado temporalmente)
                 // if (session.lastBest != null) {
                 //     persistSimulationPlan(session.id, session.lastBest);
@@ -970,6 +971,26 @@ public class SimulationService {
                 ? List.of()
                 : plan.getRoutes().stream().map(this::toRouteDto).toList();
         return new com.morapack.skyroute.simulation.dto.SimulationOrderPlan(plan.getOrderId(), creationUtc, slackMinutes, routes);
+    }
+
+    /**
+     * Fuerza un volcado de entregas y cambios de estado pendientes (si los hubiera)
+     * antes de detener el ticker o limpiar la sesión.
+     */
+    private void flushPendingStatuses(SimulationSession session) {
+        if (session == null || session.liveWorld == null) {
+            return;
+        }
+        try {
+            List<OrderStatusTick> delivered = session.liveWorld.drainDeliveredOnce();
+            if (delivered != null) {
+                delivered.forEach(os -> onOrderDelivered(session.id, os.orderId()));
+            }
+            Map<String, String> statusChanges = session.liveWorld.captureStatusChanges();
+            persistStatusChangesAsync(session.id, statusChanges);
+        } catch (Exception ex) {
+            log.warn("[SIM:{}] Could not flush pending statuses: {}", session.id, ex.getMessage());
+        }
     }
 
     private com.morapack.skyroute.simulation.dto.SimulationRoute toRouteDto(Route route) {
