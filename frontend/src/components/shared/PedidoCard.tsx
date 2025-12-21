@@ -39,9 +39,10 @@ interface PedidoCardProps {
 
 const estadoBadgeClass = (estado: string) => {
   const e = estado.toLowerCase();
-  if (e.includes('En tránsito')) return 'badge-info';
-  if (e.includes('Entregado')) return 'badge-success';
-  if (e.includes('Planificado')) return 'badge-warning';
+  if (e.includes('en tránsito') || e.includes('transit')) return 'badge-info';
+  if (e.includes('entregado') || e.includes('delivered')) return 'badge-success';
+  // Planificado / En espera -> Warning (Naranja/Amarillo)
+  if (e.includes('planificado') || e.includes('planned') || e.includes('espera')) return 'badge-warning';
   return 'badge-neutral';
 };
 
@@ -64,21 +65,38 @@ const formatDateTimeUTC = (isoStr?: string) => {
   } catch (e) { return '--'; }
 };
 
+/**
+ * Determina el estado visual de un segmento (tramo) específico.
+ * CORRECCIÓN: Se eliminó el bloqueo de "Planificado". Ahora se basa en el tiempo.
+ */
 const getSegmentStatus = (departure: string | undefined, arrival: string | undefined, now?: Date, orderStatus: string = '') => {
   const st = orderStatus.toUpperCase();
-  if (st.includes('ENTREGADO') || st.includes('DELIVERED')) {
+
+  // 1. Si el pedido ya se entregó por completo, todo tramo es DONE.
+  if (st.includes('ENTREGADO') || st.includes('DELIVERED') || st.includes('COMPLETADO')) {
       return 'DONE';
   }
-  if (st.includes('PLANIFICADO') || st.includes('PLANNED')) {
-      return 'PENDING';
-  }
+
+  // 2. Si faltan datos, asumimos pendiente.
   if (!departure || !arrival || !now) return 'PENDING';
 
   const dep = new Date(departure).getTime();
   const arr = new Date(arrival).getTime();
   const current = now.getTime();
-  if (current > arr) return 'DONE';
-  if (current >= dep && current <= arr) return 'FLYING';
+
+  // 3. Lógica Temporal (La fuente de la verdad visual):
+
+  // Si la hora actual es mayor a la llegada, el vuelo YA ATERRIZÓ -> DONE (Verde)
+  if (current > arr) {
+      return 'DONE';
+  }
+
+  // Si estamos entre la salida y la llegada -> FLYING (Azul palpitante)
+  if (current >= dep && current <= arr) {
+      return 'FLYING';
+  }
+
+  // Si aún no ha salido -> PENDING (Gris)
   return 'PENDING';
 };
 
@@ -100,28 +118,23 @@ export const PedidoCard = memo(({ data, isSelected, hasSelection, onSelect, curr
   const dimmed = hasSelection && !isSelected;
   const handleClick = () => onSelect(isSelected ? null : [orderId]);
 
-  // Fallback visual para vuelo actual
-  const displayFlightId = currentFlightId
-    ? currentFlightId
-    : (rutas.length > 0 && rutas[0].segments.length > 0
-        ? rutas[0].segments[0].flightId
-        : "--");
+  // CORRECCIÓN: Si no hay vuelo actual (está en espera), mostramos "--"
+  // para evitar mostrar datos viejos del primer tramo.
+  const displayFlightId = currentFlightId ? currentFlightId : "--";
 
   return (
     <div
-      className={`card bg-base-200 border-l-4 shadow-sm ... ${
-        // Lógica para color AZUL (En tránsito)
+      className={`card bg-base-200 border-l-4 shadow-sm cursor-pointer hover:bg-base-300/50 transition-colors ${dimmed ? 'opacity-40' : ''} ${
+        // Borde Azul: En tránsito / Volando
         estado.toLowerCase().includes('transit') || estado.toLowerCase().includes('vuelo')
           ? 'border-primary'
           :
-        // Lógica para color VERDE (Entregado)
+        // Borde Verde: Entregado
         estado.toLowerCase().includes('entregado') || estado.toLowerCase().includes('completado')
             ? 'border-success'
             :
-        // Lógica para color NARANJA/AMARILLO (Planificado)
-        estado.toLowerCase().includes('planific') || estado.toLowerCase().includes('espera')
-              ? 'border-warning' // <--- ESTE ES EL COLOR NARANJA
-              : 'border-neutral'
+        // Borde Naranja: Planificado / En espera
+            'border-warning'
       }`}
       onClick={handleClick}
     >
@@ -143,7 +156,7 @@ export const PedidoCard = memo(({ data, isSelected, hasSelection, onSelect, curr
           <span className={`badge badge-sm ${estadoBadgeClass(estado)}`}>{estado}</span>
         </div>
 
-        {/* INFO FECHA */}
+        {/* INFO FECHA DE REGISTRO */}
         {creationMs && creationMs > 0 ? (
             <div className="mt-2 pt-2 border-t border-base-300">
             <p className="text-[10px] text-base-content/60 mb-1">Fecha de Registro (UTC):</p>
@@ -154,7 +167,7 @@ export const PedidoCard = memo(({ data, isSelected, hasSelection, onSelect, curr
             </div>
         ) : null}
 
-        {/* VUELO INFO */}
+        {/* VUELO ACTUAL */}
         <div className="flex justify-between items-start mt-2">
           <span className="text-base-content/70">Vuelo actual:</span>
           <div className="text-right">
@@ -169,11 +182,14 @@ export const PedidoCard = memo(({ data, isSelected, hasSelection, onSelect, curr
                 )}
               </div>
             ) : (
-              <span className="opacity-50 italic">--</span>
+              <span className="opacity-50 italic text-xs">
+                {estado.toUpperCase().includes('ENTREGADO') ? 'Finalizado' : 'En espera / Escala'}
+              </span>
             )}
           </div>
         </div>
 
+        {/* ORIGEN / DESTINO / ETA */}
         <div className="text-xs mt-2 space-y-1">
           <div className="flex justify-between items-start">
             <span className="text-base-content/70">Origen:</span><span className="font-semibold">{origen || 'N/A'}</span>
@@ -189,7 +205,7 @@ export const PedidoCard = memo(({ data, isSelected, hasSelection, onSelect, curr
           )}
         </div>
 
-        {/* RUTAS Y ESTADOS */}
+        {/* RUTAS Y ESTADOS (LISTA DE TRAMOS) */}
         {rutas.length > 0 && (
           <div className="mt-2 pt-2 border-t border-base-300">
             <p className="text-xs font-semibold text-base-content/70 mb-1">Rutas y vuelos</p>
@@ -197,18 +213,18 @@ export const PedidoCard = memo(({ data, isSelected, hasSelection, onSelect, curr
               <div key={ruta.routeIndex} className="border border-base-300 rounded bg-base-100/70 p-2 space-y-1 mb-1 last:mb-0">
                 <div className="text-[10px] font-semibold text-base-content/70">Ruta {ruta.routeIndex}</div>
                 {ruta.segments.map((seg, idx) => {
-                  // ✅ AQUÍ USAMOS LA LÓGICA MEJORADA CON EL ESTADO DEL PEDIDO
+                  // Calculamos estado del tramo basado en el reloj
                   const status = getSegmentStatus(seg.departureUtc, seg.arrivalUtc, currentTime, estado);
 
                   let statusIcon = <Clock size={10} className="text-base-content/40"/>;
-                  let rowClass = "opacity-60 grayscale"; // ESPERA
+                  let rowClass = "opacity-60 grayscale";
 
                   if (status === 'FLYING') {
                     statusIcon = <Plane size={10} className="text-info animate-pulse"/>;
-                    rowClass = "bg-info/10 border-info/30 ring-1 ring-info/20"; // VOLANDO
+                    rowClass = "bg-info/10 border-info/30 ring-1 ring-info/20";
                   } else if (status === 'DONE') {
                     statusIcon = <CheckCircle size={10} className="text-success"/>;
-                    rowClass = "opacity-70 bg-base-200/50"; // LLEGÓ
+                    rowClass = "opacity-70 bg-base-200/50";
                   }
 
                   return (
