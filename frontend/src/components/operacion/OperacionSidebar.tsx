@@ -145,10 +145,10 @@ export function OperacionSidebar({
   const isRealtimeDisabled = status === 'buffering' || isReplanning || !isRealtime;
   const mapEstado = (s: OrderStatusDetail['status']) => {
     switch (s) {
-      case 'IN_FLIGHT': return 'En vuelo';
+      case 'IN_FLIGHT': return 'En tránsito';
       case 'WAITING': return 'Planificado';
       case 'LAYOVER': return 'Escala';
-      case 'COMPLETED': return 'Entregado';
+      case 'DELIVERED': return 'Entregado';
       default: return s;
     }
   };
@@ -166,9 +166,10 @@ export function OperacionSidebar({
         if (!hub.includes(filtroHub.toLowerCase())) return false;
       }
       const st = o.status;
+      console.log('status: ',st)
       if (filtroEstado === 'planificados' && st !== 'WAITING') return false;
-      if (filtroEstado === 'entregados' && st !== 'COMPLETED') return false;
-      if (filtroEstado === 'enproceso' && st === 'COMPLETED') return false;
+      if (filtroEstado === 'entregados' && st !== 'DELIVERED') return false;
+      if (filtroEstado === 'enproceso' && st !== 'IN_FLIGHT') return false;
       return true;
     });
   }, [orderStatusList, filtroTexto, filtroHub, filtroEstado]);

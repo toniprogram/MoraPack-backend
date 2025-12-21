@@ -68,13 +68,35 @@ const formatDateTimeUTC = (isoStr?: string) => {
  * Determina el estado visual de un segmento (tramo) específico.
  */
 const getSegmentStatus = (departure: string | undefined, arrival: string | undefined, now?: Date, orderStatus: string = '') => {
+  // 1. Si el pedido global ya se entregó, todos los tramos pasados son DONE.
   const st = orderStatus.toUpperCase();
   if (st.includes('ENTREGADO')) {
       return 'DONE';
   }
-  if (st.includes('EN TRÁNSITO')){
+
+  // 2. Si no tenemos fechas o reloj, fallback a la lógica simple
+  if (!departure || !arrival || !now) {
+      if (st.includes('EN TRÁNSITO')) return 'FLYING'; // Fallback visual si falla el reloj
+      return 'WAITING';
+  }
+
+  // 3. Comparación de tiempos precisa
+  const nowMs = now.getTime();
+  const depMs = new Date(departure).getTime();
+  const arrMs = new Date(arrival).getTime();
+
+  // Ya aterrizó (el tiempo actual es mayor a la llegada)
+  if (nowMs >= arrMs) {
+      return 'DONE';
+  }
+
+  // Está en el aire (el tiempo actual está entre salida y llegada)
+  if (nowMs >= depMs && nowMs < arrMs) {
       return 'FLYING';
   }
+
+  // Aún no despega (el tiempo actual es menor a la salida)
+  return 'WAITING';
 };
 
 export const PedidoCard = memo(({ data, isSelected, hasSelection, onSelect, currentTime }: PedidoCardProps) => {
