@@ -87,7 +87,7 @@ export const useSimulacion = () => {
   const engineSpeedRef = useRef(DEFAULT_SPEED);
 
   // --- ESTADOS DE VISUALIZACIÓN (WEBSOCKET) ---
-  const [latestProgress, setLatestProgress] = useState<SimulationSnapshot | null>(null);
+  const [processedOrders, setProcessedOrders] = useState(0);
   const [segmentosTick, setSegmentosTick] = useState<SegmentoVuelo[]>([]);
   const [activeAirports, setActiveAirports] = useState<ActiveAirportTick[]>([]);
   const [deliveredOrders, setDeliveredOrders] = useState(0);
@@ -182,9 +182,6 @@ export const useSimulacion = () => {
         setStatus('running');
         client.subscribe(TOPIC_PREFIX + simulationId, (message) => {
           const simMessage: SimulationMessage = JSON.parse(message.body);
-          if (simMessage.snapshot) {
-              console.log("SNAPSHOT RECIBIDO:", simMessage.snapshot);
-          }
           const tick: SimulationTick | null | undefined = simMessage.tick;
           if (tick?.simTime) {
             setHasSnapshots(true);
@@ -205,7 +202,17 @@ export const useSimulacion = () => {
             }
 
             setTickBuffer(prev => {
-              const next = [...prev, tick].slice(-6);
+              const slimTick: SimulationTick = {
+                simTime: tick.simTime,
+                speed: tick.speed,
+                status: tick.status,
+                collapseMessage: tick.collapseMessage,
+                activeSegments: tick.activeSegments ?? [],
+                activeAirports: tick.activeAirports ?? [],
+                deliveredOrders: tick.deliveredOrders,
+                inTransitOrders: tick.inTransitOrders,
+              } as SimulationTick;
+              const next = [...prev, slimTick].slice(-6);
               if (!tickReadyRef.current && next.length >= 3) {
                 tickReadyRef.current = true;
                 setTickPlaybackReady(true);
@@ -234,11 +241,11 @@ export const useSimulacion = () => {
           }
 
           if (simMessage.type === 'COMPLETED' && simMessage.snapshot) {
-            setLatestProgress(simMessage.snapshot);
+            setProcessedOrders(simMessage.snapshot.processedOrders ?? 0);
             setHasSnapshots(true);
             setStatus('completed');
           } else if (simMessage.snapshot) {
-            setLatestProgress(simMessage.snapshot);
+            setProcessedOrders(simMessage.snapshot.processedOrders ?? 0);
             const snap = simMessage.snapshot;
             if (snap.processedOrders === snap.totalOrders && snap.totalOrders > 0) {
               setNotificacion('Pedidos terminados de pre-procesar');
@@ -452,7 +459,7 @@ export const useSimulacion = () => {
     mutationFn: (payload: SimulationStartRequest) => simulacionService.startSimulation(payload),
     onSuccess: (response) => {
       console.log('Simulación iniciada:', response.simulationId);
-      setLatestProgress(null);
+      setProcessedOrders(0);
       setHasSnapshots(false);
       setSimulationId(response.simulationId);
       setStatus('running');
@@ -503,7 +510,7 @@ export const useSimulacion = () => {
     }
     stompClient?.deactivate();
     setSimulationId(null);
-    setLatestProgress(null);
+    setProcessedOrders(0);
     setStatus('idle');
     setTiempoSimulado(null);
     setHasSnapshots(false);
@@ -610,6 +617,6 @@ export const useSimulacion = () => {
     orderPlansDb, orderPlansTotal, orderPlansPage, orderPlansPageSize: ORDER_PLANS_PAGE_SIZE,
     setOrderPlansPage, setOrderPlansStatuses,
     getOrderDetails, fetchMissingOrder,
-    reloj: `${latestProgress?.processedOrders ?? 0}`
+    reloj: `${processedOrders}`
   };
 };

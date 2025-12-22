@@ -420,6 +420,16 @@ export function MapaVuelos({
   const popupOffsetForLat = (lat: number): [number, number] => (lat > -10) ? [0, 260] : [0, 32];
 
   const pathsPorSegmento = useRef(new Map<string, [number, number][]>());
+  // Reset caches cuando ya no hay segmentos (evita crecimiento indefinido tras simulaciones largas)
+  useEffect(() => {
+    if (activeSegments.length === 0) {
+      pathsPorSegmento.current.clear();
+      pathCache.clear();
+    }
+    return () => {
+      pathsPorSegmento.current.clear();
+    };
+  }, [activeSegments.length]);
   const segmentsMap = useMemo(() => {
     const m = new Map<string, SegmentoVuelo>();
     activeSegments.forEach(s => m.set(s.id, s));

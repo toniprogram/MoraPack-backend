@@ -39,12 +39,15 @@ class RouteBuilder {
     private final Map<String, Map<String, List<Flight>>> sortedCandidatesCache = new HashMap<>();
     private final Random rnd;
     private final SelectionMode mode;
+    // Instante mínimo para planificar (evita modificar tramos previos)
+    private final Instant notBefore;
 
     RouteBuilder(World world,
                  FlightSchedule flightSchedule,
                  AirportSchedule airportSchedule,
                  Random rnd,
-                 SelectionMode mode) {
+                 SelectionMode mode,
+                 Instant notBefore) {
         this.flights = Objects.requireNonNull(world, "world").getFlights();
         this.airports = world.getAirports();
         this.flightSchedule = Objects.requireNonNull(flightSchedule, "flightSchedule");
@@ -52,6 +55,7 @@ class RouteBuilder {
         this.reverseGraph = buildReverseGraph();
         this.rnd = Objects.requireNonNull(rnd, "rnd");
         this.mode = Objects.requireNonNull(mode, "mode");
+        this.notBefore = notBefore;
     }
 
     Route buildRoute(Order order, String originHub, int quantity) {
@@ -68,7 +72,7 @@ class RouteBuilder {
 
         Duration overallSla = Duration.ZERO;
         Instant dueInstant = null;
-        LocalDateTime readyTime = LocalDateTime.ofInstant(order.getCreationUtc(), currentAirport.getZoneOffset());
+        LocalDateTime readyTime = clampReadyTime(order, currentAirport);
         String current = originHub;
         Set<String> visited = new HashSet<>();
         visited.add(current);
@@ -98,7 +102,11 @@ class RouteBuilder {
             for (int dayOffset = 0; dayOffset < MAX_DAY_LOOKAHEAD && !reserved; dayOffset++) {
                 LocalDate date = baseDate.plusDays(dayOffset);
                 for (Flight candidate : candidates) {
-                    LocalDateTime departureLocal = toLocal(candidate.getDepartureInstant(date), currentAirport.getZoneOffset());
+                    Instant departureInstant = candidate.getDepartureInstant(date);
+                    if (notBefore != null && departureInstant.isBefore(notBefore)) {
+                        continue; // no replanear segmentos en el pasado
+                    }
+                    LocalDateTime departureLocal = toLocal(departureInstant, currentAirport.getZoneOffset());
                     if (dayOffset == 0 && departureLocal.isBefore(readyTime)) {
                         continue; // ese vuelo ya pasó para el día base
                     }
@@ -286,6 +294,14 @@ class RouteBuilder {
             LocalDateTime departureLocal = arrivalLocal.plus(segment.isFinalLeg() ? Config.WAREHOUSE_DWELL : Config.TRANSFER_BUFFER);
             airportSchedule.releaseTransit(destinationAirport.code, arrivalLocal, departureLocal, qty);
         }
+    }
+
+    private LocalDateTime clampReadyTime(Order order, Airport originAirport) {
+        Instant start = order.getCreationUtc();
+        if (notBefore != null && notBefore.isAfter(start)) {
+            start = notBefore;
+        }
+        return LocalDateTime.ofInstant(start, originAirport.getZoneOffset());
     }
 
     private LocalDateTime toLocal(Instant instant, ZoneOffset offset) {

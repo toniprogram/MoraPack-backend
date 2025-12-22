@@ -32,13 +32,9 @@ import com.morapack.skyroute.simulation.dto.SimulationStartRequest;
 import com.morapack.skyroute.simulation.dto.SimulationStartResponse;
 import com.morapack.skyroute.simulation.dto.SimulationTick;
 import com.morapack.skyroute.simulation.live.*;
-import com.morapack.skyroute.simulation.repository.SimulationPlanRepository;
-import com.morapack.skyroute.simulation.repository.SimulationOrderPlanRepository;
 import com.morapack.skyroute.simulation.repository.SimulationDeliveryRepository;
 import com.morapack.skyroute.simulation.model.SimulationDelivery;
-import com.morapack.skyroute.simulation.model.SimulationPlan;
 import com.morapack.skyroute.simulation.model.SimulationRoute;
-import com.morapack.skyroute.simulation.service.SimulationPlanBulkWriter;
 import com.morapack.skyroute.simulation.service.SimulationOrderPlanReadWriter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -94,10 +90,6 @@ public class SimulationService {
     private final SimpMessagingTemplate messagingTemplate;
     private final ObjectMapper objectMapper;
     private final SimulationDeliveryRepository deliveryRepository;
-    private final SimulationPlanRepository simulationPlanRepository;
-    private final SimulationOrderPlanRepository orderPlanRepository;
-    private final SimulationPlanMapper simulationPlanMapper;
-    private final SimulationPlanBulkWriter planBulkWriter;
     private final SimulationOrderPlanReadWriter readWriter;
     private final TransactionTemplate txTemplate;
     private final Path snapshotsDir = Paths.get("snapshots");
@@ -111,10 +103,6 @@ public class SimulationService {
                              SimpMessagingTemplate messagingTemplate,
                              ObjectMapper objectMapper,
                              SimulationDeliveryRepository deliveryRepository,
-                             SimulationPlanRepository simulationPlanRepository,
-                             SimulationOrderPlanRepository orderPlanRepository,
-                             SimulationPlanMapper simulationPlanMapper,
-                             SimulationPlanBulkWriter planBulkWriter,
                              SimulationOrderPlanReadWriter readWriter,
                              TransactionTemplate txTemplate) {
         this.worldBuilder = worldBuilder;
@@ -122,10 +110,6 @@ public class SimulationService {
         this.messagingTemplate = messagingTemplate;
         this.objectMapper = objectMapper;
         this.deliveryRepository = deliveryRepository;
-        this.simulationPlanRepository = simulationPlanRepository;
-        this.orderPlanRepository = orderPlanRepository;
-        this.simulationPlanMapper = simulationPlanMapper;
-        this.planBulkWriter = planBulkWriter;
         this.readWriter = readWriter;
         this.txTemplate = txTemplate;
     }
@@ -359,44 +343,13 @@ public class SimulationService {
             int batchIndex = 0;
             List<Order> batch = initialOrders;
             while (true) {
-                long now = System.currentTimeMillis();
+                long cycleStart = System.currentTimeMillis();
                 if (scheduleStartMillis == 0L) {
-                    scheduleStartMillis = now;
+                    scheduleStartMillis = cycleStart;
+                } else {
+                    scheduleStartMillis = cycleStart;
                 }
-                long targetStart = scheduleStartMillis + batchIndex * 30_000L; // cada 30s de reloj real
-                long targetEnd = targetStart + 15_000L; // GA con presupuesto de 15s
-                if (targetEnd <= now) {
-                    long driftMs = now - targetEnd;
-                    log.warn("[SIM:{}] GA schedule drifted {} ms past target end; pausing simulation time to realign", session.id, driftMs);
-                    boolean tickerWasRunning = session.ticker != null && !session.ticker.isCancelled();
-                    if (tickerWasRunning) {
-                        stopTicker(session);
-                    }
-                    try {
-                        Thread.sleep(driftMs);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                    }
-                    if (tickerWasRunning && !session.cancelled.get()) {
-                        startTicker(session);
-                    }
-                    scheduleStartMillis += driftMs; // desplaza la cadencia futura
-                    targetStart = scheduleStartMillis + batchIndex * 30_000L;
-                    targetEnd = targetStart + 15_000L;
-                    now = System.currentTimeMillis();
-                }
-                long waitMs = targetStart - now;
-                while (waitMs > 0 && !session.cancelled.get()) {
-                    waitIfPaused(session);
-                    long step = Math.min(200L, waitMs);
-                    try {
-                        Thread.sleep(step);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        break;
-                    }
-                    waitMs -= step;
-                }
+                long targetEnd = cycleStart + 30_000L; // fin duro relativo al inicio real del ciclo
                 waitIfPaused(session);
                 if (session.cancelled.get()) {
                     log.warn("[SIM:{}] Simulation cancelled before batch {}", session.id, batchIndex + 1);
@@ -415,7 +368,7 @@ public class SimulationService {
                         }
                     }
                     if (batch == null) {
-                        List<Order> fetched = orderRepository.findAllByScopeAndCreationUtcBetweenOrderByCreationUtcAsc(
+                        List<Order> fetched = orderRepository.findAllByScopeAndCreationUtcExclusiveLower(
                                 OrderScope.PROJECTED,
                                 cursorStart,
                                 windowEnd
@@ -450,7 +403,7 @@ public class SimulationService {
                         ? rangeEnd
                         : nextWindowStart.plus(windowDuration);
                 prefetchFuture = executorService.submit(() -> {
-                    List<Order> fetched = orderRepository.findAllByScopeAndCreationUtcBetweenOrderByCreationUtcAsc(
+                    List<Order> fetched = orderRepository.findAllByScopeAndCreationUtcExclusiveLower(
                             OrderScope.PROJECTED,
                             nextWindowStart,
                             nextWindowEnd
@@ -484,6 +437,7 @@ public class SimulationService {
                                     long targetEndMillis) {
         long iterationStart = System.nanoTime();
         long stageStart = iterationStart;
+        long nonGaBudgetMs = Math.min(30_000L, 15_000L + Math.max(0L, session.nonGaCarryMs));
         // Procesamos órdenes del batch en orden cronológico para que la semilla heurística respete el timeline
         List<Order> orderedBatch = batch.stream()
                 .sorted(Comparator.comparing(Order::getCreationUtc))
@@ -593,10 +547,18 @@ public class SimulationService {
             throw new IllegalStateException("Invalid previousBest: missing plans for active orders");
         }
 
+        long nonGaElapsedMs = nanosToMillis(System.nanoTime() - iterationStart);
+        // Si el tramo no-GA usó menos de su presupuesto, acumula para el siguiente ciclo; si se pasó, resetea
+        if (nonGaElapsedMs < nonGaBudgetMs) {
+            session.nonGaCarryMs = Math.min(30_000L, nonGaBudgetMs - nonGaElapsedMs);
+        } else {
+            session.nonGaCarryMs = 0L;
+        }
+        long gaBudgetMs = Math.max(0L, 30_000L - nonGaElapsedMs - 1_000L); // deja 1s de margen para cierre
+
         GeneticAlgorithm ga = new GeneticAlgorithm(world, List.copyOf(demand));
         log.info("[SIM:{}] Starting GA for batch (simTime={})", session.id, simInstant);
         long start = System.nanoTime();
-        long gaBudgetMs = Math.max(15_000L, targetEndMillis - System.currentTimeMillis());
         Individual best = ga.runTimed(
                 Config.POP_SIZE,
                 Config.MAX_GEN,
@@ -611,13 +573,8 @@ public class SimulationService {
 
         log.info("[SIM:{}] GA done for batch of {} orders (took {} ms)", session.id, orderedBatch.size(), gaDuration / 1_000_000);
         if (best.getPlans().size() != activeOrderCount) {
-            log.warn("[SIM:{}] GA best incomplete (plans={} expected={}); attempting rebuild", session.id, best.getPlans().size(), activeOrderCount);
-            Individual rebuiltBest = rebuildIndividualForDemand(session, best, demand, world);
-            if (rebuiltBest != null && rebuiltBest.getPlans().size() == activeOrderCount) {
-                best = rebuiltBest;
-            } else {
-                log.error("[SIM:{}] Rebuild failed to complete best individual (plans={})", session.id, rebuiltBest != null ? rebuiltBest.getPlans().size() : 0);
-            }
+            log.warn("[SIM:{}] GA best incomplete (plans={} expected={}); declaring logistic collapse (no rebuild)", session.id, best.getPlans().size(), activeOrderCount);
+            session.markCollapsed("Colapso logístico: GA incompleto para " + activeOrderCount + " pedidos (obtuvo " + best.getPlans().size() + ")");
         }
         var planIds = best.getPlans().stream().map(OrderPlan::getOrderId).toList();
         log.info("[SIM:{}] Best individual plans count={} ids={}", session.id, planIds.size(), planIds);
@@ -658,9 +615,16 @@ public class SimulationService {
             }
         });
         session.lastDetails = detailsMap;
-        // Persistimos cambios incrementales al read model (solo los que difieren)
+        // Persistimos cambios incrementales al read model (solo los que difieren) de forma asíncrona
         if (!detailedUpdates.isEmpty()) {
-            readWriter.upsertReadModel(session.id.toString(), detailedUpdates);
+            List<SimulationOrderPlan> updates = List.copyOf(detailedUpdates);
+            executorService.submit(() -> {
+                try {
+                    readWriter.upsertReadModel(session.id.toString(), updates);
+                } catch (Exception ex) {
+                    log.warn("[SIM:{}] Could not upsert read model plans: {}", session.id, ex.getMessage());
+                }
+            });
         }
         if (session.liveWorld != null && activePlans != null) {
             activePlans.forEach(p -> {
@@ -751,10 +715,7 @@ public class SimulationService {
                 session.complete();
                 SimulationSnapshot finalSnapshot = session.lastSnapshot;
                 log.info("[SIM:{}] Simulation completed after deliveries. Processed {}/{} orders. GA runs={}", session.id, session.processed.get(), session.totalOrders, session.gaRuns.get());
-                // Persistimos modelo final completo (desactivado temporalmente)
-                // if (session.lastBest != null) {
-                //     persistSimulationPlan(session.id, session.lastBest);
-                // }
+                flushPendingStatuses(session);
                 persistSnapshot(session, finalSnapshot);
                 messagingTemplate.convertAndSend(
                         topic(session.id),
@@ -782,13 +743,6 @@ public class SimulationService {
                     Map<String, List<String>> byStatus = statusChanges.entrySet().stream()
                             .collect(Collectors.groupingBy(Map.Entry::getValue,
                                     Collectors.mapping(Map.Entry::getKey, Collectors.toList())));
-                    byStatus.forEach((st, ids) -> {
-                        try {
-                            orderPlanRepository.updateStatusBulk(simId, st, ids);
-                        } catch (Exception inner) {
-                            log.warn("[SIM:{}] Could not bulk update status {} for {} orders: {}", simId, st, ids.size(), inner.getMessage());
-                        }
-                    });
                 });
                 // Actualizamos read model
                 readWriter.updateStatuses(simId, statusChanges);
@@ -838,107 +792,9 @@ public class SimulationService {
         );
     }
 
-    private void persistSimulationPlan(UUID simulationId, Individual best) {
-        txTemplate.executeWithoutResult(status -> {
-            try {
-                String simId = simulationId.toString();
-                com.morapack.skyroute.simulation.model.SimulationPlan plan = simulationPlanRepository.findBySimulationId(simId).orElse(null);
-                if (plan == null) {
-                    plan = new com.morapack.skyroute.simulation.model.SimulationPlan();
-                    plan.setSimulationId(simId);
-                    plan.setOrderPlans(new ArrayList<>());
-                } else if (plan.getOrderPlans() == null) {
-                    plan.setOrderPlans(new ArrayList<>());
-                }
-                plan.setGeneratedAt(LocalDateTime.now());
-                plan.setFitness(best.getFitness());
-                plan.setSlaCompliant(best.isSlaCompliant());
-                plan.setSlaViolations(best.getSlaViolations());
-
-                // Upsert incremental sin reemplazar la colección completa para no disparar orphanRemoval
-                Map<String, com.morapack.skyroute.simulation.model.SimulationOrderPlan> existingByOrder = plan.getOrderPlans().stream()
-                        .collect(Collectors.toMap(com.morapack.skyroute.simulation.model.SimulationOrderPlan::getOrderId, p -> p, (a, b) -> a, HashMap::new));
-                Set<String> seenOrders = new HashSet<>();
-
-                for (var original : best.getPlans()) {
-                    com.morapack.skyroute.simulation.model.SimulationOrderPlan target = existingByOrder.get(original.getOrderId());
-                    if (target == null) {
-                        target = new com.morapack.skyroute.simulation.model.SimulationOrderPlan();
-                        target.setOrderId(original.getOrderId());
-                        target.setPlan(plan);
-                        target.setRoutes(new ArrayList<>());
-                        plan.getOrderPlans().add(target);
-                    }
-                    seenOrders.add(original.getOrderId());
-                    target.setPlan(plan);
-                    target.setSlack(original.getSlack());
-                    if (target.getStatus() == null) {
-                        target.setStatus("WAITING"); // solo nuevas inserciones arrancan en WAITING
-                    }
-
-                    // Reutilizar rutas/segmentos que no cambian para evitar borrados masivos
-                    List<com.morapack.skyroute.simulation.model.SimulationRoute> currentRoutes = target.getRoutes() == null
-                            ? new ArrayList<>()
-                            : new ArrayList<>(target.getRoutes());
-                    Map<String, com.morapack.skyroute.simulation.model.SimulationRoute> existingRoutesBySig = currentRoutes.stream()
-                            .collect(Collectors.toMap(this::routeSignature, Function.identity(), (a, b) -> a, LinkedHashMap::new));
-                    Set<com.morapack.skyroute.simulation.model.SimulationRoute> toRemove = new HashSet<>(currentRoutes);
-                    List<com.morapack.skyroute.simulation.model.SimulationRoute> updatedRoutes = new ArrayList<>();
-
-                    if (original.getRoutes() != null) {
-                        for (Route originalRoute : original.getRoutes()) {
-                            String signature = routeSignature(originalRoute);
-                            com.morapack.skyroute.simulation.model.SimulationRoute reuse = existingRoutesBySig.get(signature);
-                            if (reuse != null) {
-                                reuse.setQuantity(originalRoute.getQuantity());
-                                reuse.setSlack(originalRoute.getSlack());
-                                toRemove.remove(reuse);
-                                updatedRoutes.add(reuse);
-                                continue;
-                            }
-
-                            com.morapack.skyroute.simulation.model.SimulationRoute mapped = simulationPlanMapper.mapRoute(originalRoute);
-                            mapped.setOrderPlan(target);
-                            updatedRoutes.add(mapped);
-                        }
-                    }
-
-                    // Elimina solo las rutas que ya no aplican
-                    final com.morapack.skyroute.simulation.model.SimulationOrderPlan targetRef = target;
-                    toRemove.forEach(r -> {
-                        r.setOrderPlan(null);
-                        if (targetRef.getRoutes() != null) {
-                            targetRef.getRoutes().remove(r);
-                        }
-                    });
-                    target.setRoutes(updatedRoutes);
-                    updatedRoutes.forEach(r -> r.setOrderPlan(targetRef));
-                }
-
-                // Remueve planes que ya no están presentes sin reasignar la colección
-                plan.getOrderPlans().removeIf(p -> !seenOrders.contains(p.getOrderId()));
-
-                simulationPlanRepository.save(plan);
-                // Inserta hijos vía JDBC batch para mayor velocidad
-                planBulkWriter.replaceChildren(plan.getId(), best.getPlans());
-
-                List<String> planIds = best.getPlans().stream().map(OrderPlan::getOrderId).sorted().toList();
-                log.warn("[SIM:{}] Persisted {} plans via bulk JDBC. OrderIds={}", simulationId, planIds.size(), planIds);
-            } catch (Exception ex) {
-                log.warn("[SIM:{}] Could not persist simulation plan: {}", simulationId, ex.getMessage());
-                status.setRollbackOnly();
-            }
-        });
-    }
-
     private void cleanupSimulationAsync(SimulationSession session) {
         executorService.submit(() -> {
             UUID simId = session.id;
-            try {
-                simulationPlanRepository.deleteBySimulationId(simId.toString());
-            } catch (Exception ex) {
-                log.warn("[SIM:{}] Could not delete simulation plan: {}", simId, ex.getMessage());
-            }
             try {
                 deliveryRepository.deleteBySimulationId(simId);
             } catch (Exception ex) {
@@ -970,6 +826,26 @@ public class SimulationService {
                 ? List.of()
                 : plan.getRoutes().stream().map(this::toRouteDto).toList();
         return new com.morapack.skyroute.simulation.dto.SimulationOrderPlan(plan.getOrderId(), creationUtc, slackMinutes, routes);
+    }
+
+    /**
+     * Fuerza un volcado de entregas y cambios de estado pendientes (si los hubiera)
+     * antes de detener el ticker o limpiar la sesión.
+     */
+    private void flushPendingStatuses(SimulationSession session) {
+        if (session == null || session.liveWorld == null) {
+            return;
+        }
+        try {
+            List<OrderStatusTick> delivered = session.liveWorld.drainDeliveredOnce();
+            if (delivered != null) {
+                delivered.forEach(os -> onOrderDelivered(session.id, os.orderId()));
+            }
+            Map<String, String> statusChanges = session.liveWorld.captureStatusChanges();
+            persistStatusChangesAsync(session.id, statusChanges);
+        } catch (Exception ex) {
+            log.warn("[SIM:{}] Could not flush pending statuses: {}", session.id, ex.getMessage());
+        }
     }
 
     private com.morapack.skyroute.simulation.dto.SimulationRoute toRouteDto(Route route) {
@@ -1595,6 +1471,7 @@ public class SimulationService {
         private volatile Set<String> activeOrderIds = new HashSet<>();
         private volatile Set<String> deliveredOrders = new HashSet<>();
         private volatile List<Order> demandRef;
+        private volatile long nonGaCarryMs = 0L;
 
         private SimulationSession(UUID id, int totalOrders) {
             this.id = id;

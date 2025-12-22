@@ -38,7 +38,7 @@ public class Individual {
     static Individual randomIndividual(World world, List<Order> orders, Random rnd) {
         FlightSchedule flightSchedule = world.getFlights().getSchedule().copy();
         AirportSchedule airportSchedule = world.getAirportSchedule().copy();
-        RouteBuilder builder = new RouteBuilder(world, flightSchedule, airportSchedule, rnd, RouteBuilder.SelectionMode.RANDOM_APPROACH);
+        RouteBuilder builder = new RouteBuilder(world, flightSchedule, airportSchedule, rnd, RouteBuilder.SelectionMode.RANDOM_APPROACH, world.getCurrentInstant());
 
         List<OrderPlan> plans = new ArrayList<>();
         for (Order order : orders) {
@@ -55,7 +55,7 @@ public class Individual {
         // Partimos del schedule del padre A para preservar sus reservas
         FlightSchedule flightSchedule = parentA.flightSchedule.copy();
         AirportSchedule airportSchedule = parentA.airportSchedule.copy();
-        RouteBuilder builder = new RouteBuilder(world, flightSchedule, airportSchedule, rnd, RouteBuilder.SelectionMode.HEURISTIC_APPROACH);
+        RouteBuilder builder = new RouteBuilder(world, flightSchedule, airportSchedule, rnd, RouteBuilder.SelectionMode.HEURISTIC_APPROACH, world.getCurrentInstant());
         int tweakCount = Math.max(1, orders.size() / 2);
         String logTag = newLogTag("crossover");
         log.debug("[IND:{}] Heuristic build start (source=crossover orders={} tweakIds={} schedules={})",
@@ -95,7 +95,7 @@ public class Individual {
         // Partimos del schedule del padre para evitar reconstruir todo desde cero
         FlightSchedule flightSchedule = parent.flightSchedule.copy();
         AirportSchedule airportSchedule = parent.airportSchedule.copy();
-        RouteBuilder builder = new RouteBuilder(world, flightSchedule, airportSchedule, rnd, RouteBuilder.SelectionMode.HEURISTIC_APPROACH);
+        RouteBuilder builder = new RouteBuilder(world, flightSchedule, airportSchedule, rnd, RouteBuilder.SelectionMode.HEURISTIC_APPROACH, world.getCurrentInstant());
         int mutateCount = Math.max(1, orders.size() / 5);
         String logTag = newLogTag("mutate");
         log.debug("[IND:{}] Heuristic build start (source=mutate orders={} mutateIds={} schedules={})",
@@ -144,7 +144,7 @@ public class Individual {
     public Individual tryInsertOrder(World world, Order newOrder, Random rnd) {
         FlightSchedule scheduleCopy = flightSchedule.copy();
         AirportSchedule airportCopy = airportSchedule.copy();
-        RouteBuilder builder = new RouteBuilder(world, scheduleCopy, airportCopy, rnd, RouteBuilder.SelectionMode.HEURISTIC_APPROACH);
+        RouteBuilder builder = new RouteBuilder(world, scheduleCopy, airportCopy, rnd, RouteBuilder.SelectionMode.HEURISTIC_APPROACH, world.getCurrentInstant());
         String logTag = newLogTag("insert-one");
         log.debug("[IND:{}] Heuristic build start (source=tryInsertOrder order={} schedules={})",
                 logTag, newOrder.getId(), snapshotSchedules(scheduleCopy, airportCopy));
@@ -176,7 +176,7 @@ public class Individual {
         }
         FlightSchedule scheduleCopy = flightSchedule.copy();
         AirportSchedule airportCopy = airportSchedule.copy();
-        RouteBuilder builder = new RouteBuilder(world, scheduleCopy, airportCopy, rnd, RouteBuilder.SelectionMode.HEURISTIC_APPROACH);
+        RouteBuilder builder = new RouteBuilder(world, scheduleCopy, airportCopy, rnd, RouteBuilder.SelectionMode.HEURISTIC_APPROACH, world.getCurrentInstant());
         List<OrderPlan> planCopies = deepCopyPlans(this.plans);
         String logTag = newLogTag("insert-batch");
         log.debug("[IND:{}] Heuristic build start (source=tryInsertOrders orders={} schedules={})",
